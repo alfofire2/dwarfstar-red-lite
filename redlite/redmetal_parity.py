@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .expert_cache import CacheKey
-from .expert_map import read_tensor_directory, build_expert_map
+from .expert_map import read_tensor_directory
 from .expert_store import build_expert_layouts
 from .iq2_reference import (
     IQ2_XXS_BLOCK_BYTES,
