@@ -34,7 +34,7 @@ def _load_library() -> ctypes.CDLL:
     path = _default_library_path()
     if not path.is_file():
         raise RedMetalError(
-            f"Red Metal native library not found at {path}. Run ./scripts/build_redmetal.sh first."
+            f"Red Metal native library not found at {path}. Run make redmetal first."
         )
 
     lib = ctypes.CDLL(str(path))
@@ -90,8 +90,9 @@ def _load_library() -> ctypes.CDLL:
     ]
     lib.redmetal_pool_gpu_probe.restype = ctypes.c_int
 
-    if lib.redmetal_abi_version() != 1:
-        raise RedMetalError(f"unsupported Red Metal ABI {lib.redmetal_abi_version()}")
+    abi = lib.redmetal_abi_version()
+    if abi != 1:
+        raise RedMetalError(f"unsupported Red Metal ABI {abi}")
     return lib
 
 
@@ -122,17 +123,24 @@ class RedMetalPool:
         if slots_per_slab <= 0:
             raise ValueError("slots_per_slab must be positive")
 
+        # DS4 rounds streaming slab slots to a VM page. Red Lite does the same:
+        # it keeps every MTLBuffer binding offset naturally page-aligned while
+        # preserving a deterministic hard budget.
+        page = 4096
+        aligned_slot_bytes = ((int(slot_bytes) + page - 1) // page) * page
+
         self.model = str(Path(model).expanduser().resolve())
         self.lib = _load_library()
         self.handle = self.lib.redmetal_pool_create(
             os.fsencode(self.model),
             int(budget_bytes),
-            int(slot_bytes),
+            aligned_slot_bytes,
             int(slots_per_slab),
         )
         if not self.handle:
             raise RedMetalError(_last_error(self.lib))
-        self.slot_bytes = int(slot_bytes)
+        self.payload_slot_bytes = int(slot_bytes)
+        self.slot_bytes = aligned_slot_bytes
 
     def close(self) -> None:
         if self.handle:
@@ -190,6 +198,8 @@ class RedMetalPool:
     def telemetry(self) -> dict[str, Any]:
         return {
             "capacity": self.capacity,
+            "payload_slot_bytes": self.payload_slot_bytes,
+            "slot_stride_bytes": self.slot_bytes,
             "slab_count": int(self.lib.redmetal_pool_slab_count(self.handle)),
             "allocated_bytes": int(self.lib.redmetal_pool_allocated_bytes(self.handle)),
             "bytes_read": int(self.lib.redmetal_pool_bytes_read(self.handle)),
