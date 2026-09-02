@@ -53,6 +53,10 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
+      - name: Build Red Metal bridge
+        if: runner.os == 'macOS'
+        run: make redmetal
+
       - name: Smoke-test CLI
         shell: bash
         run: |
@@ -66,7 +70,10 @@ jobs:
           from redlite.expert_store import ExpertStore, build_expert_layouts
           from redlite.expert_map import build_expert_map
           from redlite.streaming import make_streaming_plan
+          from redlite.redmetal import redmetal_library_path
+          from redlite.redmetal_cache import MetalExpertCache
           print("streaming imports: OK")
+          print("redmetal library path:", redmetal_library_path())
           PY
 
   package:
