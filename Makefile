@@ -1,4 +1,4 @@
-.PHONY: doctor bootstrap test install redmetal
+.PHONY: doctor bootstrap test install redmetal native
 
 doctor:
 	PYTHONPATH=. python3 -m redlite.cli doctor
@@ -14,3 +14,6 @@ install:
 
 redmetal:
 	bash ./scripts/build_redmetal.sh
+
+native:
+	bash ./scripts/build_native.sh
