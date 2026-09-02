@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwarfstar-red-lite"
-version = "0.3.0.dev8"
-description = "Apple-Silicon-only launcher and experimental expert streaming runtime for Qwen3-Next MoE inference"
+version = "0.3.0.dev9"
+description = "Apple-Silicon-first native runtime and validation tools for Qwen3-Next MoE inference"
 requires-python = ">=3.10"
 authors = [{name = "DwarfStar Red Lite contributors"}]
 license = {text = "MIT"}
