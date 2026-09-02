@@ -7,11 +7,11 @@ from redlite.hardware import HardwareInfo, GIB
 from redlite.planner import plan_for
 
 
-def fake_hw(ram_gib=24, disk_gib=100):
+def fake_hw(ram_gib=24, disk_gib=100, chip="Apple M4 Pro"):
     return HardwareInfo(
         system="Darwin",
         machine="arm64",
-        chip="Apple M4 Pro",
+        chip=chip,
         ram_bytes=int(ram_gib * GIB),
         logical_cpus=14,
         perf_cpus=8,
@@ -34,11 +34,16 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(p.safe)
         self.assertEqual(p.status, "CRITICAL")
 
-    def test_tight_profile_uses_2k_default_on_24gb(self):
-        p = plan_for(fake_hw(24), self._model(17.97))
-        self.assertEqual(p.context, 2048)
+    def test_m4pro_24gb_18gib_profile_uses_4k_default(self):
+        p = plan_for(fake_hw(24, chip="Apple M4 Pro"), self._model(17.97))
+        self.assertEqual(p.context, 4096)
         self.assertEqual(p.threads, 8)
         self.assertEqual((p.batch, p.ubatch), (256, 128))
+        self.assertIn("2K/4K/8K Metal sweep", p.reason)
+
+    def test_unvalidated_24gb_18gib_profile_stays_at_2k(self):
+        p = plan_for(fake_hw(24, chip="Apple M3 Pro"), self._model(17.97))
+        self.assertEqual(p.context, 2048)
 
     def test_roomier_resident_profile_can_be_safe(self):
         p = plan_for(fake_hw(24), self._model(15.0), context=2048)
