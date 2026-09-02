@@ -12,6 +12,7 @@ COMMON=(
   "$ROOT/native/redlite_native_cache.c"
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
+  "$ROOT/native/redlite_native_reference.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -29,6 +30,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_topk.m" \
     -framework Foundation \
     -framework Metal \
+    -lm \
     -o "$OUT/redlite-native"
 else
   "$CC_BIN" \
@@ -40,6 +42,7 @@ else
     -march=native \
     -I"$ROOT/native" \
     "${COMMON[@]}" \
+    -lm \
     -o "$OUT/redlite-native"
 fi
 
