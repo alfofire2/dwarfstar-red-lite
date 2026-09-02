@@ -25,14 +25,39 @@ def _run(cmd: list[str]) -> str | None:
 
 
 def _to_gib(value: float, unit: str) -> float:
-    unit = unit.upper()
-    if unit == "G":
-        return value
+    unit = unit.upper().replace("IB", "").replace("B", "")
+    if unit in {"G", ""}:
+        return value if unit == "G" else value / (1024.0 ** 3)
+    if unit == "T":
+        return value * 1024.0
     if unit == "M":
         return value / 1024.0
     if unit == "K":
         return value / (1024.0 * 1024.0)
     return value / (1024.0 ** 3)
+
+
+def _parse_swapusage(text: str | None) -> tuple[float | None, float | None]:
+    if not text:
+        return None, None
+
+    # Common macOS forms include:
+    #   total = 2048.00M  used = 0.00M  free = 2048.00M
+    #   vm.swapusage: total = 2.00G used = 128.00M ...
+    # Be deliberately permissive about whitespace and optional B/iB suffixes.
+    number = r"([0-9]+(?:\.[0-9]+)?)"
+    unit = r"([KMGTP]?(?:i?B)?)"
+    tm = re.search(rf"\btotal\s*=\s*{number}\s*{unit}", text, re.I)
+    um = re.search(rf"\bused\s*=\s*{number}\s*{unit}", text, re.I)
+
+    def convert(match: re.Match[str] | None) -> float | None:
+        if not match:
+            return None
+        value = float(match.group(1))
+        raw_unit = match.group(2) or "B"
+        return _to_gib(value, raw_unit)
+
+    return convert(um), convert(tm)
 
 
 def snapshot() -> MemorySnapshot:
@@ -44,14 +69,11 @@ def snapshot() -> MemorySnapshot:
             free_percent = int(m.group(1))
 
     swap = _run(["sysctl", "-n", "vm.swapusage"])
-    swap_used = swap_total = None
-    if swap:
-        tm = re.search(r"total\s*=\s*([0-9.]+)([KMGT])", swap, re.I)
-        um = re.search(r"used\s*=\s*([0-9.]+)([KMGT])", swap, re.I)
-        if tm:
-            swap_total = _to_gib(float(tm.group(1)), tm.group(2))
-        if um:
-            swap_used = _to_gib(float(um.group(1)), um.group(2))
+    if swap is None:
+        # Some macOS builds/tools behave differently with -n; the prefixed form
+        # is equivalent for our parser and gives us a second chance.
+        swap = _run(["sysctl", "vm.swapusage"])
+    swap_used, swap_total = _parse_swapusage(swap)
 
     return MemorySnapshot(
         free_percent=free_percent,
