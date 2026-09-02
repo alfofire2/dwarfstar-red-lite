@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0.dev8 — 2026-09-02
+
+Resident routed top-k layer correctness milestone on `v0.3-streaming`.
+
+- Added a native top-k Metal pool that keeps the selected expert set resident and pins all selected slots for the full routed-layer command buffer.
+- Added GPU-side router-weighted accumulation; expert outputs no longer return through Python/CPU before the final routed-layer output.
+- Added a top-k-aware hard-bounded global LRU. `acquire_many()` protects every expert in the current selection from eviction while remaining misses are loaded.
+- Added `redlite-topk parity` with deterministic non-contiguous expert selection and FP32 router weights by default.
+- The top-k executor reuses gate/up/activation/output scratch buffers across selected experts while keeping all expert weight triplets in their resident shared-Metal slots.
+- Validation asserts zero GGUF reads during the top-k Metal command after residency; a cold top-10 selection should require exactly 30 positional reads (gate/up/down for ten experts).
+- Added an independent CPU top-k reference that evaluates every selected expert FFN and performs the same weighted accumulation.
+- This remains a scalar correctness-first path; router-network integration, selected-expert SIMD batching, asynchronous prefetch and SSD/GPU overlap remain later milestones.
+
+## 0.3.0.dev7 — 2026-09-02
+
+Resident single-expert FFN milestone on `v0.3-streaming`.
+
+- Moved the field-validated IQ2_XS and IQ1_M kernels into a hard-bounded Metal resident expert pool.
+- Added complete resident expert execution: gate matvec, up matvec, `SiLU(gate) * up`, and down matvec.
+- Added `redlite-ffn parity` and an independent CPU reference for the complete quantized expert FFN.
+- Field validation on Apple M4 Pro passed both routed formats with numerical parity, one resident expert load, three positional reads and zero SSD reads during FFN execution.
+
 ## 0.3.0.dev6 — 2026-09-02
 
 Mixed routed-quant arithmetic validation milestone on `v0.3-streaming`.
