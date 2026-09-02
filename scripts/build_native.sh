@@ -6,24 +6,42 @@ OUT="$ROOT/.deps/redmetal"
 mkdir -p "$OUT"
 
 CC_BIN="${CC:-cc}"
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  NATIVE_FLAG="-mcpu=native"
-else
-  NATIVE_FLAG="-march=native"
-fi
+COMMON=(
+  "$ROOT/native/redlite_native_main.c"
+  "$ROOT/native/redlite_native_gguf.c"
+  "$ROOT/native/redlite_native_cache.c"
+  "$ROOT/native/redlite_native_model.c"
+  "$ROOT/native/redlite_native_tables.c"
+)
 
-"$CC_BIN" \
-  -O3 \
-  -std=c11 \
-  -D_FILE_OFFSET_BITS=64 \
-  -D_POSIX_C_SOURCE=200809L \
-  -Wall -Wextra -Wpedantic \
-  "$NATIVE_FLAG" \
-  -I"$ROOT/native" \
-  "$ROOT/native/redlite_native_main.c" \
-  "$ROOT/native/redlite_native_gguf.c" \
-  "$ROOT/native/redlite_native_cache.c" \
-  -o "$OUT/redlite-native"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  xcrun --sdk macosx clang \
+    -O3 \
+    -std=c11 \
+    -D_FILE_OFFSET_BITS=64 \
+    -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic \
+    -mcpu=native \
+    -fobjc-arc \
+    -I"$ROOT/native" \
+    "${COMMON[@]}" \
+    "$ROOT/native/redlite_native_metal.c" \
+    "$ROOT/native/redmetal_topk.m" \
+    -framework Foundation \
+    -framework Metal \
+    -o "$OUT/redlite-native"
+else
+  "$CC_BIN" \
+    -O3 \
+    -std=c11 \
+    -D_FILE_OFFSET_BITS=64 \
+    -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic \
+    -march=native \
+    -I"$ROOT/native" \
+    "${COMMON[@]}" \
+    -o "$OUT/redlite-native"
+fi
 
 "$OUT/redlite-native" selftest
 
