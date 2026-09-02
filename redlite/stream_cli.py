@@ -18,6 +18,14 @@ def main(argv=None) -> int:
     plan_cmd.add_argument("--cache-gib", type=float, default=4.0)
     plan_cmd.add_argument("--json", action="store_true")
 
+    audit_cmd = sub.add_parser(
+        "quant-audit",
+        help="Inspect the actual GGML quantization types of all routed gate/up/down tensors",
+    )
+    audit_cmd.add_argument("model")
+    audit_cmd.add_argument("--layers", action="store_true", help="Print per-layer gate/up/down types")
+    audit_cmd.add_argument("--json", action="store_true")
+
     probe_cmd = sub.add_parser("probe")
     probe_cmd.add_argument("model")
     probe_cmd.add_argument("--cache-gib", type=float, default=4.0)
@@ -40,7 +48,7 @@ def main(argv=None) -> int:
 
     parity_cmd = sub.add_parser(
         "iq2-parity",
-        help="Run a correctness-first IQ2_XXS single-expert Metal matvec parity test",
+        help="Run a correctness-first single-expert IQ2 Metal matvec parity test",
     )
     parity_cmd.add_argument("model")
     parity_cmd.add_argument("--layer", type=int, default=0)
@@ -59,6 +67,10 @@ def main(argv=None) -> int:
     if args.cmd == "plan":
         _, plan = make_streaming_plan(args.model, args.cache_gib)
         data = plan.to_dict()
+    elif args.cmd == "quant-audit":
+        from .quant_audit import audit_routed_quantization
+
+        data = audit_routed_quantization(args.model)
     elif args.cmd == "probe":
         data = probe_streaming(
             args.model,
@@ -111,11 +123,31 @@ def main(argv=None) -> int:
         print(f"reason            : {data['reason']}")
         return 0
 
+    if args.cmd == "quant-audit":
+        print(f"routed tensors    : {data['routed_tensor_count']}")
+        print(f"layers            : {data['layers']}")
+        print("type counts       : " + ", ".join(f"{name}={count}" for name, count in data['type_counts'].items()))
+        for kind in ("gate", "up", "down"):
+            values = data["by_kind"][kind]
+            print(f"{kind:17}: " + ", ".join(f"{name}={count}" for name, count in values.items()))
+        print("layer patterns    :")
+        for pattern, count in data["layer_patterns"].items():
+            print(f"  {count:3d} x {pattern}")
+        if args.layers:
+            print("per layer         :")
+            for layer, kinds in data["layer_detail"].items():
+                print(
+                    f"  {int(layer):2d}: gate={kinds.get('gate', 'MISSING')} "
+                    f"up={kinds.get('up', 'MISSING')} down={kinds.get('down', 'MISSING')}"
+                )
+        return 0
+
     if args.cmd == "iq2-parity":
         cache = data["cache"]
         metal = cache["metal"]
         addrs = data["gpu_addresses"]
         print(f"tensor            : {data['tensor']}")
+        print(f"quant             : {data.get('quant_name', data['ggml_type'])}")
         print(f"shape             : {tuple(data['shape'])}")
         print(f"layer/expert/kind : {data['layer']}/{data['expert']}/{data['kind']}")
         print(f"rows tested       : {data['row_start']}..{data['row_start'] + data['rows_tested'] - 1}")
