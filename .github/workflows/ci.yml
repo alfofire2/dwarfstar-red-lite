@@ -62,6 +62,8 @@ jobs:
         run: |
           redlite --version
           redlite-stream --help
+          redlite-ffn --help
+          redlite-topk --help
 
       - name: Import streaming modules
         run: |
@@ -76,6 +78,12 @@ jobs:
           from redlite.redmetal_exec_cache import ExecMetalExpertCache
           from redlite.redmetal_parity import quant_parity_probe
           from redlite.redmetal_quant import RedMetalQuantBridge
+          from redlite.redmetal_ffn import RedMetalFfnPool
+          from redlite.redmetal_ffn_cache import FfnMetalExpertCache
+          from redlite.redmetal_ffn_parity import expert_ffn_parity_probe
+          from redlite.redmetal_topk import RedMetalTopKPool
+          from redlite.redmetal_topk_cache import TopKMetalExpertCache
+          from redlite.redmetal_topk_parity import topk_layer_parity_probe
           from redlite.quant_reference import quant_row_dot, row_bytes_for_type
           from redlite.quant_tables import SUPPORTED_ROUTED_TYPES, quant_type_name
           print("streaming imports: OK")
