@@ -2,6 +2,7 @@ import struct
 import unittest
 
 from redlite.iq2_reference import deterministic_input, iq2_xxs_row_dot
+from redlite.quant_reference import quant_row_dot
 from redlite.redmetal import redmetal_built, redmetal_library_path
 from redlite.redmetal_streaming import sampled_fnv1a
 
@@ -19,12 +20,28 @@ class RedMetalTests(unittest.TestCase):
         self.assertIsInstance(redmetal_built(), bool)
 
     def test_iq2_reference_known_all_ones_block(self):
-        # d=1.0, all grid indices=0, sign/scale word=0. Grid[0] is eight
-        # 0x08 values and db=1*(0.5+0)*0.25=0.125, so every decoded
-        # weight is exactly 1.0.
+        # Legacy dev5 IQ2_XXS reference sanity check.
         block = struct.pack("<e", 1.0) + bytes(64)
         x = deterministic_input(256)
         self.assertAlmostEqual(iq2_xxs_row_dot(block, x), sum(x), places=6)
+
+    def test_iq2_xs_reference_known_all_ones_block(self):
+        # IQ2_XS: d=1, all 32 packed q words=0, all nibble scales=0.
+        # With a synthetic grid containing only 8s, db=0.125 and every
+        # decoded weight is exactly 1.0.
+        block = struct.pack("<e", 1.0) + bytes(64) + bytes(8)
+        grid = (8,) * (512 * 8)
+        self.assertAlmostEqual(quant_row_dot(block, 17, [1.0] * 256, grid), 256.0, places=6)
+
+    def test_iq1_m_reference_known_block(self):
+        # IQ1_M has no standalone d field. Encode fp16(1.0)=0x3c00 in
+        # the top nibbles of the four scale words, keep all 3-bit scales
+        # zero, qh delta bit clear, and use a synthetic zero grid.
+        # Each decoded weight is then 1 * (2*0+1) * (0 + 0.125)=0.125.
+        scales = struct.pack("<4H", 0x0000, 0x0000, 0xC000, 0x3000)
+        block = bytes(32) + bytes(16) + scales
+        grid = (0,) * (2048 * 8)
+        self.assertAlmostEqual(quant_row_dot(block, 29, [1.0] * 256, grid), 32.0, places=6)
 
 
 if __name__ == "__main__":
