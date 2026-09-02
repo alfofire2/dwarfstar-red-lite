@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import os
 from pathlib import Path
-from typing import Any, Iterable
+import threading
+from typing import Any
 
 from .expert_map import ExpertMap
 
@@ -71,6 +72,7 @@ class ExpertStore:
         self.fd = os.open(self.path, os.O_RDONLY)
         self.file_size = os.fstat(self.fd).st_size
         self.stats = StoreStats()
+        self._stats_lock = threading.Lock()
 
     def close(self) -> None:
         if self.fd >= 0:
@@ -99,12 +101,13 @@ class ExpertStore:
                 chunk = os.pread(self.fd, remaining, offset + cursor)
                 n = len(chunk)
                 target[:n] = chunk
-            self.stats.read_calls += 1
             if n <= 0:
                 raise EOFError(
                     f"short read at offset={offset + cursor}; wanted {remaining} more bytes"
                 )
-            self.stats.bytes_read += n
+            with self._stats_lock:
+                self.stats.read_calls += 1
+                self.stats.bytes_read += n
             cursor += n
             remaining -= n
 
