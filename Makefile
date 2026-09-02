@@ -13,4 +13,4 @@ install:
 	./scripts/install.sh
 
 redmetal:
-	./scripts/build_redmetal.sh
+	bash ./scripts/build_redmetal.sh
