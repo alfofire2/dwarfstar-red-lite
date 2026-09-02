@@ -16,6 +16,7 @@ fi
   -O3 \
   -std=c11 \
   -D_FILE_OFFSET_BITS=64 \
+  -D_POSIX_C_SOURCE=200809L \
   -Wall -Wextra -Wpedantic \
   "$NATIVE_FLAG" \
   -I"$ROOT/native" \
