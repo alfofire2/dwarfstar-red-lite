@@ -22,6 +22,15 @@ class CliTests(unittest.TestCase):
         a = self.p.parse_args(["sweep", "x.gguf", "--contexts", "2048,4096,8192"])
         self.assertEqual(a.contexts, [2048, 4096, 8192])
 
+    def test_stream_plan_args(self):
+        a = self.p.parse_args(["stream-plan", "x.gguf", "--cache-gib", "4"])
+        self.assertEqual(a.cache_gib, 4.0)
+
+    def test_stream_probe_args(self):
+        a = self.p.parse_args(["stream-probe", "x.gguf", "--cache-mib", "512", "--prefetch", "8"])
+        self.assertEqual(a.cache_mib, 512)
+        self.assertEqual(a.prefetch, 8)
+
 
 if __name__ == "__main__":
     unittest.main()
