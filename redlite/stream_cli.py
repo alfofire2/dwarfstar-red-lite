@@ -38,6 +38,22 @@ def main(argv=None) -> int:
     metal_cmd.add_argument("--slots-per-slab", type=int, default=64)
     metal_cmd.add_argument("--json", action="store_true")
 
+    parity_cmd = sub.add_parser(
+        "iq2-parity",
+        help="Run a correctness-first IQ2_XXS single-expert Metal matvec parity test",
+    )
+    parity_cmd.add_argument("model")
+    parity_cmd.add_argument("--layer", type=int, default=0)
+    parity_cmd.add_argument("--expert", type=int, default=0)
+    parity_cmd.add_argument("--kind", choices=("gate", "up", "down"), default="gate")
+    parity_cmd.add_argument("--row-start", type=int, default=0)
+    parity_cmd.add_argument("--rows", type=int, default=8)
+    parity_cmd.add_argument("--cache-gib", type=float, default=0.25)
+    parity_cmd.add_argument("--slots-per-slab", type=int, default=64)
+    parity_cmd.add_argument("--atol", type=float, default=1e-3)
+    parity_cmd.add_argument("--rtol", type=float, default=1e-4)
+    parity_cmd.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "plan":
@@ -52,7 +68,7 @@ def main(argv=None) -> int:
             prefetch_depth=args.prefetch_depth,
             prefetch_workers=args.prefetch_workers,
         )
-    else:
+    elif args.cmd == "metal-probe":
         from .redmetal_streaming import probe_redmetal
 
         data = probe_redmetal(
@@ -61,6 +77,21 @@ def main(argv=None) -> int:
             args.steps,
             args.top_k,
             slots_per_slab=args.slots_per_slab,
+        )
+    else:
+        from .redmetal_parity import iq2_parity_probe
+
+        data = iq2_parity_probe(
+            args.model,
+            layer=args.layer,
+            expert=args.expert,
+            kind=args.kind,
+            row_start=args.row_start,
+            rows=args.rows,
+            cache_gib=args.cache_gib,
+            slots_per_slab=args.slots_per_slab,
+            atol=args.atol,
+            rtol=args.rtol,
         )
 
     if args.json:
@@ -79,6 +110,31 @@ def main(argv=None) -> int:
         print(f"probe ready       : {'YES' if data['ready_for_probe'] else 'NO'}")
         print(f"reason            : {data['reason']}")
         return 0
+
+    if args.cmd == "iq2-parity":
+        cache = data["cache"]
+        metal = cache["metal"]
+        addrs = data["gpu_addresses"]
+        print(f"tensor            : {data['tensor']}")
+        print(f"shape             : {tuple(data['shape'])}")
+        print(f"layer/expert/kind : {data['layer']}/{data['expert']}/{data['kind']}")
+        print(f"rows tested       : {data['row_start']}..{data['row_start'] + data['rows_tested'] - 1}")
+        print(f"row bytes         : {data['row_bytes']}")
+        print(f"slot              : {data['slot_id']}/{cache['slot_capacity']}")
+        print(f"Metal slabs       : {metal['slab_count']}")
+        print(f"Metal allocated   : {metal['allocated_bytes']/(1024**3):.3f} GiB")
+        print(f"GPU addr gate     : 0x{addrs['gate']:016x}")
+        print(f"GPU addr up       : 0x{addrs['up']:016x}")
+        print(f"GPU addr down     : 0x{addrs['down']:016x}")
+        print(f"slot in-flight    : {'YES' if data['inflight_after_wait'] else 'NO'}")
+        print(f"GPU matvec        : {data['gpu_ms']:.3f} ms")
+        print(f"max abs error     : {data['max_abs_error']:.6g}")
+        print(f"max rel error     : {data['max_rel_error']:.6g}")
+        print(f"parity match      : {'YES' if data['match'] else 'NO'}")
+        for index, (gpu, cpu) in enumerate(zip(data['gpu'], data['cpu'])):
+            print(f"row {data['row_start'] + index:4d}        : gpu={gpu:+.7f} cpu={cpu:+.7f} delta={gpu-cpu:+.3e}")
+        print(f"note              : {data['note']}")
+        return 0 if data["match"] else 2
 
     probe = data["probe"]
     stats = probe["cache"]
