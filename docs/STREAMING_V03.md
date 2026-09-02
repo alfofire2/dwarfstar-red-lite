@@ -34,13 +34,7 @@ ExpertSlotCache
 expert gate+up+down bytes in RAM
 ```
 
-The cache allocates slots lazily, but the number of slots is fixed by:
-
-```text
-floor(cache_budget_bytes / max_expert_triplet_bytes)
-```
-
-Eviction recycles an existing slot instead of allocating more memory. This makes the Red Lite-owned expert cache deterministic: `allocated_bytes <= budget_bytes`.
+The cache allocates slots lazily, but the number of slots is fixed by `floor(cache_budget_bytes / max_expert_triplet_bytes)`. Eviction recycles an existing slot instead of allocating more memory.
 
 ## Why dev1/dev2 were replaced
 
@@ -48,7 +42,7 @@ Eviction recycles an existing slot instead of allocating more memory. This makes
 - dev2 used one whole-file mmap plus `madvise`. It fixed the file-descriptor failure, but mmap page residency is not a sufficiently deterministic representation of a hard expert-cache budget.
 - dev3 uses explicit reads into reusable allocated slots, matching the broad DS4 SSD-streaming design more closely.
 
-## dev4 Red Metal path
+## dev4 Red Metal residency
 
 The first native Metal milestone removes the production-path `bytearray` copy. Expert slots are ranges inside lazily allocated `MTLStorageModeShared` slabs:
 
@@ -68,26 +62,70 @@ shared Metal slab
 Metal compute-visible bytes
 ```
 
-The hard cache capacity still comes from `floor(cache_budget / slot_bytes)`. Slabs are allocated lazily and never beyond that budget. The Python LRU recycles slot ids; the native bridge reuses the same Metal ranges.
-
-Build the native bridge on Apple Silicon macOS with:
+Build with:
 
 ```bash
 make redmetal
 ```
 
-Then verify direct SSD -> shared Metal residency with:
+Verify storage-to-GPU visibility with:
 
 ```bash
 redlite-stream metal-probe MODEL.gguf \
-  --cache-gib 0.5 \
+  --cache-gib 0.25 \
   --steps 1 \
   --top-k 10
 ```
 
-`metal-probe` performs a deterministic router trace, reads cache misses directly into `MTLBuffer.contents`, and finally runs a small Metal compute kernel over one resident expert. A verification-only CPU reread computes the same sampled FNV-1a checksum; `checksum match: YES` proves that the GPU sees the bytes loaded from the GGUF without a production-path intermediate Python buffer.
+Field validation on the Apple M4 Pro reference machine produced an exact GPU/CPU checksum match while respecting a 0.25 GiB hard Metal cache budget.
 
-The probe kernel is intentionally not a MoE matmul. It validates storage-to-Metal visibility and slab reuse before introducing IQ2_XXS arithmetic.
+## dev5 address tables, lifetime and IQ2 parity
+
+Dev5 adds the first arithmetic execution path while keeping the dev4 probe intact as a regression baseline.
+
+Each resident `(layer, expert)` is installed in three GPU-visible shared address tables:
+
+```text
+layer L
+  gate[expert] -> slab GPU address + slot base
+  up[expert]   -> gate + gate_bytes
+  down[expert] -> up + up_bytes
+```
+
+Before a slot is reused, the LRU queries native in-flight state. `pread()` refuses to overwrite a slot while a Metal command still references it. Eviction also clears the old address-table entry before the slot is recycled.
+
+The first IQ2 kernel is intentionally correctness-first, not performance-tuned. It uses the canonical ggml IQ2_XXS physical format:
+
+```text
+256 values / block
+66 bytes / block
+  2 bytes  FP16 d
+ 64 bytes  packed IQ2 codebook/sign/scale data
+```
+
+For each tested row, Metal decodes the quantized expert weights directly from the SSD-filled shared slab and computes a FP32 dot product. An independent pure-Python decoder rereads the same GGUF row and computes the reference value.
+
+Run the parity probe with:
+
+```bash
+redlite-stream iq2-parity MODEL.gguf \
+  --layer 0 \
+  --expert 0 \
+  --kind gate \
+  --rows 8 \
+  --cache-gib 0.25
+```
+
+The command validates before dispatch that:
+
+- the selected routed tensor is GGML type 16 (`IQ2_XXS`)
+- the expert axis and rank match the mapped Qwen3-Next layout
+- `ncols` is a multiple of 256
+- the physical expert slice length equals `nrows * (ncols / 256 * 66)`
+- the gate/up/down GPU addresses are non-zero
+- the slot is no longer in-flight after the synchronous parity command returns
+
+The key output is `parity match: YES`, together with max absolute/relative error and per-row GPU/CPU values.
 
 ## Python storage probe
 
@@ -104,4 +142,14 @@ The Python probe remains useful for cache-policy and prefetch experiments. It me
 
 ## Next Metal milestone
 
-After `metal-probe` is validated on the target M4 Pro, the next stage is to replace the probe kernel with a Qwen3-Next routed-expert execution path. The native cache will expose the resident slot's gate/up/down buffer offsets to an IQ2_XXS Metal kernel, with in-flight slot protection before eviction. Correctness will be checked against the pinned llama.cpp Qwen3-Next implementation before performance tuning.
+After dev5 numerical parity is field-validated on the target M4 Pro, the next path is:
+
+1. vectorize the IQ2_XXS matvec with SIMD-groups while preserving parity
+2. run gate and up from the resident address table
+3. fuse SiLU(gate) * up
+4. add the down projection
+5. accumulate the router top-k weighted expert outputs
+6. overlap expert `pread` with useful Metal work
+7. compare complete routed-FFN output with the pinned llama.cpp Qwen3-Next implementation
+
+Full generation is not claimed until that routed-FFN parity exists.
