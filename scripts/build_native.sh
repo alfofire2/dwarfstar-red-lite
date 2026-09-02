@@ -28,6 +28,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -D_FILE_OFFSET_BITS=64 \
     -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic \
+    -Wno-overlength-strings \
+    -Wno-gnu-conditional-omitted-operand \
     -mcpu=native \
     -fobjc-arc \
     -I"$ROOT/native" \
