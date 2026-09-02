@@ -32,6 +32,7 @@ GGML_TYPE_NAMES = {
     21: "IQ3_S",
     22: "IQ2_S",
     23: "IQ4_XS",
+    29: "IQ1_M",
     30: "BF16",
 }
 
