@@ -1,6 +1,7 @@
 #include "redlite_native_cache.h"
 #include "redlite_native_gguf.h"
 #include "redlite_native_model.h"
+#include "redlite_native_reference.h"
 #include "redlite_native_tables.h"
 
 #ifdef __APPLE__
@@ -9,6 +10,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,14 +28,15 @@ static uint64_t round_up_u64(uint64_t value, uint64_t alignment) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-native 0.3.0.dev10\n"
+        "redlite-native 0.3.0.dev11\n"
         "Standalone native runtime for DwarfStar Red Lite.\n\n"
         "Usage:\n"
         "  redlite-native inspect MODEL [--cache-mib N] [--expert-count N] [--layers]\n"
         "  redlite-native topk-probe MODEL [--layer N] [--top-k N] [--rows N] [--cache-mib N]\n"
+        "  redlite-native topk-parity MODEL [--layer N] [--top-k N] [--rows N] [--cache-mib N]\n"
         "  redlite-native selftest\n\n"
-        "inspect/selftest require no Python. On macOS, topk-probe additionally executes\n"
-        "the resident IQ2_XS/IQ1_M top-k Metal path directly from the native C runtime.\n");
+        "inspect/selftest and the CPU quant oracle require no Python. On macOS, topk-probe\n"
+        "and topk-parity execute the resident IQ2_XS/IQ1_M Metal path directly.\n");
 }
 
 static int parse_u64(const char *s, uint64_t *out) {
@@ -46,13 +49,53 @@ static int parse_u64(const char *s, uint64_t *out) {
     return 1;
 }
 
+static int quant_reference_selftest(char *error, size_t error_cap) {
+    float ones[256];
+    for (size_t i = 0; i < 256; ++i) ones[i] = 1.0f;
+
+    uint8_t iq2_block[74] = {0};
+    iq2_block[0] = 0x00;
+    iq2_block[1] = 0x3c;
+    int8_t *iq2_grid = (int8_t *)malloc(RL_IQ2_XS_GRID_COUNT);
+    int8_t *iq1_grid = (int8_t *)calloc(RL_IQ1_M_GRID_COUNT, 1);
+    if (!iq2_grid || !iq1_grid) {
+        free(iq2_grid); free(iq1_grid);
+        snprintf(error, error_cap, "out of memory for native quant selftest");
+        return 0;
+    }
+    memset(iq2_grid, 8, RL_IQ2_XS_GRID_COUNT);
+    double dot = 0.0;
+    if (!rl_native_quant_row_dot(iq2_block, sizeof(iq2_block), 17u, ones, 256u,
+                                 iq2_grid, RL_IQ2_XS_GRID_COUNT, &dot, error, error_cap) ||
+        fabs(dot - 256.0) > 1e-9) {
+        if (error && error_cap && !error[0]) snprintf(error, error_cap, "IQ2_XS native reference selftest mismatch");
+        free(iq2_grid); free(iq1_grid);
+        return 0;
+    }
+
+    uint8_t iq1_block[56] = {0};
+    iq1_block[52] = 0x00; iq1_block[53] = 0xc0;
+    iq1_block[54] = 0x00; iq1_block[55] = 0x30;
+    dot = 0.0;
+    if (!rl_native_quant_row_dot(iq1_block, sizeof(iq1_block), 29u, ones, 256u,
+                                 iq1_grid, RL_IQ1_M_GRID_COUNT, &dot, error, error_cap) ||
+        fabs(dot - 32.0) > 1e-9) {
+        if (error && error_cap && !error[0]) snprintf(error, error_cap, "IQ1_M native reference selftest mismatch");
+        free(iq2_grid); free(iq1_grid);
+        return 0;
+    }
+    free(iq2_grid); free(iq1_grid);
+    if (error && error_cap) error[0] = '\0';
+    return 1;
+}
+
 static int cache_selftest(void) {
     rl_native_lru cache;
     if (!rl_native_lru_init(&cache, 3)) {
         fprintf(stderr, "native LRU init failed\n");
         return 1;
     }
-    char error[256];
+    char error[256] = {0};
     rl_cache_key first[] = {{0, 7}, {0, 54}, {0, 101}};
     uint32_t slots[3];
     if (!rl_native_lru_acquire_many(&cache, first, 3, slots, error, sizeof(error))) {
@@ -114,11 +157,18 @@ static int cache_selftest(void) {
     const uint64_t iq1_hash = rl_native_quant_table_fnv1a(tables.iq1_m, RL_IQ1_M_GRID_COUNT);
     rl_native_quant_tables_free(&tables);
 
+    if (!quant_reference_selftest(error, sizeof(error))) {
+        fprintf(stderr, "native quant reference selftest failed: %s\n", error);
+        rl_native_lru_free(&cache);
+        return 1;
+    }
+
     printf("native selftest     : OK\n");
     printf("LRU top-k protect  : OK\n");
     printf("in-flight protect  : OK\n");
     printf("hard capacity      : OK\n");
     printf("quant tables       : OK\n");
+    printf("quant CPU oracle   : OK\n");
     printf("IQ2_XS grid FNV    : 0x%016" PRIx64 "\n", iq2_hash);
     printf("IQ1_M grid FNV     : 0x%016" PRIx64 "\n", iq1_hash);
     printf("python dependency  : NONE\n");
@@ -263,7 +313,7 @@ static void default_weights(float *out, uint32_t top_k) {
     for (uint32_t i = 0; i < top_k; ++i) out[i] = (float)(top_k - i) / total;
 }
 
-static int topk_probe(int argc, char **argv) {
+static int topk_command(int argc, char **argv, int do_parity) {
     if (argc < 3) {
         usage(stderr);
         return 2;
@@ -277,17 +327,17 @@ static int topk_probe(int argc, char **argv) {
         else if (strcmp(argv[i], "--rows") == 0) target = &rows64;
         else if (strcmp(argv[i], "--cache-mib") == 0) target = &cache_mib;
         else {
-            fprintf(stderr, "unknown topk-probe option: %s\n", argv[i]);
+            fprintf(stderr, "unknown native top-k option: %s\n", argv[i]);
             return 2;
         }
         if (i + 1 >= argc || !parse_u64(argv[++i], target)) {
-            fprintf(stderr, "invalid value for topk-probe option\n");
+            fprintf(stderr, "invalid value for native top-k option\n");
             return 2;
         }
     }
     if (layer64 >= RL_NATIVE_MAX_LAYERS || !top_k64 || top_k64 > NATIVE_TOPK_MAX ||
         !rows64 || rows64 > UINT32_MAX || !cache_mib || cache_mib > UINT64_MAX / MIB) {
-        fprintf(stderr, "topk-probe arguments out of range\n");
+        fprintf(stderr, "native top-k arguments out of range\n");
         return 2;
     }
 
@@ -304,7 +354,7 @@ static int topk_probe(int argc, char **argv) {
         return 1;
     }
     if (top_k64 > info.expert_count || rows64 > info.hidden_size) {
-        fprintf(stderr, "topk-probe top-k/rows exceed model dimensions\n");
+        fprintf(stderr, "native top-k top-k/rows exceed model dimensions\n");
         rl_native_free_expert_map(&map);
         return 2;
     }
@@ -316,9 +366,10 @@ static int topk_probe(int argc, char **argv) {
 
     float *input = (float *)malloc((size_t)info.hidden_size * sizeof(float));
     float *output = (float *)calloc((size_t)rows64, sizeof(float));
-    if (!input || !output) {
+    double *cpu = do_parity ? (double *)calloc((size_t)rows64, sizeof(double)) : NULL;
+    if (!input || !output || (do_parity && !cpu)) {
         fprintf(stderr, "out of memory for native top-k activations\n");
-        free(input); free(output); rl_native_free_expert_map(&map);
+        free(input); free(output); free(cpu); rl_native_free_expert_map(&map);
         return 1;
     }
     for (uint32_t i = 0; i < info.hidden_size; ++i)
@@ -328,7 +379,7 @@ static int topk_probe(int argc, char **argv) {
         model, &map, cache_mib * MIB, 64u, error, sizeof(error));
     if (!runtime) {
         fprintf(stderr, "native Metal runtime creation failed: %s\n", error);
-        free(input); free(output); rl_native_free_expert_map(&map);
+        free(input); free(output); free(cpu); rl_native_free_expert_map(&map);
         return 1;
     }
 
@@ -340,8 +391,30 @@ static int topk_probe(int argc, char **argv) {
     if (!ok) {
         fprintf(stderr, "native top-k execution failed: %s\n", error);
         rl_native_metal_destroy(runtime);
-        free(input); free(output); rl_native_free_expert_map(&map);
+        free(input); free(output); free(cpu); rl_native_free_expert_map(&map);
         return 1;
+    }
+
+    double cpu_ms = 0.0;
+    int match = 1;
+    double max_abs = 0.0, max_rel = 0.0;
+    if (do_parity) {
+        if (!rl_native_reference_topk(model, &map, (uint32_t)layer64, experts, weights,
+                                      (uint32_t)top_k64, 0u, (uint32_t)rows64,
+                                      input, info.hidden_size, cpu, (uint32_t)rows64,
+                                      &cpu_ms, error, sizeof(error))) {
+            fprintf(stderr, "native CPU top-k reference failed: %s\n", error);
+            rl_native_metal_destroy(runtime);
+            free(input); free(output); free(cpu); rl_native_free_expert_map(&map);
+            return 1;
+        }
+        for (uint32_t r = 0; r < (uint32_t)rows64; ++r) {
+            const double err = fabs((double)output[r] - cpu[r]);
+            const double rel = err / fmax(fabs(cpu[r]), 1e-12);
+            if (err > max_abs) max_abs = err;
+            if (rel > max_rel) max_rel = rel;
+            if (err > 1e-3 + 1e-4 * fabs(cpu[r])) match = 0;
+        }
     }
 
     float weight_sum = 0.0f;
@@ -366,15 +439,27 @@ static int topk_probe(int argc, char **argv) {
     printf("SSD during top-k   : %" PRIu64 " bytes / %" PRIu64 " calls\n",
         telemetry.bytes_read_during_execute, telemetry.read_calls_during_execute);
     printf("GPU top-k layer    : %.3f ms\n", telemetry.gpu_ms);
-    for (uint32_t row = 0; row < (uint32_t)rows64; ++row)
-        printf("row %4u           : %+0.7f\n", row, output[row]);
-    printf("note               : This path parses GGUF, plans LRU residency, loads expert misses, and submits Metal top-k execution without Python or ctypes.\n");
+    if (do_parity) {
+        printf("CPU reference      : %.3f ms\n", cpu_ms);
+        printf("max abs error      : %.6g\n", max_abs);
+        printf("max rel error      : %.6g\n", max_rel);
+        printf("parity match       : %s\n", match ? "YES" : "NO");
+        for (uint32_t row = 0; row < (uint32_t)rows64; ++row)
+            printf("row %4u           : gpu=%+0.7f cpu=%+0.7f delta=%+.3e\n",
+                row, output[row], cpu[row], (double)output[row] - cpu[row]);
+    } else {
+        for (uint32_t row = 0; row < (uint32_t)rows64; ++row)
+            printf("row %4u           : %+0.7f\n", row, output[row]);
+    }
+    printf("note               : GGUF parsing, LRU residency, expert loading, Metal top-k and%s CPU reference all run without Python.\n",
+        do_parity ? " native" : " no");
 
     rl_native_metal_destroy(runtime);
     free(input);
     free(output);
+    free(cpu);
     rl_native_free_expert_map(&map);
-    return 0;
+    return do_parity && !match ? 2 : 0;
 }
 #endif
 
@@ -385,11 +470,11 @@ int main(int argc, char **argv) {
     }
     if (strcmp(argv[1], "selftest") == 0) return cache_selftest();
     if (strcmp(argv[1], "inspect") == 0) return inspect_model(argc, argv);
-    if (strcmp(argv[1], "topk-probe") == 0) {
+    if (strcmp(argv[1], "topk-probe") == 0 || strcmp(argv[1], "topk-parity") == 0) {
 #ifdef __APPLE__
-        return topk_probe(argc, argv);
+        return topk_command(argc, argv, strcmp(argv[1], "topk-parity") == 0);
 #else
-        fprintf(stderr, "topk-probe requires macOS Metal\n");
+        fprintf(stderr, "%s requires macOS Metal\n", argv[1]);
         return 2;
 #endif
     }
