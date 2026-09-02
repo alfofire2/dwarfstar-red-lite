@@ -17,6 +17,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native:
+    name: ${{ matrix.os }} / native C runtime
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build native runtime
+        run: make native
+
+      - name: Native CLI smoke
+        shell: bash
+        run: |
+          .deps/redmetal/redlite-native --help
+          .deps/redmetal/redlite-native selftest
+
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
