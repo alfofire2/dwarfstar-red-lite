@@ -146,7 +146,10 @@ static int tensor_offset_cmp(const void *a, const void *b) {
 static int parse_expert_name(const char *name, uint32_t *layer, rl_expert_kind *kind) {
     unsigned l = 0;
     char suffix[32] = {0};
-    if (sscanf(name, "blk.%u.ffn_%31[^.]_exps.weight", &l, suffix) != 2) return 0;
+    /* Stop the suffix at the underscore before `_exps`. The previous `[^.]`
+       scanset consumed `gate_exps`/`up_exps`/`down_exps`, so the exact-name
+       reconstruction became `*_exps_exps.weight` and rejected every routed tensor. */
+    if (sscanf(name, "blk.%u.ffn_%31[^_]_exps.weight", &l, suffix) != 2) return 0;
     char expected[96];
     snprintf(expected, sizeof(expected), "blk.%u.ffn_%s_exps.weight", l, suffix);
     if (strcmp(name, expected) != 0) return 0;
