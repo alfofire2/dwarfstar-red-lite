@@ -2,10 +2,13 @@ import unittest
 from unittest.mock import patch
 
 from redlite.expert_map import TensorInfo
-from redlite.quant_audit import audit_routed_quantization
+from redlite.quant_audit import audit_routed_quantization, ggml_type_name
 
 
 class QuantAuditTests(unittest.TestCase):
+    def test_type_29_is_iq1_m(self):
+        self.assertEqual(ggml_type_name(29), "IQ1_M")
+
     def test_audit_uses_span_bytes_and_reports_patterns(self):
         infos = [
             TensorInfo(
@@ -27,7 +30,7 @@ class QuantAuditTests(unittest.TestCase):
             TensorInfo(
                 name="blk.0.ffn_down_exps.weight",
                 shape=(768, 2048, 512),
-                ggml_type=16,
+                ggml_type=29,
                 relative_offset=3579,
                 absolute_offset=7675,
                 span_bytes=3456,
@@ -38,11 +41,11 @@ class QuantAuditTests(unittest.TestCase):
 
         self.assertEqual(data["routed_tensor_count"], 3)
         self.assertEqual(data["layers"], 1)
-        self.assertEqual(data["type_counts"], {"IQ2_XS": 2, "IQ2_XXS": 1})
+        self.assertEqual(data["type_counts"], {"IQ1_M": 1, "IQ2_XS": 2})
         self.assertEqual(data["by_kind"]["gate"], {"IQ2_XS": 1})
         self.assertEqual(data["by_kind"]["up"], {"IQ2_XS": 1})
-        self.assertEqual(data["by_kind"]["down"], {"IQ2_XXS": 1})
-        self.assertEqual(data["layer_patterns"], {"IQ2_XS/IQ2_XS/IQ2_XXS": 1})
+        self.assertEqual(data["by_kind"]["down"], {"IQ1_M": 1})
+        self.assertEqual(data["layer_patterns"], {"IQ2_XS/IQ2_XS/IQ1_M": 1})
         self.assertEqual(data["tensors"][0]["bytes"], 1234)
 
 
