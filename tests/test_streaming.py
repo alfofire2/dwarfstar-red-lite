@@ -42,6 +42,26 @@ class StreamingTests(unittest.TestCase):
             self.assertGreater(cache.stats.evictions, 0)
             self.assertLessEqual(cache.stats.mapped_bytes, cache.budget_bytes)
 
+    def test_thousands_of_entries_share_one_file_mapping(self):
+        # Regression for macOS EMFILE: dev1 created a separate mmap/file handle
+        # for each expert slice. The cache must scale in entry count without
+        # scaling OS file descriptors.
+        size = 16 * 1024 * 1024
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.truncate(size)
+            name = f.name
+        self.addCleanup(lambda: Path(name).unlink(missing_ok=True))
+
+        with MmapExpertCache(name, 12 * 1024 * 1024) as cache:
+            for i in range(2500):
+                offset = (i * 4096) % (size - 4096)
+                view = cache.acquire(CacheKey(i // 512, i, "gate"), offset, 4096)
+                self.assertEqual(len(view), 4096)
+                view.release()
+            self.assertEqual(cache.stats.misses, 2500)
+            self.assertLessEqual(cache.stats.mapped_bytes, cache.budget_bytes)
+            self.assertGreater(len(cache.entries), 1000)
+
 
 if __name__ == "__main__":
     unittest.main()
