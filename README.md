@@ -51,11 +51,29 @@ inference* over claiming every mode is GPU accelerated.
 
 | Mode | Quant | Approx file size | Backend | Trade-off |
 |---|---|---:|---|---|
-| Fastest practical resident | IQ2_XXS | ~19.3 GB | Metal | Very low quant quality; 2K is the conservative 24 GiB default, then validate 4K/8K with `redlite sweep` |
+| Fastest practical resident | IQ2_XXS | ~19.3 GB | Metal | Very low quant quality; M4 Pro 24 GiB field profile defaults to 4K, other unvalidated tight 24 GiB profiles remain at 2K |
 | Slightly better quant | IQ2_XS | ~22.2 GB | SSD/CPU by default | Too tight for conservative 24 GB Metal budget |
 | Quality profile | Q4_K_M | ~48.4 GB | SSD/CPU | Much better quant quality, heavy SSD traffic |
 
 The planner uses the *actual GGUF file size*, not the marketing parameter count.
+
+### Field-validated M4 Pro / 24 GiB presets
+
+For the 17.97 GiB Bartowski IQ2_XXS model on Apple M4 Pro 24 GiB:
+
+- **2K:** conservative
+- **4K:** default
+- **8K:** experimental
+
+A controlled sweep completed all three depths with zero observed swap growth:
+
+| Context | Prompt tok/s | Generation tok/s | Swap delta |
+|---:|---:|---:|---:|
+| 2048 | 258.8 | 38.0 | +0.00 GiB |
+| 4096 | 247.2 | 36.4 | +0.00 GiB |
+| 8192 | 236.7 | 36.9 | +0.00 GiB |
+
+The planner still labels these fits `CRITICAL` because the estimated headroom remains below 1 GiB. See `docs/FIELD_VALIDATION_M4PRO_24GB.md`.
 
 ## Requirements
 
@@ -118,14 +136,16 @@ redlite download quality --dir models
 redlite plan models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
 ```
 
-Typical 24 GB decision:
+On the field-validated Apple M4 Pro / 24 GiB profile, the default is now:
 
 ```text
 mode             : metal-resident
 status           : CRITICAL
-context          : 2048
+context          : 4096
 budget pass      : YES
 ```
+
+For other unvalidated tight 24 GiB machines, the planner remains conservative and may choose 2048.
 
 For Q4_K_M the planner should choose:
 
@@ -209,9 +229,16 @@ architecture. This avoids shipping an unvalidated hand-written Gated DeltaNet ke
 
 ## What is and is not validated
 
-Red Lite has completed real field validation on an **Apple M4 Pro with 24 GiB unified memory** using the 17.97 GiB Bartowski IQ2_XXS build of Qwen3-Next-80B-A3B-Instruct. Interactive Metal inference succeeded at 2K context with observed generation throughput of roughly **30.7–40.7 tok/s** during that session.
+Red Lite has completed real field validation on an **Apple M4 Pro with 24 GiB unified memory** using the 17.97 GiB Bartowski IQ2_XXS build of Qwen3-Next-80B-A3B-Instruct.
 
-The Python control plane and memory-policy tests are also validated. The oversized Q4 path is based on a separately validated 48.41 GB Qwen3-Next run on a 16 GB M1. Field numbers are observations, not guarantees: macOS memory pressure depends on other processes, context size, build revision and GGUF layout. See `docs/FIELD_VALIDATION_M4PRO_24GB.md`.
+Interactive Metal inference succeeded at 2K with observed generation throughput of roughly **30.7–40.7 tok/s**. A later controlled sweep completed **2K, 4K and 8K with zero observed swap growth**, measuring approximately **38.0, 36.4 and 36.9 generation tok/s** respectively.
+
+The Python control plane and memory-policy tests are also validated. The oversized Q4 path is based on a separately validated 48.41 GB Qwen3-Next run on a 16 GB M1. Field numbers are observations, not guarantees: macOS memory pressure depends on other processes, context size, build revision and GGUF layout.
+
+See:
+
+- `docs/FIELD_VALIDATION_M4PRO_24GB.md`
+- `benchmarks/m4pro-24gb-sweep-2026-09-02.json`
 
 ## Development
 
