@@ -43,7 +43,37 @@ def _class_literals(source: str, class_name: str) -> dict[str, object]:
     raise ValueError(f"class {class_name!r} not found in pinned llama.cpp quants.py")
 
 
-def _decode_grid(shape: Sequence[int], grid_map: Sequence[int], grid_hex: Sequence[bytes]) -> tuple[int, ...]:
+def _ascii_hex_bytes(grid_hex: object) -> bytes:
+    """Normalize gguf-py's grid_hex literal to one ASCII-hex byte string.
+
+    Current llama.cpp quant classes use an implicitly concatenated bytes literal,
+    so ast.literal_eval() returns one ``bytes`` object. Older/generated forms may
+    use a tuple/list of bytes or strings; accept those too for robustness.
+    """
+    if isinstance(grid_hex, bytes):
+        return grid_hex
+    if isinstance(grid_hex, bytearray):
+        return bytes(grid_hex)
+    if isinstance(grid_hex, str):
+        return grid_hex.encode("ascii")
+    if isinstance(grid_hex, Sequence):
+        parts: list[bytes] = []
+        for part in grid_hex:
+            if isinstance(part, bytes):
+                parts.append(part)
+            elif isinstance(part, bytearray):
+                parts.append(bytes(part))
+            elif isinstance(part, str):
+                parts.append(part.encode("ascii"))
+            else:
+                raise TypeError(
+                    f"unsupported quant grid_hex sequence item {type(part).__name__}"
+                )
+        return b"".join(parts)
+    raise TypeError(f"unsupported quant grid_hex value {type(grid_hex).__name__}")
+
+
+def _decode_grid(shape: Sequence[int], grid_map: Sequence[int], grid_hex: object) -> tuple[int, ...]:
     if len(shape) != 2 or not shape[0] or not shape[1]:
         raise ValueError(f"invalid quant grid shape {tuple(shape)}")
     if len(grid_map) < 2:
@@ -55,7 +85,7 @@ def _decode_grid(shape: Sequence[int], grid_map: Sequence[int], grid_hex: Sequen
     elems_per_byte = 8 // bits_per_elem
     mask = (1 << bits_per_elem) - 1
 
-    ascii_hex = b"".join(grid_hex)
+    ascii_hex = _ascii_hex_bytes(grid_hex)
     packed = bytes.fromhex(ascii_hex.decode("ascii"))
     result: list[int] = []
     for byte in packed:
@@ -89,7 +119,7 @@ def _load_quant_grid_cached(ggml_type: int, source_path: str) -> tuple[int, ...]
     return _decode_grid(
         values["grid_shape"],  # type: ignore[arg-type]
         values["grid_map"],  # type: ignore[arg-type]
-        values["grid_hex"],  # type: ignore[arg-type]
+        values["grid_hex"],
     )
 
 
