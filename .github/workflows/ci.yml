@@ -62,7 +62,8 @@ jobs:
       - name: Import streaming modules
         run: |
           python - <<'PY'
-          from redlite.expert_cache import MmapExpertCache
+          from redlite.expert_cache import ExpertSlotCache
+          from redlite.expert_store import ExpertStore, build_expert_layouts
           from redlite.expert_map import build_expert_map
           from redlite.streaming import make_streaming_plan
           print("streaming imports: OK")
