@@ -1,0 +1,14 @@
+{
+  "profile": "mac-24gb",
+  "target": "Qwen3-Next-80B-A3B-Instruct",
+  "preferred_resident_quant": "IQ2_XXS",
+  "resident_context": 2048,
+  "resident_context_next_test": 4096,
+  "resident_cache_k": "q8_0",
+  "resident_cache_v": "q8_0",
+  "resident_batch": 256,
+  "resident_ubatch": 128,
+  "oversized_quality_quant": "Q4_K_M",
+  "oversized_backend": "Apple Silicon CPU + mmap bounded expert residency",
+  "notes": "For ~18 GiB resident models on 24 GiB unified memory, 2K is the conservative default. 4K+ should be validated with memory pressure and swap telemetry before being made permanent."
+}

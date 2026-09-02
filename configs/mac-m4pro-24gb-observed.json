@@ -1,0 +1,18 @@
+{
+  "profile": "field-observed-m4pro-24gb-2026-09-02",
+  "hardware": "Apple M4 Pro",
+  "unified_memory_gib": 24.0,
+  "performance_cpus": 8,
+  "model": "Qwen3-Next-80B-A3B-Instruct-IQ2_XXS",
+  "model_file_gib": 17.97,
+  "backend": "llama.cpp Metal",
+  "context": 2048,
+  "batch": 256,
+  "ubatch": 128,
+  "cache_k": "q8_0",
+  "cache_v": "q8_0",
+  "observed_prompt_tps_range": [36.7, 87.5],
+  "observed_generation_tps_range": [30.7, 40.7],
+  "result": "successful interactive inference",
+  "caveat": "Single field observation, not a controlled benchmark. Use redlite sweep for repeatable measurements."
+}

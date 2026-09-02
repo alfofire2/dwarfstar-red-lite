@@ -1,0 +1,8 @@
+{
+  "profile": "mac-32gb",
+  "target": "Qwen3-Next-80B-A3B-Instruct",
+  "preferred_resident_quant": "IQ2_M or IQ3_XXS depending on context",
+  "resident_context": 8192,
+  "oversized_quality_quant": "Q4_K_M",
+  "oversized_backend": "Apple Silicon CPU + mmap bounded expert residency"
+}
