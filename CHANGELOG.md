@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0.dev10 — 2026-09-02
+
+Standalone native Metal integration milestone on `v0.3-streaming`.
+
+- Linked the standalone `redlite-native` executable directly to the resident Red Metal top-k implementation on macOS; the `topk-probe` path contains no Python interpreter and no `ctypes` boundary.
+- Added native routed-layer metadata validation for hidden size, FFN size, expert count and common gate/up/down quant type.
+- Added compact canonical IQ2_XS and IQ1_S/IQ1_M codebook literals derived from the pinned llama.cpp/GGML source, expanded entirely in native C at runtime.
+- Updated `NOTICE.md` to explicitly attribute the retained quant-grid data under the upstream MIT license.
+- Added a native Metal runtime wrapper that connects the C top-k-aware LRU to expert miss loading, shared Metal residency and GPU router-weighted accumulation.
+- Native execution checks that all selected expert ids are unique, the complete top-k fits in cache, resident slots are not in-flight before dispatch, and no GGUF reads occur during the synchronous Metal command.
+- Added cumulative native telemetry for cache hits/misses/evictions, expert loads, SSD bytes/read calls, resident slots, Metal slab allocation and GPU execution time.
+- Added `redlite-native topk-probe MODEL` using the same deterministic input, expert ids and normalized router weights as the field-validated dev8 Python oracle so output rows can be compared directly when the target M4 Pro is available again.
+- The portable Linux build keeps the GGUF/LRU/codebook selftest but does not link Metal; macOS builds the complete standalone native Metal path.
+- Real-model numerical validation of the new standalone path is intentionally deferred until the target Apple Silicon machine is available; dev8 remains the known-good numerical oracle in the meantime.
+
 ## 0.3.0.dev9 — 2026-09-02
 
 Native runtime foundation milestone on `v0.3-streaming`.
