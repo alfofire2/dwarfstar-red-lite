@@ -136,7 +136,6 @@ int rl_native_metal_execute_topk(
 
     rl_cache_key keys[RL_NATIVE_TOPK_MAX];
     uint32_t slots[RL_NATIVE_TOPK_MAX];
-    int was_resident[RL_NATIVE_TOPK_MAX];
     rl_expert_layout layouts[RL_NATIVE_TOPK_MAX];
     uint64_t gate_bytes[RL_NATIVE_TOPK_MAX];
     uint64_t up_bytes[RL_NATIVE_TOPK_MAX];
@@ -155,8 +154,6 @@ int rl_native_metal_execute_topk(
         }
         keys[i].layer = layer;
         keys[i].expert = expert_ids[i];
-        uint32_t old_slot = 0;
-        was_resident[i] = rl_native_lru_lookup(&runtime->lru, keys[i], &old_slot);
         if (!rl_native_expert_layout(map, layer, expert_ids[i], &layouts[i], error, error_cap)) return 0;
         if (layouts[i].ggml_type != info.ggml_type || layouts[i].total_bytes > runtime->slot_bytes) {
             set_error(error, error_cap, "native expert layout is incompatible with the layer/pool");
@@ -167,10 +164,13 @@ int rl_native_metal_execute_topk(
         down_bytes[i] = layouts[i].down_bytes;
     }
 
-    if (!rl_native_lru_acquire_many(&runtime->lru, keys, top_k, slots, error, error_cap)) return 0;
+    rl_cache_transaction transaction = {0};
+    if (!rl_native_lru_prepare_many(&runtime->lru, keys, top_k, &transaction, error, error_cap)) return 0;
 
     for (uint32_t i = 0; i < top_k; ++i) {
-        if (was_resident[i]) continue;
+        const rl_cache_reservation *reservation = &transaction.items[i];
+        slots[i] = reservation->slot_id;
+        if (reservation->hit) continue;
         uint64_t bytes_read = 0;
         double load_ms = 0.0;
         if (!redmetal_topk_pool_load_expert(
@@ -182,11 +182,20 @@ int rl_native_metal_execute_topk(
                 &bytes_read, &load_ms)) {
             (void)bytes_read;
             (void)load_ms;
-            set_metal_error(error, error_cap, "native expert load failed");
+            rl_native_lru_abort(&runtime->lru, &transaction);
+            rl_native_lru_transaction_free(&transaction);
+            set_metal_error(error, error_cap, "native expert load failed; LRU transaction aborted");
             return 0;
         }
         runtime->expert_loads++;
     }
+
+    if (!rl_native_lru_commit(&runtime->lru, &transaction, slots, error, error_cap)) {
+        rl_native_lru_abort(&runtime->lru, &transaction);
+        rl_native_lru_transaction_free(&transaction);
+        return 0;
+    }
+    rl_native_lru_transaction_free(&transaction);
 
     for (uint32_t i = 0; i < top_k; ++i) {
         if (redmetal_topk_pool_slot_inflight(runtime->pool, slots[i])) {
