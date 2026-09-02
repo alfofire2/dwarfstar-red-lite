@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-02",
+  "hardware": {
+    "chip": "Apple M4 Pro",
+    "unified_memory_gib": 24.0,
+    "performance_cpus": 8
+  },
+  "model": {
+    "name": "Qwen3-Next-80B-A3B-Instruct-IQ2_XXS",
+    "file_gib": 17.97
+  },
+  "backend": "llama.cpp Metal",
+  "sweep": {
+    "prompt_tokens": 256,
+    "generation_tokens": 128,
+    "max_swap_delta_gib": 0.5,
+    "results": [
+      {"context": 2048, "status": "CRITICAL", "headroom_gib": 0.61, "prompt_tps": 258.8, "generation_tps": 38.0, "swap_delta_gib": 0.0},
+      {"context": 4096, "status": "CRITICAL", "headroom_gib": 0.50, "prompt_tps": 247.2, "generation_tps": 36.4, "swap_delta_gib": 0.0},
+      {"context": 8192, "status": "CRITICAL", "headroom_gib": 0.28, "prompt_tps": 236.7, "generation_tps": 36.9, "swap_delta_gib": 0.0}
+    ]
+  },
+  "notes": [
+    "All three context depths completed.",
+    "No swap growth was observed during the sweep.",
+    "Metal reported residency sets and shared buffers enabled.",
+    "Metal Tensor API was unavailable on M4 Pro; simdgroup matrix multiplication was enabled.",
+    "4K is the recommended default for this observed hardware/model profile; 8K remains experimental because policy headroom is small."
+  ]
+}
