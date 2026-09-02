@@ -28,7 +28,7 @@ static uint64_t round_up_u64(uint64_t value, uint64_t alignment) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-native 0.3.0.dev11\n"
+        "redlite-native 0.3.0.dev12\n"
         "Standalone native runtime for DwarfStar Red Lite.\n\n"
         "Usage:\n"
         "  redlite-native inspect MODEL [--cache-mib N] [--expert-count N] [--layers]\n"
