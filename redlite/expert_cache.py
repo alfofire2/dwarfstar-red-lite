@@ -165,9 +165,8 @@ class ExpertSlotCache:
                 self.entries.move_to_end(key)
                 self.stats.hits += 1
                 return self._entry_view(existing)
+            self.stats.misses += 1
             future = self.inflight.get(key)
-            if future is None:
-                self.stats.misses += 1
 
         if future is not None:
             self.stats.prefetch_waits += 1
@@ -175,7 +174,6 @@ class ExpertSlotCache:
             with self._lock:
                 self.inflight.pop(key, None)
                 self.entries.move_to_end(key)
-                self.stats.hits += 1
             return self._entry_view(entry)
 
         entry = self._load_new(key, layout)
