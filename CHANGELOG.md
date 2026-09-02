@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0.dev3 — 2026-09-02
+
+Experimental DS4-aligned expert residency milestone on `v0.3-streaming`.
+
+- Kept the validated Qwen3-Next GGUF expert mapper: 48 layers, 144 routed gate/up/down tensors, 512 experts and ~16.91 GiB routed payload on the reference IQ2_XXS model.
+- Replaced mmap-based expert caching with one read-only model fd plus explicit positional `preadv`/`pread` into reusable RAM slots.
+- Changed the cache key from individual tensor slices to complete `(layer, expert)` gate+up+down triplets.
+- Added a hard byte budget: fixed-size slots are allocated lazily and recycled by global LRU eviction; Red Lite-owned expert slot memory cannot exceed the configured cache budget.
+- Added asynchronous prefetch workers and separate demand-hit, demand-miss and prefetch-wait telemetry.
+- Added SSD bytes-read, positional-read-call and throughput telemetry to `redlite-stream probe`.
+- Added regression tests for direct positional reads, hard cache bounds, eviction/reuse, prefetch and thousands of expert accesses through a single fd.
+- dev1's per-expert mmap design and dev2's whole-file mmap/madvise cache are superseded by this explicit-buffer path.
+- Metal MoE binding is still intentionally disabled; dev3 validates storage/residency only.
+
 ## 0.2.1 — 2026-09-02
 
 Field-validation tuning release based on a controlled Apple M4 Pro / 24 GiB sweep with the 17.97 GiB Qwen3-Next-80B-A3B IQ2_XXS model.
