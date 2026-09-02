@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwarfstar-red-lite"
-version = "0.3.0.dev6"
+version = "0.3.0.dev7"
 description = "Apple-Silicon-only launcher and experimental expert streaming runtime for Qwen3-Next MoE inference"
 requires-python = ">=3.10"
 authors = [{name = "DwarfStar Red Lite contributors"}]
@@ -14,6 +14,7 @@ readme = "README.md"
 [project.scripts]
 redlite = "redlite.cli:main"
 redlite-stream = "redlite.stream_cli:main"
+redlite-ffn = "redlite.ffn_cli:main"
 
 [tool.setuptools]
 packages = ["redlite"]
