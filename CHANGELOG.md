@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0.dev6 — 2026-09-02
+
+Mixed routed-quant arithmetic validation milestone on `v0.3-streaming`.
+
+- Added `quant-audit` and field-validated the actual routed tensor types in the Bartowski Qwen3-Next-80B-A3B IQ2_XXS GGUF: 33 tensors are IQ2_XS and 111 are IQ1_M.
+- The 48 routed layers form two clean patterns: layers 0-5 and 43-47 are IQ2_XS for gate/up/down; layers 6-42 are IQ1_M for gate/up/down.
+- Corrected the quant audit mapping for GGML type 29 to IQ1_M.
+- Added canonical codebook loading from the pinned llama.cpp `gguf-py/gguf/quants.py` instead of maintaining duplicated giant quant tables in Red Lite.
+- Added independent CPU row-dot references for IQ2_XS (256 values / 74-byte blocks) and IQ1_M (256 values / 56-byte blocks).
+- Added correctness-first Metal row-matvec kernels for both routed formats with runtime dispatch by the tensor's actual GGML type.
+- `iq2-parity` is retained as a backward-compatible command name but now auto-dispatches the real routed quant type and reports it explicitly.
+- The dev5 cache/address-table/in-flight path remains part of the parity check; mixed-quant arithmetic is isolated until both formats pass numerical field validation, after which the kernels will be moved into the LRU execution pool.
+- Added synthetic exact-value decoder tests for IQ2_XS and IQ1_M.
+
 ## 0.3.0.dev5 — 2026-09-02
 
 First Red Metal arithmetic/parity milestone on `v0.3-streaming`.
