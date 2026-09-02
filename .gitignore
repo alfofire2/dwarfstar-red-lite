@@ -1,0 +1,7 @@
+.deps/
+models/
+__pycache__/
+*.pyc
+.DS_Store
+build/
+*.log
