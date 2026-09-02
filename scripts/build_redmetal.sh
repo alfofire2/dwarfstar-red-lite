@@ -17,6 +17,7 @@ xcrun --sdk macosx clang \
   -I"$ROOT/native" \
   "$ROOT/native/redmetal.m" \
   "$ROOT/native/redmetal_exec.m" \
+  "$ROOT/native/redmetal_quant.m" \
   -framework Foundation \
   -framework Metal \
   -o "$OUT/libredmetal.dylib"
