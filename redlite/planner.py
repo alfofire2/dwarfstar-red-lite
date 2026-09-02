@@ -30,20 +30,31 @@ class Plan:
 
 
 def context_reserve_gib(context: int) -> float:
-    # Qwen3-Next mixes recurrent/linear-attention and full-attention blocks.  This
+    # Qwen3-Next mixes recurrent/linear-attention and full-attention blocks. This
     # is a policy reserve, not an attempt to reproduce llama.cpp allocation byte
-    # for byte.  Real memory pressure remains the source of truth at runtime.
+    # for byte. Real memory pressure remains the source of truth at runtime.
     return 0.55 + (context / 8192.0) * 0.45
 
 
-def _default_context(ram_gib: float, model_gib: float) -> int:
-    # Field validation on an Apple M4 Pro 24 GiB showed the ~17.97 GiB IQ2_XXS
-    # profile running reliably at 2K while already sitting close to the resident
-    # budget.  Prefer 2K for this especially tight class and let users opt into 4K.
+def _is_field_validated_m4pro_24gb(chip: str, ram_gib: float, model_gib: float) -> bool:
+    return (
+        "Apple M4 Pro" in chip
+        and 23.5 <= ram_gib <= 24.5
+        and 17.5 <= model_gib <= 18.3
+    )
+
+
+def _default_context(ram_gib: float, model_gib: float, chip: str = "") -> int:
+    # A controlled Red Lite sweep on Apple M4 Pro / 24 GiB with the 17.97 GiB
+    # Qwen3-Next IQ2_XXS model completed 2K, 4K and 8K with zero observed swap
+    # delta. Use 4K as the field-validated default for that exact target class;
+    # keep 8K opt-in because the planner's estimated margin is still very small.
     if ram_gib <= 16:
         return 2048
     if ram_gib <= 24:
-        return 2048 if model_gib >= 17.0 else 4096
+        if model_gib >= 17.0:
+            return 4096 if _is_field_validated_m4pro_24gb(chip, ram_gib, model_gib) else 2048
+        return 4096
     if ram_gib <= 36:
         return 8192
     if model_gib > ram_gib:
@@ -68,7 +79,7 @@ def plan_for(hw: HardwareInfo, model_path: str | Path, context: int | None = Non
     size = p.stat().st_size
     model_gib = size / GIB
     ram_gib = hw.ram_gib
-    ctx = context or _default_context(ram_gib, model_gib)
+    ctx = context or _default_context(ram_gib, model_gib, hw.chip)
     if ctx <= 0:
         raise ValueError("context must be greater than zero")
 
@@ -78,6 +89,7 @@ def plan_for(hw: HardwareInfo, model_path: str | Path, context: int | None = Non
     resident_budget = max(0.0, ram_gib - os_reserve - runtime_reserve - ctx_reserve)
     headroom = resident_budget - model_gib
     resident_safe = headroom >= 0.0
+    field_validated = _is_field_validated_m4pro_24gb(hw.chip, ram_gib, model_gib)
 
     if force_mode == "auto":
         mode = "metal-resident" if resident_safe else "ssd-cpu"
@@ -94,10 +106,16 @@ def plan_for(hw: HardwareInfo, model_path: str | Path, context: int | None = Non
                 f"Model is {model_gib:.2f} GiB but conservative resident budget is "
                 f"{resident_budget:.2f} GiB. Use ssd-cpu or reduce model/context."
             )
+        elif status == "CRITICAL" and field_validated:
+            reason = (
+                f"Model fits by only {headroom:.2f} GiB. This M4 Pro 24 GiB class has "
+                "completed a 2K/4K/8K Metal sweep with zero observed swap delta; policy "
+                "remains CRITICAL because estimated margin is still small."
+            )
         elif status == "CRITICAL":
             reason = (
-                f"Model fits by only {headroom:.2f} GiB. This profile is experimentally "
-                "validated but has little margin for other applications or larger context."
+                f"Model fits by only {headroom:.2f} GiB. This profile is experimental "
+                "and has little margin for other applications or larger context."
             )
         elif status == "TIGHT":
             reason = (
