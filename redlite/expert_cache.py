@@ -1,162 +1,227 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-import mmap
-import os
 from pathlib import Path
+import threading
 from typing import Any
+
+from .expert_store import ExpertLayout, ExpertStore
 
 
 @dataclass(frozen=True)
 class CacheKey:
     layer: int
     expert: int
-    kind: str
 
 
 @dataclass
 class CacheStats:
     hits: int = 0
     misses: int = 0
+    loads: int = 0
     evictions: int = 0
-    mapped_bytes: int = 0
-    peak_mapped_bytes: int = 0
+    prefetch_submitted: int = 0
+    prefetch_hits: int = 0
+    prefetch_waits: int = 0
+    allocated_slots: int = 0
+    resident_slots: int = 0
+    allocated_bytes: int = 0
+    peak_allocated_bytes: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-@dataclass(frozen=True)
-class _Range:
-    logical_offset: int
-    logical_length: int
-    page_offset: int
-    page_length: int
+@dataclass
+class _Entry:
+    slot: bytearray
+    payload_bytes: int
 
 
-class MmapExpertCache:
-    """Bounded LRU over ranges of one whole-file GGUF mmap.
+class ExpertSlotCache:
+    """Hard-bounded DS4-style cache of explicit expert buffers.
 
-    dev1 created one mmap per expert tensor slice. Python/macOS keeps a file
-    descriptor associated with each mapping, so a realistic MoE trace could hit
-    RLIMIT_NOFILE long before reaching the byte budget.
+    The cache owns a single ExpertStore/file descriptor. Expert triplets are read
+    with positional I/O into fixed-size reusable bytearray slots. Slots are
+    allocated lazily, never exceeding floor(budget / slot_size), and are recycled
+    by a global LRU keyed by (layer, expert).
 
-    dev2 maps the GGUF exactly once and treats expert residency as page-range
-    advice on that mapping:
-
-      miss     -> MADV_WILLNEED(range)
-      eviction -> MADV_DONTNEED(range)
-
-    `mapped_bytes` therefore means bytes currently accounted to the residency
-    working set, rounded to VM pages. It is not virtual address-space size (the
-    entire file is mapped virtually but remains demand-paged).
+    This deliberately avoids using mmap residency as the cache budget: the number
+    reported by the cache is the actual amount of slot memory allocated by Red
+    Lite, making the limit deterministic before Metal buffers are introduced.
     """
 
-    def __init__(self, path: str | Path, budget_bytes: int):
+    def __init__(
+        self,
+        path: str | Path,
+        budget_bytes: int,
+        slot_bytes: int,
+        *,
+        prefetch_workers: int = 2,
+    ):
         if budget_bytes <= 0:
             raise ValueError("budget_bytes must be positive")
-
-        self.path = str(Path(path).expanduser().resolve())
-        self.fd = os.open(self.path, os.O_RDONLY)
-        self.file_size = os.fstat(self.fd).st_size
-        if self.file_size <= 0:
-            os.close(self.fd)
-            raise ValueError("cannot mmap an empty model file")
-
+        if slot_bytes <= 0:
+            raise ValueError("slot_bytes must be positive")
         self.budget_bytes = int(budget_bytes)
-        self.page_size = mmap.PAGESIZE
-        self.mapping = mmap.mmap(
-            self.fd,
-            0,
-            flags=mmap.MAP_PRIVATE,
-            prot=mmap.PROT_READ,
-        )
-        self.entries: OrderedDict[CacheKey, _Range] = OrderedDict()
+        self.slot_bytes = int(slot_bytes)
+        self.slot_count = self.budget_bytes // self.slot_bytes
+        if self.slot_count < 1:
+            raise ValueError(
+                f"cache budget {self.budget_bytes} cannot fit one {self.slot_bytes}-byte expert slot"
+            )
+
+        self.store = ExpertStore(path)
+        self.entries: OrderedDict[CacheKey, _Entry] = OrderedDict()
+        self.free_slots: list[bytearray] = []
+        self.inflight: dict[CacheKey, Future[_Entry]] = {}
         self.stats = CacheStats()
+        self._lock = threading.RLock()
+        workers = max(1, min(int(prefetch_workers), self.slot_count))
+        self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="redlite-expert")
+        self._closed = False
 
-    def close(self) -> None:
-        self.entries.clear()
-        try:
-            self.mapping.close()
-        finally:
-            os.close(self.fd)
-
-    def __enter__(self) -> "MmapExpertCache":
+    def __enter__(self) -> "ExpertSlotCache":
         return self
 
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _page_range(self, offset: int, length: int) -> tuple[int, int]:
-        if offset < 0 or length <= 0 or offset + length > self.file_size:
-            raise ValueError(
-                f"invalid expert range offset={offset} length={length} file_size={self.file_size}"
-            )
-        page = self.page_size
-        start = (offset // page) * page
-        end = min(self.file_size, ((offset + length + page - 1) // page) * page)
-        return start, end - start
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._executor.shutdown(wait=True, cancel_futures=False)
+        with self._lock:
+            self.inflight.clear()
+            self.entries.clear()
+            self.free_slots.clear()
+            self.stats.resident_slots = 0
+        self.store.close()
 
-    def _advise(self, advice: int, start: int, length: int) -> None:
-        if not hasattr(self.mapping, "madvise"):
-            return
+    def _take_slot_locked(self) -> bytearray:
+        if self.free_slots:
+            return self.free_slots.pop()
+
+        if self.stats.allocated_slots < self.slot_count:
+            slot = bytearray(self.slot_bytes)
+            self.stats.allocated_slots += 1
+            self.stats.allocated_bytes = self.stats.allocated_slots * self.slot_bytes
+            self.stats.peak_allocated_bytes = max(
+                self.stats.peak_allocated_bytes,
+                self.stats.allocated_bytes,
+            )
+            return slot
+
+        if not self.entries:
+            raise RuntimeError("all cache slots are busy with in-flight loads")
+
+        _, victim = self.entries.popitem(last=False)
+        self.stats.evictions += 1
+        self.stats.resident_slots = len(self.entries)
+        return victim.slot
+
+    def _load_new(self, key: CacheKey, layout: ExpertLayout) -> _Entry:
+        if layout.total_bytes > self.slot_bytes:
+            raise ValueError(
+                f"expert ({layout.total_bytes} bytes) exceeds fixed slot size ({self.slot_bytes} bytes)"
+            )
+
+        with self._lock:
+            existing = self.entries.get(key)
+            if existing is not None:
+                self.entries.move_to_end(key)
+                return existing
+            slot = self._take_slot_locked()
+
         try:
-            # Python exposes mmap.madvise(option, start=0, length=0) on Unix.
-            # start/length are page-aligned here for Darwin compatibility.
-            self.mapping.madvise(advice, start, length)
-        except (OSError, TypeError, ValueError):
-            # Advice is an optimization. Correctness must not depend on the OS
-            # accepting a particular madvise flavor.
-            pass
+            view = self.store.load(layout, slot)
+            view.release()
+        except Exception:
+            with self._lock:
+                self.free_slots.append(slot)
+            raise
 
-    def _evict_until(self, needed: int) -> None:
-        if needed > self.budget_bytes:
-            raise ValueError(
-                f"single expert range ({needed} bytes) exceeds cache budget "
-                f"({self.budget_bytes} bytes)"
-            )
+        entry = _Entry(slot=slot, payload_bytes=layout.total_bytes)
+        with self._lock:
+            self.entries[key] = entry
+            self.entries.move_to_end(key)
+            self.stats.loads += 1
+            self.stats.resident_slots = len(self.entries)
+        return entry
 
-        while self.stats.mapped_bytes + needed > self.budget_bytes and self.entries:
-            _, rng = self.entries.popitem(last=False)
-            self.stats.mapped_bytes -= rng.page_length
-            self.stats.evictions += 1
-            if hasattr(mmap, "MADV_DONTNEED"):
-                self._advise(mmap.MADV_DONTNEED, rng.page_offset, rng.page_length)
+    def _entry_view(self, entry: _Entry) -> memoryview:
+        return memoryview(entry.slot)[: entry.payload_bytes]
 
-    def acquire(
-        self,
-        key: CacheKey,
-        offset: int,
-        length: int,
-        *,
-        eager: bool = True,
-    ) -> memoryview:
-        existing = self.entries.pop(key, None)
-        if existing is not None:
-            self.entries[key] = existing
-            self.stats.hits += 1
-            return memoryview(self.mapping)[offset : offset + length]
+    def acquire(self, key: CacheKey, layout: ExpertLayout) -> memoryview:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("cache is closed")
+            existing = self.entries.get(key)
+            if existing is not None:
+                self.entries.move_to_end(key)
+                self.stats.hits += 1
+                return self._entry_view(existing)
+            future = self.inflight.get(key)
+            if future is None:
+                self.stats.misses += 1
 
-        page_offset, page_length = self._page_range(offset, length)
-        self.stats.misses += 1
-        self._evict_until(page_length)
+        if future is not None:
+            self.stats.prefetch_waits += 1
+            entry = future.result()
+            with self._lock:
+                self.inflight.pop(key, None)
+                self.entries.move_to_end(key)
+                self.stats.hits += 1
+            return self._entry_view(entry)
 
-        if eager and hasattr(mmap, "MADV_WILLNEED"):
-            self._advise(mmap.MADV_WILLNEED, page_offset, page_length)
+        entry = self._load_new(key, layout)
+        return self._entry_view(entry)
 
-        rng = _Range(offset, length, page_offset, page_length)
-        self.entries[key] = rng
-        self.stats.mapped_bytes += page_length
-        self.stats.peak_mapped_bytes = max(
-            self.stats.peak_mapped_bytes,
-            self.stats.mapped_bytes,
-        )
-        return memoryview(self.mapping)[offset : offset + length]
+    def prefetch(self, key: CacheKey, layout: ExpertLayout) -> Future[_Entry] | None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("cache is closed")
+            if key in self.entries:
+                self.entries.move_to_end(key)
+                self.stats.prefetch_hits += 1
+                return None
+            existing = self.inflight.get(key)
+            if existing is not None:
+                self.stats.prefetch_hits += 1
+                return existing
+            self.stats.prefetch_submitted += 1
+            future = self._executor.submit(self._load_new, key, layout)
+            self.inflight[key] = future
+            return future
 
-    def prefetch(self, key: CacheKey, offset: int, length: int) -> None:
-        view = self.acquire(key, offset, length, eager=True)
-        view.release()
+    def wait_prefetch(self) -> None:
+        while True:
+            with self._lock:
+                pending = list(self.inflight.items())
+            if not pending:
+                return
+            for key, future in pending:
+                future.result()
+                with self._lock:
+                    self.inflight.pop(key, None)
 
     def resident_keys(self) -> list[CacheKey]:
-        return list(self.entries.keys())
+        with self._lock:
+            return list(self.entries.keys())
+
+    def telemetry(self) -> dict[str, Any]:
+        with self._lock:
+            data = self.stats.to_dict()
+            data.update(
+                {
+                    "slot_bytes": self.slot_bytes,
+                    "slot_capacity": self.slot_count,
+                    "budget_bytes": self.budget_bytes,
+                    "store": self.store.stats.to_dict(),
+                }
+            )
+            return data
