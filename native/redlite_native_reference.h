@@ -19,7 +19,7 @@ int rl_native_quant_row_dot(
     uint32_t ncols,
     const int8_t *grid,
     size_t grid_count,
-    float *out,
+    double *out,
     char *error,
     size_t error_cap);
 
@@ -34,7 +34,7 @@ int rl_native_reference_topk(
     uint32_t row_count,
     const float *input,
     uint32_t input_count,
-    float *output,
+    double *output,
     uint32_t output_count,
     double *elapsed_ms,
     char *error,
