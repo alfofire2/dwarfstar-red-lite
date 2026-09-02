@@ -48,7 +48,7 @@ def main(argv=None) -> int:
 
     parity_cmd = sub.add_parser(
         "iq2-parity",
-        help="Run a correctness-first single-expert IQ2 Metal matvec parity test",
+        help="Run a correctness-first single-expert Metal parity test with routed-quant auto-dispatch",
     )
     parity_cmd.add_argument("model")
     parity_cmd.add_argument("--layer", type=int, default=0)
@@ -91,9 +91,9 @@ def main(argv=None) -> int:
             slots_per_slab=args.slots_per_slab,
         )
     else:
-        from .redmetal_parity import iq2_parity_probe
+        from .redmetal_parity import quant_parity_probe
 
-        data = iq2_parity_probe(
+        data = quant_parity_probe(
             args.model,
             layer=args.layer,
             expert=args.expert,
@@ -147,7 +147,7 @@ def main(argv=None) -> int:
         metal = cache["metal"]
         addrs = data["gpu_addresses"]
         print(f"tensor            : {data['tensor']}")
-        print(f"quant             : {data.get('quant_name', data['ggml_type'])}")
+        print(f"quant type        : {data['type_name']} ({data['ggml_type']})")
         print(f"shape             : {tuple(data['shape'])}")
         print(f"layer/expert/kind : {data['layer']}/{data['expert']}/{data['kind']}")
         print(f"rows tested       : {data['row_start']}..{data['row_start'] + data['rows_tested'] - 1}")
@@ -159,6 +159,7 @@ def main(argv=None) -> int:
         print(f"GPU addr up       : 0x{addrs['up']:016x}")
         print(f"GPU addr down     : 0x{addrs['down']:016x}")
         print(f"slot in-flight    : {'YES' if data['inflight_after_wait'] else 'NO'}")
+        print(f"SSD matrix read   : {data['io_ms']:.3f} ms")
         print(f"GPU matvec        : {data['gpu_ms']:.3f} ms")
         print(f"max abs error     : {data['max_abs_error']:.6g}")
         print(f"max rel error     : {data['max_rel_error']:.6g}")
