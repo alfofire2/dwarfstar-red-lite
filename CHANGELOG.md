@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0.dev5 — 2026-09-02
+
+First Red Metal arithmetic/parity milestone on `v0.3-streaming`.
+
+- Added a separate native execution-pool ABI so the field-validated dev4 byte-visibility path remains intact while dev5 is tested.
+- Added lazily allocated GPU-visible gate/up/down address tables for resident `(layer, expert)` entries.
+- Added native per-slot in-flight tracking; expert loads refuse to overwrite a slot while Metal work still references it, and the dev5 LRU skips in-flight victims.
+- Added a correctness-first IQ2_XXS Metal row-matvec kernel using the canonical ggml 256-value/66-byte block format and codebook.
+- Added an independent pure-Python IQ2_XXS decoder/reference based on the canonical ggml grid representation and parity sign encoding.
+- Added `redlite-stream iq2-parity` to validate real expert tensor shape, byte stride, GPU address binding, in-flight release and numerical GPU/CPU parity on selected rows.
+- Added a synthetic IQ2_XXS reference test whose decoded matrix is exactly all ones.
+- The kernel is intentionally scalar/correctness-first; SIMD-group optimization, fused gate/up/SwiGLU, down projection and top-k accumulation remain future work.
+
+## 0.3.0.dev4 — 2026-09-02
+
+First native Red Metal residency milestone.
+
+- Added an Objective-C/Metal bridge compiled into `libredmetal.dylib`.
+- Added lazily allocated `MTLStorageModeShared` slabs with fixed reusable expert slots and a hard byte budget.
+- Routed expert misses can be read directly from the GGUF fd into `MTLBuffer.contents`, eliminating the production-path Python bytearray-to-Metal copy.
+- Added `redlite-stream metal-probe` with a Metal compute checksum and independent CPU reread verification.
+- Field validation on Apple M4 Pro confirmed 480 routed expert loads, 185 evictions in a 0.25 GiB Metal cache, and exact GPU/CPU checksum parity.
+
 ## 0.3.0.dev3 — 2026-09-02
 
 Experimental DS4-aligned expert residency milestone on `v0.3-streaming`.
