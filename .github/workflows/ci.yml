@@ -72,6 +72,10 @@ jobs:
           from redlite.streaming import make_streaming_plan
           from redlite.redmetal import redmetal_library_path
           from redlite.redmetal_cache import MetalExpertCache
+          from redlite.redmetal_exec import RedMetalExecPool
+          from redlite.redmetal_exec_cache import ExecMetalExpertCache
+          from redlite.redmetal_parity import iq2_parity_probe
+          from redlite.iq2_reference import iq2_xxs_row_dot
           print("streaming imports: OK")
           print("redmetal library path:", redmetal_library_path())
           PY
