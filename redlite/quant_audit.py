@@ -59,7 +59,7 @@ def audit_routed_quantization(model: str | Path) -> dict[str, Any]:
                 "ggml_type": info.ggml_type,
                 "type_name": ggml_type_name(info.ggml_type),
                 "shape": list(info.shape),
-                "bytes": info.n_bytes,
+                "bytes": info.span_bytes,
             }
         )
 
