@@ -1,38 +1,82 @@
 from __future__ import annotations
-import argparse, json
+
+import argparse
+import json
+
 from .streaming import make_streaming_plan, probe_streaming
 
-def main(argv=None)->int:
-    p=argparse.ArgumentParser(prog='redlite-stream',description='Experimental Qwen3-Next expert residency tools')
-    sub=p.add_subparsers(dest='cmd',required=True)
-    s=sub.add_parser('plan'); s.add_argument('model'); s.add_argument('--cache-gib',type=float,default=4.0); s.add_argument('--json',action='store_true')
-    s=sub.add_parser('probe'); s.add_argument('model'); s.add_argument('--cache-gib',type=float,default=4.0); s.add_argument('--steps',type=int,default=4); s.add_argument('--top-k',type=int,default=10); s.add_argument('--json',action='store_true')
-    a=p.parse_args(argv)
-    if a.cmd=='plan':
-        _,plan=make_streaming_plan(a.model,a.cache_gib); d=plan.to_dict()
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="redlite-stream",
+        description="Experimental Qwen3-Next expert residency tools",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    plan_cmd = sub.add_parser("plan")
+    plan_cmd.add_argument("model")
+    plan_cmd.add_argument("--cache-gib", type=float, default=4.0)
+    plan_cmd.add_argument("--json", action="store_true")
+
+    probe_cmd = sub.add_parser("probe")
+    probe_cmd.add_argument("model")
+    probe_cmd.add_argument("--cache-gib", type=float, default=4.0)
+    probe_cmd.add_argument("--steps", type=int, default=4)
+    probe_cmd.add_argument("--top-k", type=int, default=10)
+    probe_cmd.add_argument("--prefetch-depth", type=int, default=1)
+    probe_cmd.add_argument("--prefetch-workers", type=int, default=2)
+    probe_cmd.add_argument("--json", action="store_true")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "plan":
+        _, plan = make_streaming_plan(args.model, args.cache_gib)
+        data = plan.to_dict()
     else:
-        d=probe_streaming(a.model,a.cache_gib,a.steps,a.top_k)
-    if a.json: print(json.dumps(d,indent=2))
-    else:
-        if a.cmd=='plan':
-            print(f"cache             : {d['cache_gib']:.2f} GiB")
-            print(f"layers            : {d['layers']}")
-            print(f"routed tensors    : {d['routed_tensor_count']}")
-            print(f"routed payload    : {d['routed_payload_gib']:.2f} GiB")
-            print(f"slice safe        : {'YES' if d['slice_safe'] else 'NO'}")
-            print(f"max expert triplet: {d['max_expert_triplet_mib']:.2f} MiB")
-            print(f"cache capacity    : ~{d['estimated_triplets_in_cache']} expert triplets")
-            print(f"probe ready       : {'YES' if d['ready_for_probe'] else 'NO'}")
-            print(f"reason            : {d['reason']}")
-        else:
-            pr=d['probe']; st=pr['cache']
-            print(f"route events      : {pr['route_events']}")
-            print(f"elapsed           : {pr['elapsed_sec']:.3f} s")
-            print(f"route events/s    : {pr['route_events_per_sec']:.1f}")
-            print(f"cache hits/misses : {st['hits']}/{st['misses']}")
-            print(f"evictions         : {st['evictions']}")
-            print(f"peak mapped       : {st['peak_mapped_bytes']/(1024**3):.2f} GiB")
-            print(f"note              : {pr['note']}")
+        data = probe_streaming(
+            args.model,
+            args.cache_gib,
+            args.steps,
+            args.top_k,
+            prefetch_depth=args.prefetch_depth,
+            prefetch_workers=args.prefetch_workers,
+        )
+
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+
+    if args.cmd == "plan":
+        print(f"cache             : {data['cache_gib']:.2f} GiB")
+        print(f"layers            : {data['layers']}")
+        print(f"routed tensors    : {data['routed_tensor_count']}")
+        print(f"routed payload    : {data['routed_payload_gib']:.2f} GiB")
+        print(f"slice safe        : {'YES' if data['slice_safe'] else 'NO'}")
+        print(f"max expert triplet: {data['max_expert_triplet_mib']:.2f} MiB")
+        print(f"slot size         : {data['slot_bytes']/(1024**2):.2f} MiB")
+        print(f"slot capacity     : {data['slot_capacity']}")
+        print(f"probe ready       : {'YES' if data['ready_for_probe'] else 'NO'}")
+        print(f"reason            : {data['reason']}")
+        return 0
+
+    probe = data["probe"]
+    stats = probe["cache"]
+    store = stats["store"]
+    print(f"route events      : {probe['route_events']}")
+    print(f"elapsed           : {probe['elapsed_sec']:.3f} s")
+    print(f"route events/s    : {probe['route_events_per_sec']:.1f}")
+    print(f"cache hits/misses : {stats['hits']}/{stats['misses']}")
+    print(f"prefetch submitted: {stats['prefetch_submitted']}")
+    print(f"prefetch waits    : {stats['prefetch_waits']}")
+    print(f"evictions         : {stats['evictions']}")
+    print(f"resident slots    : {probe['resident_slots']}/{stats['slot_capacity']}")
+    print(f"allocated cache   : {stats['allocated_bytes']/(1024**3):.2f} GiB")
+    print(f"SSD read          : {probe['ssd_read_gib']:.2f} GiB")
+    print(f"SSD throughput    : {probe['ssd_read_mib_per_sec']:.1f} MiB/s")
+    print(f"pread calls       : {store['read_calls']}")
+    print(f"note              : {probe['note']}")
     return 0
 
-if __name__=='__main__': raise SystemExit(main())
+
+if __name__ == "__main__":
+    raise SystemExit(main())
