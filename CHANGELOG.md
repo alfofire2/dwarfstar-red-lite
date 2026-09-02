@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0.dev9 — 2026-09-02
+
+Native runtime foundation milestone on `v0.3-streaming`.
+
+- Added `redlite-native`, a standalone C executable that does not import or require Python.
+- Ported the dependency-free GGUF v2/v3 tensor-directory parser and routed expert mapper from the Python oracle into native C.
+- Native expert mapping reproduces merged gate/up/down tensor detection, outer 512-expert slicing, alignment-tail handling, per-expert byte strides, quant type identification and max triplet sizing.
+- Added a native hard-bounded LRU metadata scheduler with top-k-aware `acquire_many()`: experts in the current selected set are protected from eviction while remaining misses are filled, and in-flight slots cannot be selected as victims.
+- Added `redlite-native inspect MODEL` to report GGUF/routed layout, IQ2_XS/IQ1_M tensor and layer counts, routed payload, aligned slot size and cache capacity without loading Python.
+- Added `redlite-native selftest` and `make native`; CI builds and runs the native selftest on both macOS and Linux.
+- dev8 remains the numerical oracle for resident Metal top-k execution while the control plane is migrated out of Python. Metal codebooks/router integration and full token generation remain later native-runtime milestones.
+
 ## 0.3.0.dev8 — 2026-09-02
 
 Resident routed top-k layer correctness milestone on `v0.3-streaming`.
