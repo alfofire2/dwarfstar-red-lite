@@ -51,7 +51,7 @@ inference* over claiming every mode is GPU accelerated.
 
 | Mode | Quant | Approx file size | Backend | Trade-off |
 |---|---|---:|---|---|
-| Fastest practical resident | IQ2_XXS | ~19.3 GB | Metal | Very low quant quality, 4K context recommended initially |
+| Fastest practical resident | IQ2_XXS | ~19.3 GB | Metal | Very low quant quality; 2K is the conservative 24 GiB default, then validate 4K/8K with `redlite sweep` |
 | Slightly better quant | IQ2_XS | ~22.2 GB | SSD/CPU by default | Too tight for conservative 24 GB Metal budget |
 | Quality profile | Q4_K_M | ~48.4 GB | SSD/CPU | Much better quant quality, heavy SSD traffic |
 
@@ -100,7 +100,7 @@ Dependencies are placed in `.deps/` and are not committed to this project.
 ### 3. Download the 24 GB profile
 
 ```bash
-python3 -m pip install -U "huggingface_hub[cli]"
+python3 -m pip install -U huggingface_hub
 redlite download 24gb --dir models
 ```
 
@@ -115,15 +115,16 @@ redlite download quality --dir models
 ### 4. Ask the planner what to do
 
 ```bash
-redlite plan models/Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
+redlite plan models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
 ```
 
 Typical 24 GB decision:
 
 ```text
 mode             : metal-resident
-context          : 4096
-safe             : YES
+status           : CRITICAL
+context          : 2048
+budget pass      : YES
 ```
 
 For Q4_K_M the planner should choose:
@@ -135,7 +136,7 @@ mode             : ssd-cpu
 ### 5. Run locally
 
 ```bash
-redlite run models/Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+redlite run models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
   -p "Write a small Python HTTP server and explain it." \
   -n 512
 ```
@@ -143,7 +144,7 @@ redlite run models/Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
 ### 6. Start an OpenAI-compatible server
 
 ```bash
-redlite serve models/Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+redlite serve models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
   --host 127.0.0.1 \
   --port 8080
 ```
@@ -164,6 +165,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 ```text
 redlite doctor
+redlite pressure
 redlite models
 redlite bootstrap
 redlite download [24gb|balanced|quality]
@@ -171,6 +173,7 @@ redlite plan MODEL.gguf
 redlite run MODEL.gguf
 redlite serve MODEL.gguf
 redlite bench MODEL.gguf
+redlite sweep MODEL.gguf --contexts 2048,4096,8192
 ```
 
 ### Override the execution path
@@ -206,18 +209,9 @@ architecture. This avoids shipping an unvalidated hand-written Gated DeltaNet ke
 
 ## What is and is not validated
 
-This archive was assembled and unit-tested in an environment that is **not an Apple
-Silicon host and does not contain the 80B weights**. Therefore:
+Red Lite has completed real field validation on an **Apple M4 Pro with 24 GiB unified memory** using the 17.97 GiB Bartowski IQ2_XXS build of Qwen3-Next-80B-A3B-Instruct. Interactive Metal inference succeeded at 2K context with observed generation throughput of roughly **30.7–40.7 tok/s** during that session.
 
-- the Python control plane and memory-policy tests are validated here;
-- the pinned upstream Qwen3-Next implementation exists and builds on Apple Silicon
-  according to its upstream project;
-- the oversized Q4 path is based on a separately validated 48.41 GB Qwen3-Next run
-  on a 16 GB M1;
-- **this exact Red Lite archive has not been benchmarked by me on your specific Mac**.
-
-Do not treat estimated headroom as a guarantee. macOS memory pressure depends on
-other processes, context size, build revision and GGUF layout.
+The Python control plane and memory-policy tests are also validated. The oversized Q4 path is based on a separately validated 48.41 GB Qwen3-Next run on a 16 GB M1. Field numbers are observations, not guarantees: macOS memory pressure depends on other processes, context size, build revision and GGUF layout. See `docs/FIELD_VALIDATION_M4PRO_24GB.md`.
 
 ## Development
 
@@ -240,6 +234,7 @@ See:
 - `docs/DS4_ADAPTATION.md`
 - `docs/MEMORY.md`
 - `docs/BENCHMARK.md`
+- `docs/METAL_STREAMING_ROADMAP.md`
 - `NOTICE.md`
 
 ## License
