@@ -1,8 +1,11 @@
 import struct
+import tempfile
+from pathlib import Path
 import unittest
 
 from redlite.iq2_reference import deterministic_input, iq2_xxs_row_dot
 from redlite.quant_reference import quant_row_dot
+from redlite.quant_tables import load_quant_grid
 from redlite.redmetal import redmetal_built, redmetal_library_path
 from redlite.redmetal_streaming import sampled_fnv1a
 
@@ -42,6 +45,35 @@ class RedMetalTests(unittest.TestCase):
         block = bytes(32) + bytes(16) + scales
         grid = (0,) * (2048 * 8)
         self.assertAlmostEqual(quant_row_dot(block, 29, [1.0] * 256, grid), 32.0, places=6)
+
+    def test_quant_grid_loader_accepts_implicit_bytes_literal(self):
+        # gguf-py writes grid_hex as adjacent bytes literals. Python/AST
+        # evaluates those to one bytes object, whose iteration yields ints;
+        # the loader must treat it as a scalar bytes value, not a sequence.
+        source = '''
+class IQ2_XS:
+    grid_shape = (4, 2)
+    grid_map = (8, 25, 43)
+    grid_hex = (
+        b"00"
+        b"00"
+    )
+
+class IQ1_S:
+    grid_shape = (4, 2)
+    grid_map = (-1, 0, 1)
+    grid_hex = (
+        b"00"
+        b"00"
+    )
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tmp:
+            tmp.write(source)
+            name = tmp.name
+        self.addCleanup(lambda: Path(name).unlink(missing_ok=True))
+
+        self.assertEqual(load_quant_grid(17, name), (8,) * 8)
+        self.assertEqual(load_quant_grid(29, name), (-1,) * 8)
 
 
 if __name__ == "__main__":
