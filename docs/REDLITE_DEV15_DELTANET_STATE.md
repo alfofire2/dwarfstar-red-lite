@@ -2,9 +2,9 @@
 
 ## Scope
 
-This checkpoint isolates the single-token recurrent matrix update after the dev15a projection and dev15b prestate stages. It intentionally uses deterministic synthetic Q/K/V, beta, decay-gate and previous recurrent state so the state transition can be validated independently before composing the full recurrent layer.
+This checkpoint isolates the single-token recurrent matrix update after the dev15a projection and dev15b prestate stages. It uses deterministic synthetic Q/K/V, beta, decay-gate and previous recurrent state so the state transition is validated independently before composing the full recurrent layer.
 
-The field target is the audited Qwen3-Next recurrent geometry:
+Audited Qwen3-Next recurrent geometry:
 
 - state/key dimension: 128
 - key/query heads: 16
@@ -39,22 +39,26 @@ The output uses the updated state.
 
 The Metal reference is deliberately split into four ordered dispatches: decay, delta, state update and output. This is a correctness checkpoint, not the final fused performance kernel.
 
-## Field command
+## M4 Pro ARM64 field validation
 
-```bash
-.deps/redmetal/redlite-deltanet-state parity \
-  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
-  --layer 0
+Commit `572024cd8fba4f963554493c1c0e989b355f168a`, self-hosted runner `redlite-m4pro`:
+
+```text
+runtime            : native C + Metal DeltaNet recurrent-state parity (no Python/ctypes)
+layer              : 0
+state geometry     : S=128 key_heads=16 value_heads=32
+Q/K broadcast      : value_head % key_heads (0..15,0..15)
+state layout       : transposed M[j][i] = S[i][j]
+state payload      : 2.000 MiB
+CPU / GPU compute  : 0.404 / 2.147 ms
+delta max abs/rel  : 7.45058e-09 / 9.5523e-05 parity=YES
+state max abs/rel  : 1.86265e-09 / 0.00111594 parity=YES
+output max abs/rel : 4.65661e-10 / 0.00445835 parity=YES
+state parity       : YES
 ```
 
-The GitHub self-hosted Apple-Silicon workflow runs this command automatically and records `deltanet-state-layer0.log` plus the diagnostics JSON.
+The larger relative errors occur only near zero; absolute agreement is at `1e-9` to `1e-10` scale.
 
-## Gate
+## Result
 
-The checkpoint passes only when CPU and Metal agree independently on:
-
-- delta vector
-- complete 2 MiB next recurrent state
-- recurrent output vector
-
-A passing run prints `state parity : YES`.
+**dev15c passed.** State layout, key-head broadcast, decay, delta update, persistent-state write and recurrent output are field-validated on native Apple Silicon.

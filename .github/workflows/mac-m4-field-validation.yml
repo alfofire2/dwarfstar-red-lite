@@ -33,7 +33,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-
           {
             echo "github_sha=${GITHUB_SHA}"
             echo "runner_name=${RUNNER_NAME:-unknown}"
@@ -44,16 +43,8 @@ jobs:
             sysctl -n machdep.cpu.brand_string 2>/dev/null || true
             sysctl -n hw.memsize 2>/dev/null || true
           } | tee artifacts/runner-info.log
-
-          if [[ -z "${REDLITE_MODEL_PATH:-}" ]]; then
-            echo "Repository variable REDLITE_MODEL_PATH is not configured." >&2
-            exit 2
-          fi
-          if [[ ! -f "$REDLITE_MODEL_PATH" ]]; then
-            echo "Model not found at REDLITE_MODEL_PATH=$REDLITE_MODEL_PATH" >&2
-            exit 2
-          fi
-
+          if [[ -z "${REDLITE_MODEL_PATH:-}" ]]; then echo "Repository variable REDLITE_MODEL_PATH is not configured." >&2; exit 2; fi
+          if [[ ! -f "$REDLITE_MODEL_PATH" ]]; then echo "Model not found at REDLITE_MODEL_PATH=$REDLITE_MODEL_PATH" >&2; exit 2; fi
           {
             echo "model_path=$REDLITE_MODEL_PATH"
             stat -f 'model_bytes=%z' "$REDLITE_MODEL_PATH"
@@ -65,7 +56,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
           make native 2>&1 | tee artifacts/make-native.log
 
       - name: DeltaNet projection regression
@@ -73,57 +63,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          .deps/redmetal/redlite-deltanet-proj parity \
-            "$REDLITE_MODEL_PATH" \
-            --layer 0 \
-            --rows 8 2>&1 | tee artifacts/deltanet-proj-layer0.log
+          .deps/redmetal/redlite-deltanet-proj parity "$REDLITE_MODEL_PATH" --layer 0 --rows 8 2>&1 | tee artifacts/deltanet-proj-layer0.log
 
       - name: DeltaNet prestate regression
         id: prestate
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          .deps/redmetal/redlite-deltanet-prestate parity \
-            "$REDLITE_MODEL_PATH" \
-            --layer 0 2>&1 | tee artifacts/deltanet-prestate-layer0.log
+          .deps/redmetal/redlite-deltanet-prestate parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-prestate-layer0.log
 
-      - name: DeltaNet recurrent-state current milestone
+      - name: DeltaNet recurrent-state regression
         id: state
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          .deps/redmetal/redlite-deltanet-state parity \
-            "$REDLITE_MODEL_PATH" \
-            --layer 0 2>&1 | tee artifacts/deltanet-state-layer0.log
+          .deps/redmetal/redlite-deltanet-state parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-state-layer0.log
+
+      - name: DeltaNet gated tail current milestone
+        id: tail
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-tail parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-tail-layer0.log
 
       - name: Complete FFN regression layer 0
         id: ffn0
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          .deps/redmetal/redlite-ffn parity \
-            "$REDLITE_MODEL_PATH" \
-            --layer 0 \
-            --top-k 10 \
-            --rows 8 \
-            --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
 
       - name: Complete FFN regression layer 6
         id: ffn6
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          .deps/redmetal/redlite-ffn parity \
-            "$REDLITE_MODEL_PATH" \
-            --layer 6 \
-            --top-k 10 \
-            --rows 8 \
-            --cache-mib 256 2>&1 | tee artifacts/ffn-layer6.log
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 6 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer6.log
 
       - name: Write diagnostics summary
         if: always()
@@ -140,6 +115,7 @@ jobs:
             "deltanet_projection": "${{ steps.projection.outcome }}",
             "deltanet_prestate": "${{ steps.prestate.outcome }}",
             "deltanet_state": "${{ steps.state.outcome }}",
+            "deltanet_tail": "${{ steps.tail.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
             "ffn_layer_6": "${{ steps.ffn6.outcome }}"
           }
