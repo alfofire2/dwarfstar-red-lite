@@ -107,13 +107,14 @@ static NSString * const kTopKSource = @
 "}\n"
 "\n"
 /* one IQ2_XS 256-value block dot (validated dev10 arithmetic) */
-"inline float redmetal_topk_iq2_xs_block(device const uchar *bp, device const float *x, device const char *grid) {\n"
+"inline float redmetal_topk_iq2_xs_block(device const uchar *bp, device const float *x, device const char *grid, uint part, uint nparts) {\n"
 "    const ushort dbits = *(device const ushort *)bp;\n"
 "    const float d = float(as_type<half>(dbits));\n"
 "    device const ushort *qs = (device const ushort *)(bp + 2);\n"
 "    device const uchar *scales = bp + 66;\n"
 "    float acc = 0.0f;\n"
-"    for (uint g = 0; g < 16u; ++g) {\n"
+"    const uint gper = 16u / nparts;\n"
+"    for (uint g = part * gper; g < (part + 1u) * gper; ++g) {\n"
 "        const uint scale = (uint(scales[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
 "        const float db = d * (0.5f + float(scale)) * 0.25f;\n"
 "        for (uint part = 0; part < 2u; ++part) {\n"
@@ -132,7 +133,7 @@ static NSString * const kTopKSource = @
 "}\n"
 "\n"
 /* one IQ1_M 256-value block dot (validated dev10 arithmetic) */
-"inline float redmetal_topk_iq1_m_block(device const uchar *bp, device const float *x, device const char *grid) {\n"
+"inline float redmetal_topk_iq1_m_block(device const uchar *bp, device const float *x, device const char *grid, uint part, uint nparts) {\n"
 "    device const uchar *qs = bp;\n"
 "    device const uchar *qh = bp + 32;\n"
 "    device const ushort *sc = (device const ushort *)(bp + 48);\n"
@@ -140,7 +141,8 @@ static NSString * const kTopKSource = @
 "                         ushort((sc[2] >> 4) & 0x0f00u) | ushort(sc[3] & 0xf000u);\n"
 "    const float d = float(as_type<half>(dbits));\n"
 "    float acc = 0.0f;\n"
-"    for (uint g = 0; g < 32u; ++g) {\n"
+"    const uint gper = 32u / nparts;\n"
+"    for (uint g = part * gper; g < (part + 1u) * gper; ++g) {\n"
 "        const uint nibble = (uint(qh[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
 "        const uint grid_index = uint(qs[g]) | ((nibble & 7u) << 8);\n"
 "        const float delta = (nibble & 8u) ? -0.125f : 0.125f;\n"
@@ -156,8 +158,8 @@ static NSString * const kTopKSource = @
 "    return acc;\n"
 "}\n"
 "\n"
-"inline float redmetal_topk_block(uint type, device const uchar *bp, device const float *x, device const char *grid) {\n"
-"    return type == 17u ? redmetal_topk_iq2_xs_block(bp, x, grid) : redmetal_topk_iq1_m_block(bp, x, grid);\n"
+"inline float redmetal_topk_block(uint type, device const uchar *bp, device const float *x, device const char *grid, uint part, uint nparts) {\n"
+"    return type == 17u ? redmetal_topk_iq2_xs_block(bp, x, grid, part, nparts) : redmetal_topk_iq1_m_block(bp, x, grid, part, nparts);\n"
 "}\n"
 "\n"
 /* act[e][row] = SiLU(gate_e[row].x) * up_e[row].x for every selected expert; lanes_per_row lanes per row */
@@ -181,14 +183,16 @@ static NSString * const kTopKSource = @
 "    const uint blocks = ncols / 256u;\n"
 "    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
+"    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
 "    float g = 0.0f, u = 0.0f;\n"
 "    if (active) {\n"
 "        device const uchar *slot = slots.slot[expert];\n"
 "        device const uchar *grow = slot + ulong(row) * row_bytes;\n"
 "        device const uchar *urow = slot + up_offset + ulong(row) * row_bytes;\n"
-"        for (uint b = lane; b < blocks; b += lanes_per_row) {\n"
-"            g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, x + b * 256u, grid);\n"
-"            u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, x + b * 256u, grid);\n"
+"        for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
+"            g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
+"            u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
 "        }\n"
 "    }\n"
 "    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
@@ -217,11 +221,13 @@ static NSString * const kTopKSource = @
 "    const uint blocks = ncols / 256u;\n"
 "    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
+"    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
 "    float acc = 0.0f;\n"
 "    if (active) {\n"
 "        device const uchar *drow = slots.slot[expert] + down_offset + ulong(row_start + r) * row_bytes;\n"
 "        device const float *xe = act + expert * ncols;\n"
-"        for (uint b = lane; b < blocks; b += lanes_per_row) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid);\n"
+"        for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts);\n"
 "    }\n"
 "    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
 "    if (active && lane == 0u) tmp[expert * row_count + r] = acc;\n"
@@ -482,10 +488,12 @@ static void mark_slots(RMTopKPool *p, const uint32_t *slot_ids, uint32_t top_k, 
     for (uint32_t i = 0; i < top_k; ++i) [p markSlot:slot_ids[i] delta:delta];
 }
 
-/* lanes per row: as many SIMD lanes as 256-value blocks, capped at 32 (power of two) */
+/* lanes per row: blocks x sub-block parts, capped at 32 (power of two); each lane decodes a
+ * contiguous range of quant groups of one block (16 groups per IQ2_XS block, 32 per IQ1_M block) */
 static uint32_t lanes_for_blocks(uint32_t blocks) {
     uint32_t lanes = 1u;
     while (lanes < blocks && lanes < 32u) lanes <<= 1;
+    while (lanes * 2u <= 32u && (lanes * 2u) / blocks <= 16u && (lanes * 2u) % blocks == 0u) lanes <<= 1;
     return lanes;
 }
 
