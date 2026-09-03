@@ -7,6 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#endif
 
 #define RL_NATIVE_TOPK_MAX 64u
 
@@ -167,21 +170,46 @@ int rl_native_metal_execute_topk(
     rl_cache_transaction transaction = {0};
     if (!rl_native_lru_prepare_many(&runtime->lru, keys, top_k, &transaction, error, error_cap)) return 0;
 
+    uint32_t miss_index[RL_NATIVE_TOPK_MAX];
+    uint32_t miss_count = 0;
     for (uint32_t i = 0; i < top_k; ++i) {
         const rl_cache_reservation *reservation = &transaction.items[i];
         slots[i] = reservation->slot_id;
-        if (reservation->hit) continue;
-        uint64_t bytes_read = 0;
-        double load_ms = 0.0;
-        if (!redmetal_topk_pool_load_expert(
-                runtime->pool,
-                slots[i],
-                layouts[i].gate_offset, layouts[i].gate_bytes,
-                layouts[i].up_offset, layouts[i].up_bytes,
-                layouts[i].down_offset, layouts[i].down_bytes,
-                &bytes_read, &load_ms)) {
-            (void)bytes_read;
-            (void)load_ms;
+        if (!reservation->hit) miss_index[miss_count++] = i;
+    }
+    /* Load every miss into its reserved slot. Slots are distinct, so the
+     * positional reads are independent and run concurrently (GCD); the
+     * transaction is committed only if all of them succeed. */
+    int load_ok[RL_NATIVE_TOPK_MAX];
+    for (uint32_t k = 0; k < miss_count; ++k) load_ok[k] = 0;
+    if (miss_count) {
+        rl_expert_layout *lay = layouts;
+        uint32_t *slot_ids = slots;
+        uint32_t *mi = miss_index;
+        int *lo = load_ok;
+        redmetal_topk_pool_t pool = runtime->pool;
+#ifdef __APPLE__
+        dispatch_apply(miss_count, DISPATCH_APPLY_AUTO, ^(size_t k) {
+            const uint32_t i = mi[k];
+            uint64_t bytes_read = 0;
+            double load_ms = 0.0;
+            lo[k] = redmetal_topk_pool_load_expert(pool, slot_ids[i],
+                lay[i].gate_offset, lay[i].gate_bytes, lay[i].up_offset, lay[i].up_bytes,
+                lay[i].down_offset, lay[i].down_bytes, &bytes_read, &load_ms);
+        });
+#else
+        for (uint32_t k = 0; k < miss_count; ++k) {
+            const uint32_t i = mi[k];
+            uint64_t bytes_read = 0;
+            double load_ms = 0.0;
+            lo[k] = redmetal_topk_pool_load_expert(pool, slot_ids[i],
+                lay[i].gate_offset, lay[i].gate_bytes, lay[i].up_offset, lay[i].up_bytes,
+                lay[i].down_offset, lay[i].down_bytes, &bytes_read, &load_ms);
+        }
+#endif
+    }
+    for (uint32_t k = 0; k < miss_count; ++k) {
+        if (!load_ok[k]) {
             rl_native_lru_abort(&runtime->lru, &transaction);
             rl_native_lru_transaction_free(&transaction);
             set_metal_error(error, error_cap, "native expert load failed; LRU transaction aborted");

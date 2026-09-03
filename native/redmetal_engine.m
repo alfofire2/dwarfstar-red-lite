@@ -825,7 +825,6 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             const double read_before = m->last_read_ms;
             if (!rl_native_metal_execute_topk(m->experts, &e->expert_map, l, ids, weights, topk, 0u, hidden,
                     (const float *)m->ffn_in.contents, hidden, m->routed_host, hidden, &tel, error, cap)) goto done;
-            memcpy(m->routed.contents, m->routed_host, (size_t)hidden * sizeof(float));
             stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
             stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
             stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
@@ -835,15 +834,14 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
 
-            cb = [m->queue commandBuffer];
+            /* final residual on the CPU from the shared buffers: x = resid + routed + shared * sigmoid gate */
             {
-                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-                [enc setComputePipelineState:m->p_scale_add];
-                [enc setBuffer:m->resid offset:0 atIndex:0]; [enc setBuffer:m->routed offset:0 atIndex:1]; [enc setBuffer:m->sh_out offset:0 atIndex:2];
-                [enc setBuffer:m->scalar offset:0 atIndex:3]; [enc setBuffer:m->x offset:0 atIndex:4]; [enc setBytes:&hidden length:4 atIndex:5];
-                enc_1d(enc, m->p_scale_add, hidden, 64u); [enc endEncoding];
+                float *xh = (float *)m->x.contents;
+                const float *rh = (const float *)m->resid.contents;
+                const float *sh = (const float *)m->sh_out.contents;
+                const float scalar = *(const float *)m->scalar.contents;
+                for (uint32_t i = 0; i < hidden; ++i) xh[i] = rh[i] + (m->routed_host[i] + sh[i] * scalar);
             }
-            if (!commit_wait(cb, "layer shared/residual", &stats->gpu_ms, error, cap)) goto done;
             stats->shared_ms += rl_engine_now_ms() - l3;
             memcpy(s->layer_out + (size_t)l * hidden, m->x.contents, (size_t)hidden * sizeof(float));
         }

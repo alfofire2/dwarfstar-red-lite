@@ -84,7 +84,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic \
     -Wno-overlength-strings \
-    -Wno-gnu-conditional-omitted-operand \
+    -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu=native \
     -fobjc-arc \
     -I"$ROOT/native" \
@@ -128,7 +128,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu=native -fobjc-arc -I"$ROOT/native" \
     "${ROUTER_PARITY_COMMON[@]}" \
     "$ROOT/native/redlite_native_metal.c" \
@@ -139,7 +139,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu=native -fobjc-arc -I"$ROOT/native" \
     "${SHARED_PARITY_COMMON[@]}" \
     "$ROOT/native/redmetal_shared.m" \
@@ -148,7 +148,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu=native -fobjc-arc -I"$ROOT/native" \
     "${Q6_PROBE_COMMON[@]}" \
     "$ROOT/native/redmetal_q6_probe.m" \
@@ -157,7 +157,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu=native -fobjc-arc -I"$ROOT/native" \
     "${FFN_PARITY_COMMON[@]}" \
     "$ROOT/native/redlite_native_metal.c" \
