@@ -38,7 +38,7 @@ typedef struct {
 typedef struct {
     uint8_t seen;
     uint8_t has_attn_norm;
-    uint8_t has_attn_post_norm;
+    uint8_t has_post_attention_norm;
     uint8_t recurrent_signal;
     uint8_t full_attn_signal;
     uint32_t tensor_count;
@@ -51,16 +51,17 @@ static int read_exact(FILE *f, void *dst, size_t n) {
 
 static int read_u32(FILE *f, uint32_t *v) {
     unsigned char b[4];
-    if (!read_exact(f, b, 4)) return 0;
+    if (!read_exact(f, b, sizeof(b))) return 0;
     *v = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
     return 1;
 }
 
 static int read_u64(FILE *f, uint64_t *v) {
     unsigned char b[8];
-    if (!read_exact(f, b, 8)) return 0;
-    *v = (uint64_t)b[0] | ((uint64_t)b[1] << 8) | ((uint64_t)b[2] << 16) | ((uint64_t)b[3] << 24) |
-         ((uint64_t)b[4] << 32) | ((uint64_t)b[5] << 40) | ((uint64_t)b[6] << 48) | ((uint64_t)b[7] << 56);
+    if (!read_exact(f, b, sizeof(b))) return 0;
+    *v = (uint64_t)b[0] | ((uint64_t)b[1] << 8) | ((uint64_t)b[2] << 16) |
+         ((uint64_t)b[3] << 24) | ((uint64_t)b[4] << 32) | ((uint64_t)b[5] << 40) |
+         ((uint64_t)b[6] << 48) | ((uint64_t)b[7] << 56);
     return 1;
 }
 
@@ -76,7 +77,7 @@ static int skip_bytes(FILE *f, uint64_t n) {
 static int read_string(FILE *f, char **out) {
     uint64_t n = 0;
     if (!read_u64(f, &n) || n > GGUF_MAX_STRING || n > SIZE_MAX - 1) return 0;
-    char *s = (char *)malloc((size_t)n + 1);
+    char *s = (char *)malloc((size_t)n + 1u);
     if (!s) return 0;
     if (!read_exact(f, s, (size_t)n)) { free(s); return 0; }
     s[n] = '\0';
@@ -138,15 +139,17 @@ static int read_metadata(FILE *f, uint64_t count, uint32_t *alignment) {
 
 static uint64_t round_up_u64(uint64_t v, uint64_t a) {
     if (!a) return v;
-    const uint64_t r = v % a;
-    if (!r) return v;
-    return v > UINT64_MAX - (a - r) ? 0 : v + a - r;
+    const uint64_t rem = v % a;
+    if (!rem) return v;
+    return v > UINT64_MAX - (a - rem) ? 0 : v + a - rem;
 }
 
 static int tensor_cmp(const void *a, const void *b) {
     const raw_tensor *ta = (const raw_tensor *)a;
     const raw_tensor *tb = (const raw_tensor *)b;
-    return ta->relative_offset < tb->relative_offset ? -1 : ta->relative_offset > tb->relative_offset ? 1 : 0;
+    if (ta->relative_offset < tb->relative_offset) return -1;
+    if (ta->relative_offset > tb->relative_offset) return 1;
+    return 0;
 }
 
 static void free_raw(raw_tensor *raw, uint64_t count) {
@@ -173,30 +176,30 @@ static int parse_layer_tensor_name(const char *name, uint32_t *layer, const char
     const char *p = name + 4;
     char *end = NULL;
     errno = 0;
-    const unsigned long v = strtoul(p, &end, 10);
-    if (errno || end == p || !end || *end != '.' || v >= MAX_LAYERS) return 0;
-    *layer = (uint32_t)v;
+    const unsigned long value = strtoul(p, &end, 10);
+    if (errno || end == p || !end || *end != '.' || value >= MAX_LAYERS) return 0;
+    *layer = (uint32_t)value;
     *suffix = end + 1;
     return 1;
 }
 
-static int is_ffn_suffix(const char *s) {
-    return strncmp(s, "ffn_", 4) == 0;
+static int is_ffn_suffix(const char *suffix) {
+    return strncmp(suffix, "ffn_", 4) == 0;
 }
 
-static int is_recurrent_signal(const char *s) {
-    return strncmp(s, "ssm_", 4) == 0 ||
-           strcmp(s, "attn_qkv.weight") == 0 ||
-           strcmp(s, "attn_gate.weight") == 0;
+static int is_recurrent_signal(const char *suffix) {
+    return strncmp(suffix, "ssm_", 4) == 0 ||
+           strcmp(suffix, "attn_qkv.weight") == 0 ||
+           strcmp(suffix, "attn_gate.weight") == 0;
 }
 
-static int is_full_attn_signal(const char *s) {
-    return strcmp(s, "attn_q.weight") == 0 ||
-           strcmp(s, "attn_k.weight") == 0 ||
-           strcmp(s, "attn_v.weight") == 0 ||
-           strcmp(s, "attn_output.weight") == 0 ||
-           strcmp(s, "attn_q_norm.weight") == 0 ||
-           strcmp(s, "attn_k_norm.weight") == 0;
+static int is_full_attn_signal(const char *suffix) {
+    return strcmp(suffix, "attn_q.weight") == 0 ||
+           strcmp(suffix, "attn_k.weight") == 0 ||
+           strcmp(suffix, "attn_v.weight") == 0 ||
+           strcmp(suffix, "attn_output.weight") == 0 ||
+           strcmp(suffix, "attn_q_norm.weight") == 0 ||
+           strcmp(suffix, "attn_k_norm.weight") == 0;
 }
 
 static layer_kind classify(const layer_summary *s) {
@@ -206,8 +209,8 @@ static layer_kind classify(const layer_summary *s) {
     return LAYER_UNKNOWN;
 }
 
-static const char *kind_name(layer_kind k) {
-    switch (k) {
+static const char *kind_name(layer_kind kind) {
+    switch (kind) {
         case LAYER_RECURRENT: return "RECURRENT/DELTANET";
         case LAYER_FULL_ATTN: return "FULL_ATTENTION";
         case LAYER_MIXED: return "MIXED";
@@ -231,6 +234,7 @@ static int selftest(void) {
     if (!is_full_attn_signal(suffix) || is_recurrent_signal(suffix)) return 0;
     if (!parse_layer_tensor_name("blk.6.ssm_conv1d.weight", &layer, &suffix) || layer != 6u || !is_recurrent_signal(suffix)) return 0;
     if (!parse_layer_tensor_name("blk.9.ffn_gate_inp.weight", &layer, &suffix) || !is_ffn_suffix(suffix)) return 0;
+    if (!parse_layer_tensor_name("blk.0.post_attention_norm.weight", &layer, &suffix) || layer != 0u || strcmp(suffix, "post_attention_norm.weight") != 0) return 0;
     return 1;
 }
 
@@ -248,6 +252,7 @@ int main(int argc, char **argv) {
         printf("layer name parser  : OK\n");
         printf("FFN exclusion      : OK\n");
         printf("attention classify : OK\n");
+        printf("norm name mapping  : OK\n");
         return 0;
     }
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
@@ -321,56 +326,60 @@ int main(int argc, char **argv) {
         non_ffn_count++;
         non_ffn_span += raw[i].span_bytes;
         if (strcmp(suffix, "attn_norm.weight") == 0) s->has_attn_norm = 1;
-        if (strcmp(suffix, "attn_post_norm.weight") == 0) s->has_attn_post_norm = 1;
+        if (strcmp(suffix, "post_attention_norm.weight") == 0) s->has_post_attention_norm = 1;
         if (is_recurrent_signal(suffix)) s->recurrent_signal = 1;
         if (is_full_attn_signal(suffix)) s->full_attn_signal = 1;
     }
 
     uint32_t layer_count = 0, recurrent = 0, full = 0, mixed = 0, unknown = 0, norms_ok = 0;
-    printf("runtime            : native C Qwen3-Next layer graph audit (no Python)\n");
-    printf("GGUF version       : %u\n", version);
-    printf("tensor count       : %" PRIu64 "\n", tensor_count);
-    for (uint32_t l = 0; l < MAX_LAYERS; ++l) {
-        if (!layers[l].seen) continue;
+    for (uint32_t layer = 0; layer < MAX_LAYERS; ++layer) {
+        if (!layers[layer].seen) continue;
         layer_count++;
-        if (layers[l].has_attn_norm && layers[l].has_attn_post_norm) norms_ok++;
-        switch (classify(&layers[l])) {
+        if (layers[layer].has_attn_norm && layers[layer].has_post_attention_norm) norms_ok++;
+        switch (classify(&layers[layer])) {
             case LAYER_RECURRENT: recurrent++; break;
             case LAYER_FULL_ATTN: full++; break;
             case LAYER_MIXED: mixed++; break;
             default: unknown++; break;
         }
     }
+
+    printf("runtime            : native C Qwen3-Next layer graph audit (no Python)\n");
+    printf("GGUF version       : %u\n", version);
+    printf("tensor count       : %" PRIu64 "\n", tensor_count);
     printf("layer tensors      : %u non-FFN tensors / %.3f MiB physical span\n", non_ffn_count, (double)non_ffn_span / (1024.0 * 1024.0));
     printf("layer count        : %u\n", layer_count);
     printf("attention pattern  : recurrent=%u full=%u mixed=%u unknown=%u\n", recurrent, full, mixed, unknown);
     printf("norm pairs         : %u/%u\n", norms_ok, layer_count);
+
     printf("recurrent layers   : ");
     int first = 1;
-    for (uint32_t l = 0; l < MAX_LAYERS; ++l) if (layers[l].seen && classify(&layers[l]) == LAYER_RECURRENT) {
-        printf("%s%u", first ? "" : ",", l); first = 0;
+    for (uint32_t layer = 0; layer < MAX_LAYERS; ++layer) if (layers[layer].seen && classify(&layers[layer]) == LAYER_RECURRENT) {
+        printf("%s%u", first ? "" : ",", layer); first = 0;
     }
     if (first) printf("NONE");
     putchar('\n');
+
     printf("full-attn layers   : ");
     first = 1;
-    for (uint32_t l = 0; l < MAX_LAYERS; ++l) if (layers[l].seen && classify(&layers[l]) == LAYER_FULL_ATTN) {
-        printf("%s%u", first ? "" : ",", l); first = 0;
+    for (uint32_t layer = 0; layer < MAX_LAYERS; ++layer) if (layers[layer].seen && classify(&layers[layer]) == LAYER_FULL_ATTN) {
+        printf("%s%u", first ? "" : ",", layer); first = 0;
     }
     if (first) printf("NONE");
     putchar('\n');
+
     printf("per layer          :\n");
-    for (uint32_t l = 0; l < MAX_LAYERS; ++l) {
-        if (!layers[l].seen) continue;
+    for (uint32_t layer = 0; layer < MAX_LAYERS; ++layer) {
+        if (!layers[layer].seen) continue;
         printf("%5u: %-18s tensors=%u span=%.3f MiB norms=%s\n",
-            l, kind_name(classify(&layers[l])), layers[l].tensor_count,
-            (double)layers[l].span_bytes / (1024.0 * 1024.0),
-            layers[l].has_attn_norm && layers[l].has_attn_post_norm ? "YES" : "NO");
+            layer, kind_name(classify(&layers[layer])), layers[layer].tensor_count,
+            (double)layers[layer].span_bytes / (1024.0 * 1024.0),
+            layers[layer].has_attn_norm && layers[layer].has_post_attention_norm ? "YES" : "NO");
         if (!show_tensors) continue;
         for (uint64_t i = 0; i < tensor_count; ++i) {
-            uint32_t layer = 0;
+            uint32_t tensor_layer = 0;
             const char *suffix = NULL;
-            if (!parse_layer_tensor_name(raw[i].name, &layer, &suffix) || layer != l || is_ffn_suffix(suffix)) continue;
+            if (!parse_layer_tensor_name(raw[i].name, &tensor_layer, &suffix) || tensor_layer != layer || is_ffn_suffix(suffix)) continue;
             printf("        %-34s type=%s(%u) shape=", suffix, type_name(raw[i].ggml_type), raw[i].ggml_type);
             print_shape(&raw[i]);
             printf(" span=%.3f MiB offset=%" PRIu64 "\n",
