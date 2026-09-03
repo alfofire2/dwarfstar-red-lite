@@ -79,7 +79,7 @@ jobs:
             --layer 0 \
             --rows 8 2>&1 | tee artifacts/deltanet-proj-layer0.log
 
-      - name: DeltaNet prestate current milestone
+      - name: DeltaNet prestate regression
         id: prestate
         shell: bash
         run: |
@@ -88,6 +88,16 @@ jobs:
           .deps/redmetal/redlite-deltanet-prestate parity \
             "$REDLITE_MODEL_PATH" \
             --layer 0 2>&1 | tee artifacts/deltanet-prestate-layer0.log
+
+      - name: DeltaNet recurrent-state current milestone
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          .deps/redmetal/redlite-deltanet-state parity \
+            "$REDLITE_MODEL_PATH" \
+            --layer 0 2>&1 | tee artifacts/deltanet-state-layer0.log
 
       - name: Complete FFN regression layer 0
         id: ffn0
@@ -129,6 +139,7 @@ jobs:
             "build": "${{ steps.build.outcome }}",
             "deltanet_projection": "${{ steps.projection.outcome }}",
             "deltanet_prestate": "${{ steps.prestate.outcome }}",
+            "deltanet_state": "${{ steps.state.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
             "ffn_layer_6": "${{ steps.ffn6.outcome }}"
           }
