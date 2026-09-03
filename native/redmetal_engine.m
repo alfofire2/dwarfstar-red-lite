@@ -28,6 +28,7 @@
 #include "redlite_native_metal.h"
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_router_exec.h"
+#include "redmetal_topk.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -38,6 +39,8 @@
 static void set_error(char *dst, size_t cap, const char *msg) {
     if (dst && cap) snprintf(dst, cap, "%s", msg ? msg : "unknown Metal engine error");
 }
+
+static double redmetal_topk_pool_read_ms_total(struct rl_metal_engine *m);
 
 static NSString * const kEngineSource = @
 "#include <metal_stdlib>\n"
@@ -430,6 +433,10 @@ static id<MTLComputePipelineState> rows_pipe(rl_metal_engine *m, uint32_t type) 
     }
 }
 
+static double redmetal_topk_pool_read_ms_total(struct rl_metal_engine *m) {
+    return rl_native_metal_read_ms(m->experts);
+}
+
 static void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max) {
     const NSUInteger tg = MIN(tg_max, p.maxTotalThreadsPerThreadgroup);
     [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg ? tg : 1, 1, 1)];
@@ -770,13 +777,15 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
     float weights[RL_ENGINE_MAX_TOPK];
     float *probs = (float *)malloc((size_t)experts * sizeof(float));
     if (!probs) { set_error(error, cap, "router scratch allocation failed"); return 0; }
+    rl_native_topk_plan plan;
+    memset(&plan, 0, sizeof(plan));
     int ok = 0;
     @autoreleasepool {
+        id<MTLCommandBuffer> pending = nil; /* expert + residual command buffer of the previous layer */
         if (!rl_engine_embed_token(e, token, (float *)m->x.contents, error, cap)) goto done;
         memcpy(s->embed, m->x.contents, (size_t)hidden * sizeof(float));
         stats->embed_ms = rl_engine_now_ms() - start;
 
-        const uint64_t bytes0 = 0; (void)bytes0;
         for (uint32_t l = 0; l < in->n_layer; ++l) {
             const rl_layer_tensors *t = &e->layers[l];
             const mlayer *w = &m->layers[l];
@@ -812,38 +821,43 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u); [enc endEncoding];
             }
             enc_rows(m, cb, &w->sh_down, m->sh_act, m->sh_out);
-            if (!commit_wait(cb, "layer attention/router", &stats->gpu_ms, error, cap)) goto done;
+            /* the queue executes the previous layer's expert/residual buffer before this one */
+            if (!commit_wait(cb, "layer attention/router/shared", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
+            if (pending) {
+                stats->routed_gpu_ms += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
+                pending = nil;
+                memcpy(s->layer_out + (size_t)(l - 1u) * hidden, m->x.contents, (size_t)hidden * sizeof(float));
+                if (!rl_native_metal_release_topk(m->experts, &plan, NULL, error, cap)) goto done;
+            }
 
             if (!rl_native_router_select_softmax_topk((const float *)m->router_logits.contents, experts, topk, ids, weights, probs, error, cap)) goto done;
             memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids, (size_t)topk * sizeof(uint32_t));
             const double l2 = rl_engine_now_ms();
             stats->router_ms += l2 - l1;
 
-            rl_native_metal_telemetry tel;
             const double read_before = m->last_read_ms;
-            if (!rl_native_metal_execute_topk(m->experts, &e->expert_map, l, ids, weights, topk, 0u, hidden,
-                    (const float *)m->ffn_in.contents, hidden, m->routed_host, hidden, &tel, error, cap)) goto done;
-            stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
-            stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
-            stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
-            stats->routed_gpu_ms += tel.gpu_ms;
-            stats->routed_load_ms += tel.read_ms_total - read_before;
-            m->last_read_ms = tel.read_ms_total;
+            if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, ids, weights, topk, &plan, error, cap)) goto done;
+            cb = [m->queue commandBuffer];
+            if (!rl_native_metal_encode_topk(m->experts, &plan, (__bridge void *)cb, (__bridge void *)m->ffn_in, 0u,
+                    (__bridge void *)m->routed, 0u, error, cap)) goto done;
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_scale_add];
+                [enc setBuffer:m->resid offset:0 atIndex:0]; [enc setBuffer:m->routed offset:0 atIndex:1]; [enc setBuffer:m->sh_out offset:0 atIndex:2];
+                [enc setBuffer:m->scalar offset:0 atIndex:3]; [enc setBuffer:m->x offset:0 atIndex:4]; [enc setBytes:&hidden length:4 atIndex:5];
+                enc_1d(enc, m->p_scale_add, hidden, 64u); [enc endEncoding];
+            }
+            [cb commit];
+            pending = cb;
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
-
-            /* final residual on the CPU from the shared buffers: x = resid + routed + shared * sigmoid gate */
             {
-                float *xh = (float *)m->x.contents;
-                const float *rh = (const float *)m->resid.contents;
-                const float *sh = (const float *)m->sh_out.contents;
-                const float scalar = *(const float *)m->scalar.contents;
-                for (uint32_t i = 0; i < hidden; ++i) xh[i] = rh[i] + (m->routed_host[i] + sh[i] * scalar);
+                const double read_now = redmetal_topk_pool_read_ms_total(m);
+                stats->routed_load_ms += read_now - read_before;
+                m->last_read_ms = read_now;
             }
-            stats->shared_ms += rl_engine_now_ms() - l3;
-            memcpy(s->layer_out + (size_t)l * hidden, m->x.contents, (size_t)hidden * sizeof(float));
         }
         stats->layers_ms = rl_engine_now_ms() - start - stats->embed_ms;
 
@@ -852,6 +866,18 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
         enc_rms(m, cb, m->x, &m->output_norm, m->final_norm, hidden, eps);
         if (logits) enc_rows(m, cb, &m->output, m->final_norm, m->logits);
         if (!commit_wait(cb, "output head", &stats->gpu_ms, error, cap)) goto done;
+        if (pending) {
+            stats->routed_gpu_ms += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
+            pending = nil;
+        }
+        memcpy(s->layer_out + (size_t)(in->n_layer - 1u) * hidden, m->x.contents, (size_t)hidden * sizeof(float));
+        {
+            rl_native_metal_telemetry tel;
+            if (!rl_native_metal_release_topk(m->experts, &plan, &tel, error, cap)) goto done;
+            stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
+            stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
+            stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
+        }
         memcpy(s->final_norm, m->final_norm.contents, (size_t)hidden * sizeof(float));
         if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));
         stats->output_ms = rl_engine_now_ms() - o0;
@@ -859,6 +885,13 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
         ok = 1;
     }
 done:
+    if (plan.active) {
+        /* a failure left experts in flight: wait for the queue to drain before releasing */
+        id<MTLCommandBuffer> drain = [m->queue commandBuffer];
+        [drain commit];
+        [drain waitUntilCompleted];
+        rl_native_metal_release_topk(m->experts, &plan, NULL, NULL, 0);
+    }
     stats->total_ms = rl_engine_now_ms() - start;
     free(probs);
     return ok;

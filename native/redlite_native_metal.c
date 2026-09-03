@@ -290,3 +290,176 @@ int rl_native_metal_execute_topk(
     if (error && error_cap) error[0] = '\0';
     return 1;
 }
+
+/* ---- deferred plan API ---- */
+
+double rl_native_metal_read_ms(const rl_native_metal_runtime *runtime) {
+    return runtime && runtime->pool ? redmetal_topk_pool_read_ms(runtime->pool) : 0.0;
+}
+
+
+int rl_native_metal_prepare_topk(
+        rl_native_metal_runtime *runtime,
+        const rl_expert_map *map,
+        uint32_t layer,
+        const uint32_t *expert_ids,
+        const float *router_weights,
+        uint32_t top_k,
+        rl_native_topk_plan *plan,
+        char *error,
+        size_t error_cap) {
+    if (!runtime || !runtime->pool || !map || !expert_ids || !router_weights || !plan || !top_k || top_k > RL_NATIVE_TOPK_MAX) {
+        set_error(error, error_cap, "invalid native top-k prepare request");
+        return 0;
+    }
+    memset(plan, 0, sizeof(*plan));
+    rl_native_layer_info info;
+    if (!rl_native_get_layer_info(map, layer, &info, error, error_cap)) return 0;
+    if (info.ggml_type != 17u && info.ggml_type != 29u) {
+        set_error(error, error_cap, "native Metal supports routed IQ2_XS and IQ1_M only");
+        return 0;
+    }
+    if (top_k > runtime->lru.capacity) {
+        set_error(error, error_cap, "native Metal cache cannot hold the complete top-k selection");
+        return 0;
+    }
+    rl_cache_key keys[RL_NATIVE_TOPK_MAX];
+    rl_expert_layout layouts[RL_NATIVE_TOPK_MAX];
+    for (uint32_t i = 0; i < top_k; ++i) {
+        if (expert_ids[i] >= map->expert_count) { set_error(error, error_cap, "native top-k expert id is out of range"); return 0; }
+        for (uint32_t j = 0; j < i; ++j) if (expert_ids[i] == expert_ids[j]) { set_error(error, error_cap, "native top-k expert ids must be unique"); return 0; }
+        keys[i].layer = layer;
+        keys[i].expert = expert_ids[i];
+        if (!rl_native_expert_layout(map, layer, expert_ids[i], &layouts[i], error, error_cap)) return 0;
+        if (layouts[i].ggml_type != info.ggml_type || layouts[i].total_bytes > runtime->slot_bytes) {
+            set_error(error, error_cap, "native expert layout is incompatible with the layer/pool");
+            return 0;
+        }
+        plan->gate_bytes[i] = layouts[i].gate_bytes;
+        plan->up_bytes[i] = layouts[i].up_bytes;
+        plan->down_bytes[i] = layouts[i].down_bytes;
+        plan->weights[i] = router_weights[i];
+    }
+    rl_cache_transaction transaction = {0};
+    if (!rl_native_lru_prepare_many(&runtime->lru, keys, top_k, &transaction, error, error_cap)) return 0;
+    uint32_t miss_index[RL_NATIVE_TOPK_MAX];
+    uint32_t miss_count = 0;
+    for (uint32_t i = 0; i < top_k; ++i) {
+        plan->slots[i] = transaction.items[i].slot_id;
+        if (!transaction.items[i].hit) miss_index[miss_count++] = i;
+    }
+    int load_ok[RL_NATIVE_TOPK_MAX];
+    for (uint32_t k = 0; k < miss_count; ++k) load_ok[k] = 0;
+    if (miss_count) {
+        rl_expert_layout *lay = layouts;
+        uint32_t *slot_ids = plan->slots;
+        uint32_t *mi = miss_index;
+        int *lo = load_ok;
+        redmetal_topk_pool_t pool = runtime->pool;
+#ifdef __APPLE__
+        dispatch_apply(miss_count, DISPATCH_APPLY_AUTO, ^(size_t k) {
+            const uint32_t i = mi[k];
+            uint64_t bytes_read = 0;
+            double load_ms = 0.0;
+            lo[k] = redmetal_topk_pool_load_expert(pool, slot_ids[i],
+                lay[i].gate_offset, lay[i].gate_bytes, lay[i].up_offset, lay[i].up_bytes,
+                lay[i].down_offset, lay[i].down_bytes, &bytes_read, &load_ms);
+        });
+#else
+        for (uint32_t k = 0; k < miss_count; ++k) {
+            const uint32_t i = mi[k];
+            uint64_t bytes_read = 0;
+            double load_ms = 0.0;
+            lo[k] = redmetal_topk_pool_load_expert(pool, slot_ids[i],
+                lay[i].gate_offset, lay[i].gate_bytes, lay[i].up_offset, lay[i].up_bytes,
+                lay[i].down_offset, lay[i].down_bytes, &bytes_read, &load_ms);
+        }
+#endif
+    }
+    for (uint32_t k = 0; k < miss_count; ++k) {
+        if (!load_ok[k]) {
+            rl_native_lru_abort(&runtime->lru, &transaction);
+            rl_native_lru_transaction_free(&transaction);
+            set_metal_error(error, error_cap, "native expert load failed; LRU transaction aborted");
+            return 0;
+        }
+        runtime->expert_loads++;
+    }
+    if (!rl_native_lru_commit(&runtime->lru, &transaction, plan->slots, error, error_cap)) {
+        rl_native_lru_abort(&runtime->lru, &transaction);
+        rl_native_lru_transaction_free(&transaction);
+        return 0;
+    }
+    rl_native_lru_transaction_free(&transaction);
+    for (uint32_t i = 0; i < top_k; ++i) {
+        if (redmetal_topk_pool_slot_inflight(runtime->pool, plan->slots[i])) {
+            set_error(error, error_cap, "native top-k slot unexpectedly in-flight before encode");
+            return 0;
+        }
+    }
+    plan->layer = layer;
+    plan->top_k = top_k;
+    plan->ggml_type = info.ggml_type;
+    plan->hidden = info.hidden_size;
+    plan->ffn = info.ffn_size;
+    if (error && error_cap) error[0] = '\0';
+    return 1;
+}
+
+int rl_native_metal_encode_topk(
+        rl_native_metal_runtime *runtime,
+        rl_native_topk_plan *plan,
+        void *mtl_command_buffer,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset,
+        char *error,
+        size_t error_cap) {
+    if (!runtime || !plan || !plan->top_k || plan->active) { set_error(error, error_cap, "invalid native top-k encode request"); return 0; }
+    plan->bytes_read_at_encode = redmetal_topk_pool_bytes_read(runtime->pool);
+    plan->calls_at_encode = redmetal_topk_pool_read_calls(runtime->pool);
+    if (!redmetal_topk_pool_encode(runtime->pool, mtl_command_buffer, plan->slots, plan->gate_bytes, plan->up_bytes,
+            plan->down_bytes, plan->weights, plan->top_k, plan->ggml_type, plan->hidden, plan->ffn, 0u, plan->hidden,
+            mtl_input_buffer, input_offset, mtl_output_buffer, output_offset)) {
+        set_metal_error(error, error_cap, "native top-k Metal encode failed");
+        return 0;
+    }
+    plan->active = 1;
+    if (error && error_cap) error[0] = '\0';
+    return 1;
+}
+
+int rl_native_metal_release_topk(
+        rl_native_metal_runtime *runtime,
+        rl_native_topk_plan *plan,
+        rl_native_metal_telemetry *telemetry,
+        char *error,
+        size_t error_cap) {
+    if (!runtime || !plan) { set_error(error, error_cap, "invalid native top-k release request"); return 0; }
+    if (!plan->active) return 1;
+    const uint64_t bytes_after = redmetal_topk_pool_bytes_read(runtime->pool);
+    const uint64_t calls_after = redmetal_topk_pool_read_calls(runtime->pool);
+    redmetal_topk_pool_release(runtime->pool, plan->slots, plan->top_k);
+    plan->active = 0;
+    if (bytes_after != plan->bytes_read_at_encode || calls_after != plan->calls_at_encode) {
+        set_error(error, error_cap, "native top-k experts were overwritten by SSD reads while in flight");
+        return 0;
+    }
+    if (telemetry) {
+        memset(telemetry, 0, sizeof(*telemetry));
+        telemetry->cache_hits = runtime->lru.hits;
+        telemetry->cache_misses = runtime->lru.misses;
+        telemetry->cache_evictions = runtime->lru.evictions;
+        telemetry->expert_loads = runtime->expert_loads;
+        telemetry->bytes_read_total = bytes_after;
+        telemetry->read_calls_total = calls_after;
+        telemetry->resident_slots = runtime->lru.resident;
+        telemetry->slot_capacity = runtime->lru.capacity;
+        telemetry->slab_count = redmetal_topk_pool_slab_count(runtime->pool);
+        telemetry->allocated_bytes = redmetal_topk_pool_allocated_bytes(runtime->pool);
+        telemetry->read_ms_total = redmetal_topk_pool_read_ms(runtime->pool);
+    }
+    if (error && error_cap) error[0] = '\0';
+    return 1;
+}

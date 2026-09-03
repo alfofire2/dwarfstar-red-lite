@@ -645,6 +645,130 @@ int redmetal_topk_pool_slot_addresses(
     }
 }
 
+static int topk_validate(RMTopKPool *p, const uint32_t *slot_ids, const uint64_t *gate_bytes, const uint64_t *up_bytes,
+        const uint64_t *down_bytes, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint32_t output_row_start, uint32_t output_row_count) {
+    if (!p || !slot_ids || !gate_bytes || !up_bytes || !down_bytes) return 0;
+    if (!top_k || top_k > REDMETAL_TOPK_MAX) {
+        topk_set_error("top_k=%u must be in [1,%u]", top_k, REDMETAL_TOPK_MAX);
+        return 0;
+    }
+    if (!topk_grid_for_type(p, ggml_type)) return 0;
+    if (!hidden_size || hidden_size % QK_IQ || !ffn_size || ffn_size % QK_IQ ||
+        !output_row_count || output_row_start >= hidden_size || output_row_count > hidden_size - output_row_start) {
+        topk_set_error("invalid top-k dimensions hidden=%u ffn=%u start=%u count=%u",
+            hidden_size, ffn_size, output_row_start, output_row_count);
+        return 0;
+    }
+    for (uint32_t i = 0; i < top_k; ++i) {
+        if (slot_ids[i] >= p->_capacity) {
+            topk_set_error("top-k slot %u exceeds capacity %u", slot_ids[i], p->_capacity);
+            return 0;
+        }
+        for (uint32_t j = 0; j < i; ++j) {
+            if (slot_ids[i] == slot_ids[j]) {
+                topk_set_error("top-k slot list contains duplicate slot %u", slot_ids[i]);
+                return 0;
+            }
+        }
+    }
+    const uint64_t blockBytes = ggml_type == GGML_TYPE_IQ2_XS ? 74u : 56u;
+    const uint64_t gateRowBytes = (uint64_t)(hidden_size / QK_IQ) * blockBytes;
+    const uint64_t downRowBytes = (uint64_t)(ffn_size / QK_IQ) * blockBytes;
+    const uint64_t expectedGate = (uint64_t)ffn_size * gateRowBytes;
+    const uint64_t expectedDown = (uint64_t)hidden_size * downRowBytes;
+    for (uint32_t i = 0; i < top_k; ++i) {
+        if (gate_bytes[i] != expectedGate || up_bytes[i] != expectedGate || down_bytes[i] != expectedDown) {
+            topk_set_error("top-k expert %u matrix byte mismatch", i);
+            return 0;
+        }
+        if (gate_bytes[i] > UINT64_MAX - up_bytes[i] ||
+            gate_bytes[i] + up_bytes[i] > UINT64_MAX - down_bytes[i] ||
+            gate_bytes[i] + up_bytes[i] + down_bytes[i] > p->_slotBytes) {
+            topk_set_error("top-k expert %u exceeds slot bounds", i);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Fill the slot address table / weights and encode the three dispatches into cb. Marks slots in-flight. */
+static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32_t *slot_ids, const uint64_t *gate_bytes,
+        const uint64_t *up_bytes, const float *router_weights, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size,
+        uint32_t ffn_size, uint32_t output_row_start, uint32_t output_row_count,
+        id<MTLBuffer> input, NSUInteger input_offset, id<MTLBuffer> output, NSUInteger output_offset) {
+    id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
+    if (!grid || !cb || !input || !output) { topk_set_error("invalid top-k encode buffers"); return 0; }
+    if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
+    uint64_t *table = (uint64_t *)[p->_slotTable contents];
+    float *weights = (float *)[p->_weightBuffer contents];
+    NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithCapacity:top_k];
+    for (uint32_t i = 0; i < top_k; ++i) {
+        NSUInteger slotBase = 0;
+        id<MTLBuffer> slab = [p bufferForSlot:slot_ids[i] offset:&slotBase];
+        if (!slab) return 0;
+        uint64_t base = 0;
+        if (@available(macOS 13.0, *)) base = (uint64_t)[slab gpuAddress];
+        if (!base) { topk_set_error("top-k slab did not expose a GPU virtual address"); return 0; }
+        table[i] = base + (uint64_t)slotBase;
+        weights[i] = router_weights[i];
+        if (![resident containsObject:slab]) [resident addObject:slab];
+    }
+    const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+    const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
+    const uint64_t up_offset = gate_bytes[0];
+    const uint64_t down_offset = gate_bytes[0] + up_bytes[0];
+
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    if (!enc) { topk_set_error("failed to create top-k compute encoder"); return 0; }
+    for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
+    [enc setComputePipelineState:p->_gateupPipeline];
+    [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+    [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
+    [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
+    [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
+    [enc setBuffer:input offset:input_offset atIndex:4];
+    [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+    [enc setBuffer:grid offset:0 atIndex:6];
+    [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
+    [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+    [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc endEncoding];
+
+    enc = [cb computeCommandEncoder];
+    for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
+    [enc setComputePipelineState:p->_downPipeline];
+    [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+    [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+    [enc setBytes:&output_row_start length:sizeof(output_row_start) atIndex:2];
+    [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
+    [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
+    [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+    [enc setBuffer:p->_tmpBuffer offset:0 atIndex:6];
+    [enc setBuffer:grid offset:0 atIndex:7];
+    [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
+    [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
+    [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)output_row_count * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc endEncoding];
+
+    enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:p->_sumPipeline];
+    [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
+    [enc setBuffer:p->_weightBuffer offset:0 atIndex:1];
+    [enc setBuffer:output offset:output_offset atIndex:2];
+    [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
+    [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
+    {
+        const NSUInteger tg = MIN((NSUInteger)output_row_count, (NSUInteger)64u);
+        [enc dispatchThreads:MTLSizeMake(output_row_count, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+    }
+    [enc endEncoding];
+    mark_slots(p, slot_ids, top_k, +1);
+    return 1;
+}
+
 int redmetal_topk_pool_execute(
         redmetal_topk_pool_t handle,
         const uint32_t *slot_ids,
@@ -665,133 +789,25 @@ int redmetal_topk_pool_execute(
         double *elapsed_ms) {
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
-        if (!p || !slot_ids || !gate_bytes || !up_bytes || !down_bytes || !router_weights || !input || !output) return 0;
-        if (!top_k || top_k > REDMETAL_TOPK_MAX) {
-            topk_set_error("top_k=%u must be in [1,%u]", top_k, REDMETAL_TOPK_MAX);
+        if (!p || !router_weights || !input || !output) return 0;
+        if (!topk_validate(p, slot_ids, gate_bytes, up_bytes, down_bytes, top_k, ggml_type, hidden_size, ffn_size,
+                output_row_start, output_row_count)) return 0;
+        if (input_count != hidden_size || output_count < output_row_count) {
+            topk_set_error("invalid top-k host buffer sizes");
             return 0;
-        }
-        id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
-        if (!grid) return 0;
-        if (!hidden_size || hidden_size % QK_IQ || !ffn_size || ffn_size % QK_IQ ||
-            input_count != hidden_size || !output_row_count || output_row_start >= hidden_size ||
-            output_row_count > hidden_size - output_row_start || output_count < output_row_count) {
-            topk_set_error("invalid top-k dimensions hidden=%u ffn=%u start=%u count=%u",
-                hidden_size, ffn_size, output_row_start, output_row_count);
-            return 0;
-        }
-        for (uint32_t i = 0; i < top_k; ++i) {
-            if (slot_ids[i] >= p->_capacity) {
-                topk_set_error("top-k slot %u exceeds capacity %u", slot_ids[i], p->_capacity);
-                return 0;
-            }
-            for (uint32_t j = 0; j < i; ++j) {
-                if (slot_ids[i] == slot_ids[j]) {
-                    topk_set_error("top-k slot list contains duplicate slot %u", slot_ids[i]);
-                    return 0;
-                }
-            }
-        }
-
-        const uint64_t blockBytes = ggml_type == GGML_TYPE_IQ2_XS ? 74u : 56u;
-        const uint64_t gateRowBytes = (uint64_t)(hidden_size / QK_IQ) * blockBytes;
-        const uint64_t downRowBytes = (uint64_t)(ffn_size / QK_IQ) * blockBytes;
-        const uint64_t expectedGate = (uint64_t)ffn_size * gateRowBytes;
-        const uint64_t expectedDown = (uint64_t)hidden_size * downRowBytes;
-        for (uint32_t i = 0; i < top_k; ++i) {
-            if (gate_bytes[i] != expectedGate || up_bytes[i] != expectedGate || down_bytes[i] != expectedDown) {
-                topk_set_error("top-k expert %u matrix byte mismatch", i);
-                return 0;
-            }
-            if (gate_bytes[i] > UINT64_MAX - up_bytes[i] ||
-                gate_bytes[i] + up_bytes[i] > UINT64_MAX - down_bytes[i] ||
-                gate_bytes[i] + up_bytes[i] + down_bytes[i] > p->_slotBytes) {
-                topk_set_error("top-k expert %u exceeds slot bounds", i);
-                return 0;
-            }
         }
         if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
-
-        /* slot argument table (GPU virtual addresses) and residency set */
-        uint64_t *table = (uint64_t *)[p->_slotTable contents];
-        float *weights = (float *)[p->_weightBuffer contents];
-        NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithCapacity:top_k];
-        for (uint32_t i = 0; i < top_k; ++i) {
-            NSUInteger slotBase = 0;
-            id<MTLBuffer> slab = [p bufferForSlot:slot_ids[i] offset:&slotBase];
-            if (!slab) return 0;
-            uint64_t base = 0;
-            if (@available(macOS 13.0, *)) base = (uint64_t)[slab gpuAddress];
-            if (!base) { topk_set_error("top-k slab did not expose a GPU virtual address"); return 0; }
-            table[i] = base + (uint64_t)slotBase;
-            weights[i] = router_weights[i];
-            if (![resident containsObject:slab]) [resident addObject:slab];
-        }
         memcpy([p->_inBuffer contents], input, (size_t)hidden_size * sizeof(float));
-
         id<MTLCommandBuffer> cb = [p->_queue commandBuffer];
         if (!cb) {
             topk_set_error("failed to create top-k command buffer");
             return 0;
         }
-        mark_slots(p, slot_ids, top_k, +1);
-
-        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
-        const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
-        const uint64_t up_offset = gate_bytes[0];
-        const uint64_t down_offset = gate_bytes[0] + up_bytes[0];
-
-        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-        for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
-        [enc setComputePipelineState:p->_gateupPipeline];
-        [enc setBuffer:p->_slotTable offset:0 atIndex:0];
-        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
-        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
-        [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
-        [enc setBuffer:p->_inBuffer offset:0 atIndex:4];
-        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
-        [enc setBuffer:grid offset:0 atIndex:6];
-        [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
-        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
-        [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
-        {
-            const NSUInteger threads_x = (NSUInteger)ffn_size * gate_lanes;
-            [enc dispatchThreads:MTLSizeMake(threads_x, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        if (!topk_encode_into(p, cb, slot_ids, gate_bytes, up_bytes, router_weights, top_k, ggml_type, hidden_size, ffn_size,
+                output_row_start, output_row_count, p->_inBuffer, 0, p->_outBuffer, 0)) {
+            topk_set_error("failed to encode top-k expert execution");
+            return 0;
         }
-        [enc endEncoding];
-
-        enc = [cb computeCommandEncoder];
-        for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
-        [enc setComputePipelineState:p->_downPipeline];
-        [enc setBuffer:p->_slotTable offset:0 atIndex:0];
-        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
-        [enc setBytes:&output_row_start length:sizeof(output_row_start) atIndex:2];
-        [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
-        [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
-        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
-        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:6];
-        [enc setBuffer:grid offset:0 atIndex:7];
-        [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
-        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
-        [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
-        {
-            const NSUInteger threads_x = (NSUInteger)output_row_count * down_lanes;
-            [enc dispatchThreads:MTLSizeMake(threads_x, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
-        }
-        [enc endEncoding];
-
-        enc = [cb computeCommandEncoder];
-        [enc setComputePipelineState:p->_sumPipeline];
-        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
-        [enc setBuffer:p->_weightBuffer offset:0 atIndex:1];
-        [enc setBuffer:p->_outBuffer offset:0 atIndex:2];
-        [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
-        [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
-        {
-            const NSUInteger tg = MIN((NSUInteger)output_row_count, (NSUInteger)64u);
-            [enc dispatchThreads:MTLSizeMake(output_row_count, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
-        }
-        [enc endEncoding];
-
         const double t0 = topk_now_ms();
         [cb commit];
         [cb waitUntilCompleted];
@@ -806,4 +822,50 @@ int redmetal_topk_pool_execute(
         if (elapsed_ms) *elapsed_ms = ms;
         return 1;
     }
+}
+
+int redmetal_topk_pool_encode(
+        redmetal_topk_pool_t handle,
+        void *mtl_command_buffer,
+        const uint32_t *slot_ids,
+        const uint64_t *gate_bytes,
+        const uint64_t *up_bytes,
+        const uint64_t *down_bytes,
+        const float *router_weights,
+        uint32_t top_k,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint32_t output_row_start,
+        uint32_t output_row_count,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !router_weights || !mtl_command_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
+        if (!topk_validate(p, slot_ids, gate_bytes, up_bytes, down_bytes, top_k, ggml_type, hidden_size, ffn_size,
+                output_row_start, output_row_count)) return 0;
+        id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)mtl_command_buffer;
+        id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
+        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        if (input.length < input_offset + (uint64_t)hidden_size * sizeof(float) ||
+            output.length < output_offset + (uint64_t)output_row_count * sizeof(float)) {
+            topk_set_error("top-k external buffers are too small");
+            return 0;
+        }
+        if (!topk_encode_into(p, cb, slot_ids, gate_bytes, up_bytes, router_weights, top_k, ggml_type, hidden_size, ffn_size,
+                output_row_start, output_row_count, input, (NSUInteger)input_offset, output, (NSUInteger)output_offset)) {
+            topk_set_error("failed to encode top-k expert execution");
+            return 0;
+        }
+        return 1;
+    }
+}
+
+void redmetal_topk_pool_release(redmetal_topk_pool_t handle, const uint32_t *slot_ids, uint32_t top_k) {
+    RMTopKPool *p = topk_obj(handle);
+    if (!p || !slot_ids) return;
+    mark_slots(p, slot_ids, top_k, -1);
 }

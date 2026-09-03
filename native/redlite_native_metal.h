@@ -56,6 +56,61 @@ int rl_native_metal_execute_topk(
     char *error,
     size_t error_cap);
 
+/*
+ * Deferred execution for the persistent engine:
+ *   prepare  - LRU reservation + concurrent miss loads + commit (CPU side)
+ *   encode   - encode the expert dispatches into an external command buffer
+ *              reading/writing external MTLBuffers (opaque pointers)
+ *   release  - after the command buffer completed: release in-flight slots and
+ *              verify no SSD reads happened while the experts were in flight
+ */
+typedef struct {
+    uint32_t layer;
+    uint32_t top_k;
+    uint32_t ggml_type;
+    uint32_t hidden;
+    uint32_t ffn;
+    uint32_t slots[64];
+    uint64_t gate_bytes[64];
+    uint64_t up_bytes[64];
+    uint64_t down_bytes[64];
+    float weights[64];
+    uint64_t bytes_read_at_encode;
+    uint64_t calls_at_encode;
+    int active;
+} rl_native_topk_plan;
+
+double rl_native_metal_read_ms(const rl_native_metal_runtime *runtime);
+
+int rl_native_metal_prepare_topk(
+    rl_native_metal_runtime *runtime,
+    const rl_expert_map *map,
+    uint32_t layer,
+    const uint32_t *expert_ids,
+    const float *router_weights,
+    uint32_t top_k,
+    rl_native_topk_plan *plan,
+    char *error,
+    size_t error_cap);
+
+int rl_native_metal_encode_topk(
+    rl_native_metal_runtime *runtime,
+    rl_native_topk_plan *plan,
+    void *mtl_command_buffer,
+    void *mtl_input_buffer,
+    uint64_t input_offset,
+    void *mtl_output_buffer,
+    uint64_t output_offset,
+    char *error,
+    size_t error_cap);
+
+int rl_native_metal_release_topk(
+    rl_native_metal_runtime *runtime,
+    rl_native_topk_plan *plan,
+    rl_native_metal_telemetry *telemetry,
+    char *error,
+    size_t error_cap);
+
 #ifdef __cplusplus
 }
 #endif

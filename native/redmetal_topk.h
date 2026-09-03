@@ -71,6 +71,34 @@ int redmetal_topk_pool_execute(
     uint32_t output_count,
     double *elapsed_ms);
 
+/*
+ * Encode the same three-dispatch execution into an external Metal command
+ * buffer (opaque id<MTLCommandBuffer>) reading the input vector from an
+ * external MTLBuffer and writing the routed output into another one. Marks the
+ * slots in-flight; the caller must call redmetal_topk_pool_release after the
+ * command buffer completed.
+ */
+int redmetal_topk_pool_encode(
+    redmetal_topk_pool_t pool,
+    void *mtl_command_buffer,
+    const uint32_t *slot_ids,
+    const uint64_t *gate_bytes,
+    const uint64_t *up_bytes,
+    const uint64_t *down_bytes,
+    const float *router_weights,
+    uint32_t top_k,
+    uint32_t ggml_type,
+    uint32_t hidden_size,
+    uint32_t ffn_size,
+    uint32_t output_row_start,
+    uint32_t output_row_count,
+    void *mtl_input_buffer,
+    uint64_t input_offset,
+    void *mtl_output_buffer,
+    uint64_t output_offset);
+
+void redmetal_topk_pool_release(redmetal_topk_pool_t pool, const uint32_t *slot_ids, uint32_t top_k);
+
 #ifdef __cplusplus
 }
 #endif
