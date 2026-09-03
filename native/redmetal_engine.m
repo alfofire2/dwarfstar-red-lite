@@ -36,6 +36,8 @@
 #include <string.h>
 #include <unistd.h>
 
+void rl_metal_engine_profile_report(rl_metal_engine *m);
+
 static void set_error(char *dst, size_t cap, const char *msg) {
     if (dst && cap) snprintf(dst, cap, "%s", msg ? msg : "unknown Metal engine error");
 }
@@ -195,12 +197,16 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    for (uint j = 0; j < ns; ++j) acc = fma(state[sb + j], conv_w[kb + j], acc);\n"
 "    acc = fma(qkv[gid], conv_w[kb + ns], acc); out[gid] = acc / (1.0f + exp(-acc));\n"
 "}\n"
-"kernel void dn_qk_l2(device const float *src [[buffer(0)]], device float *dst [[buffer(1)]], constant uint &offset [[buffer(2)]],\n"
-"    constant uint &head_dim [[buffer(3)]], constant uint &heads [[buffer(4)]], constant float &eps [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
-"    if (gid >= heads) return; const uint base = offset + gid * head_dim; float ss = 0.0f;\n"
-"    for (uint j = 0; j < head_dim; ++j) ss = fma(src[base + j], src[base + j], ss);\n"
-"    const float scale = 1.0f / max(sqrt(ss), eps);\n"
-"    for (uint j = 0; j < head_dim; ++j) dst[gid * head_dim + j] = src[base + j] * scale;\n"
+"kernel void dn_qk_l2_tg(device const float *src [[buffer(0)]], device float *q [[buffer(1)]], device float *k [[buffer(2)]],\n"
+"    constant uint &head_dim [[buffer(3)]], constant uint &heads [[buffer(4)]], constant float &eps [[buffer(5)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float red[32]; const uint which = tg / heads; const uint head = tg - which * heads;\n"
+"    const uint base = which * heads * head_dim + head * head_dim; const float x = i < head_dim ? src[base + i] : 0.0f;\n"
+"    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint s = 0; s < (head_dim + 31u) / 32u; ++s) total += red[s];\n"
+"    const float scale = 1.0f / max(sqrt(total), eps);\n"
+"    if (i < head_dim) { if (which == 0u) q[head * head_dim + i] = x * scale; else k[head * head_dim + i] = x * scale; }\n"
 "}\n"
 "kernel void dn_shift_state(device const float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device float *next_state [[buffer(2)]],\n"
 "    constant uint &channels [[buffer(3)]], constant uint &dconv [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
@@ -208,84 +214,62 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    for (uint j = 0; j + 1u < ns; ++j) next_state[b + j] = state[b + j + 1u];\n"
 "    next_state[b + ns - 1u] = qkv[gid];\n"
 "}\n"
-"kernel void dn_state_decay(device const float *prev [[buffer(0)]], device const float *gate [[buffer(1)]], device float *state [[buffer(2)]],\n"
-"    constant uint &state_size [[buffer(3)]], constant uint &value_heads [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
-"    const uint matrix = state_size * state_size; const uint total = value_heads * matrix; if (gid >= total) return;\n"
-"    const uint h = gid / matrix; state[gid] = prev[gid] * exp(gate[h]);\n"
-"}\n"
-"kernel void dn_state_delta(device const float *state [[buffer(0)]], device const float *k [[buffer(1)]], device const float *v [[buffer(2)]],\n"
-"    device const float *beta [[buffer(3)]], device float *delta [[buffer(4)]], constant uint &state_size [[buffer(5)]],\n"
-"    constant uint &kv_ratio [[buffer(6)]], constant uint &value_heads [[buffer(7)]], uint gid [[thread_position_in_grid]]) {\n"
-"    const uint total = value_heads * state_size; if (gid >= total) return;\n"
-"    const uint h = gid / state_size; const uint j = gid - h * state_size; const uint kh = h / kv_ratio;\n"
-"    const uint sb = h * state_size * state_size + j * state_size; const uint kb = kh * state_size; float sum = 0.0f;\n"
-"    for (uint i = 0; i < state_size; ++i) sum = fma(state[sb + i], k[kb + i], sum);\n"
-"    delta[gid] = (v[gid] - sum) * beta[h];\n"
-"}\n"
-"kernel void dn_state_update(device float *state [[buffer(0)]], device const float *k [[buffer(1)]], device const float *delta [[buffer(2)]],\n"
-"    constant uint &state_size [[buffer(3)]], constant uint &kv_ratio [[buffer(4)]], constant uint &value_heads [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
-"    const uint matrix = state_size * state_size; const uint total = value_heads * matrix; if (gid >= total) return;\n"
-"    const uint h = gid / matrix; const uint rem = gid - h * matrix; const uint j = rem / state_size; const uint i = rem - j * state_size; const uint kh = h / kv_ratio;\n"
-"    state[gid] += k[kh * state_size + i] * delta[h * state_size + j];\n"
-"}\n"
-"kernel void dn_state_output(device const float *state [[buffer(0)]], device const float *q [[buffer(1)]], device float *out [[buffer(2)]],\n"
-"    constant uint &state_size [[buffer(3)]], constant uint &kv_ratio [[buffer(4)]], constant uint &value_heads [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
-"    const uint total = value_heads * state_size; if (gid >= total) return;\n"
-"    const uint h = gid / state_size; const uint j = gid - h * state_size; const uint kh = h / kv_ratio;\n"
-"    const uint sb = h * state_size * state_size + j * state_size; const uint qb = kh * state_size;\n"
-"    float sum = 0.0f; for (uint i = 0; i < state_size; ++i) sum = fma(state[sb + i], q[qb + i], sum);\n"
-"    out[gid] = sum * (1.0f / sqrt((float)state_size));\n"
+/* fused gated delta rule for one (value head, state row j): decay, delta, in-place update, output */
+"kernel void dn_state_fused(device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float red[32]; const uint h = tg / state_size; const uint j = tg - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint nsimd = state_size / 32u; const uint idx = (h * state_size + j) * state_size + i;\n"
+"    float s = state[idx] * exp(gate[h]); const float ki = k[kh * state_size + i];\n"
+"    float part = simd_sum(s * ki); if (simd_lane == 0) red[simd_id] = part; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float sum = 0.0f; for (uint n = 0; n < nsimd; ++n) sum += red[n];\n"
+"    const float delta = (v[h * state_size + j] - sum) * beta[h];\n"
+"    s += ki * delta; state[idx] = s;\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float o = simd_sum(s * q[kh * state_size + i]); if (simd_lane == 0) red[simd_id] = o; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (i == 0u) { float total = 0.0f; for (uint n = 0; n < nsimd; ++n) total += red[n]; out[h * state_size + j] = total * (1.0f / sqrt((float)state_size)); }\n"
 "}\n"
 "kernel void dn_tail_norm(device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
-"    uint h [[thread_position_in_grid]]) {\n"
-"    if (h >= heads) return; const uint base = h * head_dim; float ss = 0.0f;\n"
-"    for (uint i = 0; i < head_dim; ++i) ss = fma(core[base+i], core[base+i], ss);\n"
-"    const float inv = rsqrt(ss / float(head_dim) + eps);\n"
-"    for (uint i = 0; i < head_dim; ++i) { const float g = z[base+i]; const float silu = g / (1.0f + exp(-g)); out[base+i] = core[base+i] * inv * w[i] * silu; }\n"
+"    uint h [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float red[32]; if (h >= heads) return; const uint base = h * head_dim; const float x = i < head_dim ? core[base + i] : 0.0f;\n"
+"    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint n = 0; n < (head_dim + 31u) / 32u; ++n) total += red[n];\n"
+"    const float inv = rsqrt(total / float(head_dim) + eps);\n"
+"    if (i < head_dim) { const float g = z[base + i]; const float silu = g / (1.0f + exp(-g)); out[base + i] = x * inv * w[i] * silu; }\n"
 "}\n"
 /* ---- full attention (validated dev16 kernels + general GQA) ---- */
-"kernel void attn_qgate_norm(device const float *qgate [[buffer(0)]], device const float *w [[buffer(1)]], device float *query [[buffer(2)]],\n"
-"    device float *gate [[buffer(3)]], constant uint &head_dim [[buffer(4)]], constant float &eps [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
-"    uint head [[thread_position_in_grid]]) {\n"
-"    if (head >= heads) return; const uint src = head * head_dim * 2u; const uint dst = head * head_dim; float ss = 0.0f;\n"
-"    for (uint i = 0; i < head_dim; ++i) ss = fma(qgate[src + i], qgate[src + i], ss);\n"
-"    const float inv = rsqrt(ss / float(head_dim) + eps);\n"
-"    for (uint i = 0; i < head_dim; ++i) { query[dst + i] = qgate[src + i] * inv * w[i]; gate[dst + i] = qgate[src + head_dim + i]; }\n"
-"}\n"
-"kernel void attn_k_norm(device const float *key_raw [[buffer(0)]], device const float *w [[buffer(1)]], device float *key [[buffer(2)]],\n"
-"    constant uint &head_dim [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &heads [[buffer(5)]], uint head [[thread_position_in_grid]]) {\n"
-"    if (head >= heads) return; const uint base = head * head_dim; float ss = 0.0f;\n"
-"    for (uint i = 0; i < head_dim; ++i) ss = fma(key_raw[base + i], key_raw[base + i], ss);\n"
-"    const float inv = rsqrt(ss / float(head_dim) + eps);\n"
-"    for (uint i = 0; i < head_dim; ++i) key[base + i] = key_raw[base + i] * inv * w[i];\n"
-"}\n"
-"kernel void attn_rope_cache(device const float *query [[buffer(0)]], device const float *key [[buffer(1)]], device const float *value [[buffer(2)]],\n"
-"    device float *query_rope [[buffer(3)]], device float *key_cache [[buffer(4)]], device float *value_cache [[buffer(5)]],\n"
-"    constant uint &head_dim [[buffer(6)]], constant uint &query_heads [[buffer(7)]], constant uint &kv_heads [[buffer(8)]],\n"
-"    constant uint &position [[buffer(9)]], constant uint &rope_dims [[buffer(10)]], constant float &freq_base [[buffer(11)]],\n"
-"    uint head [[thread_position_in_grid]]) {\n"
-"    const uint rope_half = rope_dims / 2u;\n"
-"    if (head < query_heads) {\n"
-"        const uint base = head * head_dim;\n"
-"        for (uint i = 0; i < head_dim; ++i) query_rope[base + i] = query[base + i];\n"
-"        for (uint i = 0; i < rope_half; ++i) {\n"
-"            const float theta = float(position) * pow(freq_base, -2.0f * float(i) / float(rope_dims));\n"
-"            const float c = cos(theta); const float s = sin(theta);\n"
-"            const float x0 = query[base + i]; const float x1 = query[base + rope_half + i];\n"
-"            query_rope[base + i] = x0 * c - x1 * s; query_rope[base + rope_half + i] = x0 * s + x1 * c;\n"
-"        }\n"
+/* per head: RMSNorm (q or k weight), NeoX partial RoPE, write query_rope / key+value cache; threadgroup per head */
+"kernel void attn_qk_prep(device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
+"    device const float *qw [[buffer(3)]], device const float *kw [[buffer(4)]], device float *query_rope [[buffer(5)]], device float *gate [[buffer(6)]],\n"
+"    device float *key_cache [[buffer(7)]], device float *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
+"    constant uint &query_heads [[buffer(10)]], constant uint &kv_heads [[buffer(11)]], constant uint &position [[buffer(12)]],\n"
+"    constant uint &rope_dims [[buffer(13)]], constant float &freq_base [[buffer(14)]], constant float &eps [[buffer(15)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float red[32]; threadgroup float tmp[256];\n"
+"    const bool is_q = tg < query_heads; const uint head = is_q ? tg : tg - query_heads; if (!is_q && head >= kv_heads) return;\n"
+"    const uint src = is_q ? head * head_dim * 2u : head * head_dim;\n"
+"    const float x = i < head_dim ? (is_q ? qgate_raw[src + i] : k_raw[src + i]) : 0.0f;\n"
+"    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint n = 0; n < (head_dim + 31u) / 32u; ++n) total += red[n];\n"
+"    const float inv = rsqrt(total / float(head_dim) + eps);\n"
+"    if (i < head_dim) tmp[i] = x * inv * (is_q ? qw[i] : kw[i]);\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (i >= head_dim) return;\n"
+"    const uint rhalf = rope_dims / 2u; float r = tmp[i];\n"
+"    if (i < rope_dims) {\n"
+"        const uint pidx = i < rhalf ? i : i - rhalf;\n"
+"        const float theta = float(position) * pow(freq_base, -2.0f * float(pidx) / float(rope_dims));\n"
+"        const float c = cos(theta); const float sn = sin(theta);\n"
+"        const float x0 = tmp[pidx]; const float x1 = tmp[pidx + rhalf];\n"
+"        r = i < rhalf ? (x0 * c - x1 * sn) : (x0 * sn + x1 * c);\n"
 "    }\n"
-"    if (head < kv_heads) {\n"
-"        const uint src = head * head_dim; const uint dst = (position * kv_heads + head) * head_dim;\n"
-"        for (uint i = 0; i < head_dim; ++i) { key_cache[dst + i] = key[src + i]; value_cache[dst + i] = value[src + i]; }\n"
-"        for (uint i = 0; i < rope_half; ++i) {\n"
-"            const float theta = float(position) * pow(freq_base, -2.0f * float(i) / float(rope_dims));\n"
-"            const float c = cos(theta); const float s = sin(theta);\n"
-"            const float x0 = key[src + i]; const float x1 = key[src + rope_half + i];\n"
-"            key_cache[dst + i] = x0 * c - x1 * s; key_cache[dst + rope_half + i] = x0 * s + x1 * c;\n"
-"        }\n"
-"    }\n"
+"    if (is_q) { query_rope[head * head_dim + i] = r; gate[head * head_dim + i] = qgate_raw[src + head_dim + i]; }\n"
+"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = r; value_cache[dst] = value[head * head_dim + i]; }\n"
 "}\n"
 "kernel void attn_gqa(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
@@ -351,13 +335,15 @@ typedef struct {
 } mlayer;
 
 struct rl_metal_engine {
+    int profile;
+    double prof_ms[16];
     id<MTLDevice> dev;
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_decay, p_dn_delta, p_dn_update, p_dn_output, p_dn_tail;
-    id<MTLComputePipelineState> p_attn_qgate, p_attn_knorm, p_attn_rope, p_attn_gqa;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
+    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;
     id<MTLBuffer> grid;
     mlayer *layers;
@@ -488,6 +474,22 @@ static void enc_blit(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> d
     [blit endEncoding];
 }
 
+static const char *kStageNames[16] = {"rms", "dn_proj", "dn_prestate", "dn_state", "dn_tail", "attn_proj", "attn_norm_rope", "attn_gqa", "attn_out", "resid_rms", "router", "shared", "experts", "head", "", ""};
+
+static id<MTLCommandBuffer> stage_end(rl_metal_engine *m, id<MTLCommandBuffer> cb, int stage) {
+    if (!m->profile) return cb;
+    [cb commit];
+    [cb waitUntilCompleted];
+    m->prof_ms[stage] += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+    return [m->queue commandBuffer];
+}
+
+void rl_metal_engine_profile_report(rl_metal_engine *m) {
+    if (!m || !m->profile) return;
+    fprintf(stderr, "--- GPU stage profile (cumulative ms) ---\n");
+    for (int i = 0; i < 14; ++i) fprintf(stderr, "  %-16s %.2f ms\n", kStageNames[i], m->prof_ms[i]);
+}
+
 static int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap) {
     [cb commit];
     [cb waitUntilCompleted];
@@ -505,6 +507,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
     const rl_engine_info *in = &e->info;
     @autoreleasepool {
         m->keep = [NSMutableArray array];
+        m->profile = getenv("RL_ENGINE_PROFILE") != NULL;
         m->dev = MTLCreateSystemDefaultDevice();
         if (!m->dev || !m->dev.hasUnifiedMemory) { set_error(error, cap, "Apple unified-memory Metal device required"); rl_metal_engine_destroy(m); return NULL; }
         m->queue = [m->dev newCommandQueue];
@@ -518,11 +521,9 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"},
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
             {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"},
-            {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2"},
-            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_decay, @"dn_state_decay"}, {&m->p_dn_delta, @"dn_state_delta"},
-            {&m->p_dn_update, @"dn_state_update"}, {&m->p_dn_output, @"dn_state_output"}, {&m->p_dn_tail, @"dn_tail_norm"},
-            {&m->p_attn_qgate, @"attn_qgate_norm"}, {&m->p_attn_knorm, @"attn_k_norm"}, {&m->p_attn_rope, @"attn_rope_cache"},
-            {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
+            {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
+            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
+            {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
             *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -614,6 +615,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
 
 void rl_metal_engine_destroy(rl_metal_engine *m) {
     if (!m) return;
+    rl_metal_engine_profile_report(m);
     if (m->experts) rl_native_metal_destroy(m->experts);
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
@@ -621,8 +623,8 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = nil;
-    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_decay = m->p_dn_delta = m->p_dn_update = m->p_dn_output = m->p_dn_tail = nil;
-    m->p_attn_qgate = m->p_attn_knorm = m->p_attn_rope = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
+    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
+    m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
     m->keep = nil; m->dev = nil; m->queue = nil; m->lib = nil;
     free(m);
 }
@@ -644,7 +646,7 @@ int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap) {
 
 uint64_t rl_metal_engine_resident_bytes(const rl_metal_engine *m) { return m ? m->resident_bytes : 0u; }
 
-static void enc_recurrent(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer> cb, const rl_layer_tensors *t, const mlayer *w) {
+static id<MTLCommandBuffer> enc_recurrent(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer> cb, const rl_layer_tensors *t, const mlayer *w) {
     const rl_engine_info *in = &e->info;
     const uint32_t r = t->recurrent_index;
     const uint32_t channels = in->channels, dconv = in->d_conv, rank = in->dt_rank, groups = in->n_group, S = in->d_state;
@@ -654,6 +656,7 @@ static void enc_recurrent(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer>
     enc_rows(m, cb, &w->qkv, m->normed, m->qkv);
     enc_rows(m, cb, &w->z, m->normed, m->z);
     enc_rows(m, cb, &w->ba, m->normed, m->ba);
+    cb = stage_end(m, cb, 1);
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_dn_ba];
     [enc setBuffer:m->ba offset:0 atIndex:0]; [enc setBuffer:w->dt.buf offset:w->dt.off atIndex:1]; [enc setBuffer:w->a.buf offset:w->a.off atIndex:2];
@@ -667,66 +670,41 @@ static void enc_recurrent(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer>
     [enc setBuffer:m->conv_silu offset:0 atIndex:3]; [enc setBytes:&channels length:4 atIndex:4]; [enc setBytes:&dconv length:4 atIndex:5];
     enc_1d(enc, m->p_dn_conv, channels, 64u); [enc endEncoding];
 
-    uint32_t offset = 0;
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_dn_l2];
-    [enc setBuffer:m->conv_silu offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBytes:&offset length:4 atIndex:2];
+    [enc setBuffer:m->conv_silu offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
     [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
-    enc_1d(enc, m->p_dn_l2, groups, 64u); [enc endEncoding];
-    offset = qk_each;
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_dn_l2];
-    [enc setBuffer:m->conv_silu offset:0 atIndex:0]; [enc setBuffer:m->k offset:0 atIndex:1]; [enc setBytes:&offset length:4 atIndex:2];
-    [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
-    enc_1d(enc, m->p_dn_l2, groups, 64u); [enc endEncoding];
+    [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_dn_shift];
     [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:m->next_conv offset:0 atIndex:2];
     [enc setBytes:&channels length:4 atIndex:3]; [enc setBytes:&dconv length:4 atIndex:4];
     enc_1d(enc, m->p_dn_shift, channels, 64u); [enc endEncoding];
+    cb = stage_end(m, cb, 2);
 
-    const NSUInteger state_total = (NSUInteger)rank * S * S;
-    const NSUInteger vec_total = (NSUInteger)rank * S;
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_dn_decay];
-    [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->gate offset:0 atIndex:1]; [enc setBuffer:m->rec_scratch offset:0 atIndex:2];
-    [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&rank length:4 atIndex:4];
-    enc_1d(enc, m->p_dn_decay, state_total, 128u); [enc endEncoding];
-
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_dn_delta];
-    [enc setBuffer:m->rec_scratch offset:0 atIndex:0]; [enc setBuffer:m->k offset:0 atIndex:1]; [enc setBuffer:m->conv_silu offset:v_offset atIndex:2];
-    [enc setBuffer:m->beta offset:0 atIndex:3]; [enc setBuffer:m->delta offset:0 atIndex:4];
-    [enc setBytes:&S length:4 atIndex:5]; [enc setBytes:&kv_ratio length:4 atIndex:6]; [enc setBytes:&rank length:4 atIndex:7];
-    enc_1d(enc, m->p_dn_delta, vec_total, 128u); [enc endEncoding];
-
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_dn_update];
-    [enc setBuffer:m->rec_scratch offset:0 atIndex:0]; [enc setBuffer:m->k offset:0 atIndex:1]; [enc setBuffer:m->delta offset:0 atIndex:2];
-    [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&kv_ratio length:4 atIndex:4]; [enc setBytes:&rank length:4 atIndex:5];
-    enc_1d(enc, m->p_dn_update, state_total, 128u); [enc endEncoding];
-
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_dn_output];
-    [enc setBuffer:m->rec_scratch offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->core offset:0 atIndex:2];
-    [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&kv_ratio length:4 atIndex:4]; [enc setBytes:&rank length:4 atIndex:5];
-    enc_1d(enc, m->p_dn_output, vec_total, 128u); [enc endEncoding];
+    [enc setComputePipelineState:m->p_dn_state];
+    [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
+    [enc setBuffer:m->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4]; [enc setBuffer:m->beta offset:0 atIndex:5];
+    [enc setBuffer:m->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
+    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; [enc endEncoding];
+    cb = stage_end(m, cb, 3);
 
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_dn_tail];
     [enc setBuffer:m->core offset:0 atIndex:0]; [enc setBuffer:m->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
     [enc setBuffer:m->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
-    enc_1d(enc, m->p_dn_tail, rank, 128u); [enc endEncoding];
+    [enc dispatchThreadgroups:MTLSizeMake(rank, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)]; [enc endEncoding];
 
     enc_rows(m, cb, &w->ssm_out, m->ng, m->branch);
     (void)d_inner;
     enc_blit(cb, m->next_conv, m->conv_state[r], rl_engine_conv_count(e) * sizeof(float));
-    enc_blit(cb, m->rec_scratch, m->rec_state[r], rl_engine_rec_count(e) * sizeof(float));
+    return stage_end(m, cb, 4);
 }
 
-static void enc_attention(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer> cb, const rl_layer_tensors *t, const mlayer *w, uint32_t position) {
+static id<MTLCommandBuffer> enc_attention(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer> cb, const rl_layer_tensors *t, const mlayer *w, uint32_t position) {
     const rl_engine_info *in = &e->info;
     const uint32_t a = t->attention_index;
     const uint32_t head_dim = in->head_dim, qheads = in->n_head, kvheads = in->n_head_kv, rope_dims = in->rope_dims;
@@ -735,26 +713,17 @@ static void enc_attention(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer>
     enc_rows(m, cb, &w->q, m->normed, m->qgate_raw);
     enc_rows(m, cb, &w->k, m->normed, m->k_raw);
     enc_rows(m, cb, &w->v, m->normed, m->value);
+    cb = stage_end(m, cb, 5);
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_attn_qgate];
-    [enc setBuffer:m->qgate_raw offset:0 atIndex:0]; [enc setBuffer:w->q_norm.buf offset:w->q_norm.off atIndex:1];
-    [enc setBuffer:m->query offset:0 atIndex:2]; [enc setBuffer:m->agate offset:0 atIndex:3];
-    [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6];
-    enc_1d(enc, m->p_attn_qgate, qheads, 32u); [enc endEncoding];
-
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_attn_knorm];
-    [enc setBuffer:m->k_raw offset:0 atIndex:0]; [enc setBuffer:w->k_norm.buf offset:w->k_norm.off atIndex:1]; [enc setBuffer:m->key offset:0 atIndex:2];
-    [enc setBytes:&head_dim length:4 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&kvheads length:4 atIndex:5];
-    enc_1d(enc, m->p_attn_knorm, kvheads, 32u); [enc endEncoding];
-
-    enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:m->p_attn_rope];
-    [enc setBuffer:m->query offset:0 atIndex:0]; [enc setBuffer:m->key offset:0 atIndex:1]; [enc setBuffer:m->value offset:0 atIndex:2];
-    [enc setBuffer:m->query_rope offset:0 atIndex:3]; [enc setBuffer:m->kcache[a] offset:0 atIndex:4]; [enc setBuffer:m->vcache[a] offset:0 atIndex:5];
-    [enc setBytes:&head_dim length:4 atIndex:6]; [enc setBytes:&qheads length:4 atIndex:7]; [enc setBytes:&kvheads length:4 atIndex:8];
-    [enc setBytes:&position length:4 atIndex:9]; [enc setBytes:&rope_dims length:4 atIndex:10]; [enc setBytes:&base length:4 atIndex:11];
-    enc_1d(enc, m->p_attn_rope, qheads, 32u); [enc endEncoding];
+    [enc setComputePipelineState:m->p_attn_prep];
+    [enc setBuffer:m->qgate_raw offset:0 atIndex:0]; [enc setBuffer:m->k_raw offset:0 atIndex:1]; [enc setBuffer:m->value offset:0 atIndex:2];
+    [enc setBuffer:w->q_norm.buf offset:w->q_norm.off atIndex:3]; [enc setBuffer:w->k_norm.buf offset:w->k_norm.off atIndex:4];
+    [enc setBuffer:m->query_rope offset:0 atIndex:5]; [enc setBuffer:m->agate offset:0 atIndex:6];
+    [enc setBuffer:m->kcache[a] offset:0 atIndex:7]; [enc setBuffer:m->vcache[a] offset:0 atIndex:8];
+    [enc setBytes:&head_dim length:4 atIndex:9]; [enc setBytes:&qheads length:4 atIndex:10]; [enc setBytes:&kvheads length:4 atIndex:11];
+    [enc setBytes:&position length:4 atIndex:12]; [enc setBytes:&rope_dims length:4 atIndex:13]; [enc setBytes:&base length:4 atIndex:14]; [enc setBytes:&eps length:4 atIndex:15];
+    [enc dispatchThreadgroups:MTLSizeMake(qheads + kvheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)]; [enc endEncoding];
+    cb = stage_end(m, cb, 6);
 
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_attn_gqa];
@@ -762,8 +731,10 @@ static void enc_attention(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer>
     [enc setBuffer:m->agate offset:0 atIndex:3]; [enc setBuffer:m->gated offset:0 atIndex:4];
     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
     [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+    cb = stage_end(m, cb, 7);
 
     enc_rows(m, cb, &w->o, m->gated, m->branch);
+    return stage_end(m, cb, 8);
 }
 
 int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
@@ -792,8 +763,9 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             const double l0 = rl_engine_now_ms();
             id<MTLCommandBuffer> cb = [m->queue commandBuffer];
             enc_rms(m, cb, m->x, &w->attn_norm, m->normed, hidden, eps);
-            if (t->kind == RL_LAYER_MAP_RECURRENT) enc_recurrent(e, m, cb, t, w);
-            else enc_attention(e, m, cb, t, w, s->position);
+            cb = stage_end(m, cb, 0);
+            if (t->kind == RL_LAYER_MAP_RECURRENT) cb = enc_recurrent(e, m, cb, t, w);
+            else cb = enc_attention(e, m, cb, t, w, s->position);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:m->p_resid_rms];
@@ -803,7 +775,9 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
                 [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
+            cb = stage_end(m, cb, 9);
             enc_rows(m, cb, &w->router, m->ffn_in, m->router_logits);
+            cb = stage_end(m, cb, 10);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:m->p_sh_scalar];
@@ -821,12 +795,14 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u); [enc endEncoding];
             }
             enc_rows(m, cb, &w->sh_down, m->sh_act, m->sh_out);
+            cb = stage_end(m, cb, 11);
             /* the queue executes the previous layer's expert/residual buffer before this one */
             if (!commit_wait(cb, "layer attention/router/shared", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
             if (pending) {
                 stats->routed_gpu_ms += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
+                m->prof_ms[12] += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
                 pending = nil;
                 memcpy(s->layer_out + (size_t)(l - 1u) * hidden, m->x.contents, (size_t)hidden * sizeof(float));
                 if (!rl_native_metal_release_topk(m->experts, &plan, NULL, error, cap)) goto done;
@@ -866,8 +842,10 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
         enc_rms(m, cb, m->x, &m->output_norm, m->final_norm, hidden, eps);
         if (logits) enc_rows(m, cb, &m->output, m->final_norm, m->logits);
         if (!commit_wait(cb, "output head", &stats->gpu_ms, error, cap)) goto done;
+        m->prof_ms[13] += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
         if (pending) {
             stats->routed_gpu_ms += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
+            m->prof_ms[12] += (pending.GPUEndTime - pending.GPUStartTime) * 1000.0;
             pending = nil;
         }
         memcpy(s->layer_out + (size_t)(in->n_layer - 1u) * hidden, m->x.contents, (size_t)hidden * sizeof(float));
