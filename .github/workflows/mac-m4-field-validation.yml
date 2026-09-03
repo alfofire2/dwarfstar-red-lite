@@ -79,12 +79,19 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-deltanet-state parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-state-layer0.log
 
-      - name: DeltaNet gated tail current milestone
+      - name: DeltaNet gated tail regression
         id: tail
         shell: bash
         run: |
           set -euo pipefail
           .deps/redmetal/redlite-deltanet-tail parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-tail-layer0.log
+
+      - name: Complete DeltaNet layer current milestone
+        id: deltanet_layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-layer parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-layer0.log
 
       - name: Complete FFN regression layer 0
         id: ffn0
@@ -116,6 +123,7 @@ jobs:
             "deltanet_prestate": "${{ steps.prestate.outcome }}",
             "deltanet_state": "${{ steps.state.outcome }}",
             "deltanet_tail": "${{ steps.tail.outcome }}",
+            "deltanet_layer": "${{ steps.deltanet_layer.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
             "ffn_layer_6": "${{ steps.ffn6.outcome }}"
           }
