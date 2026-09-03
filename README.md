@@ -75,6 +75,28 @@ A controlled sweep completed all three depths with zero observed swap growth:
 
 The planner still labels these fits `CRITICAL` because the estimated headroom remains below 1 GiB. See `docs/FIELD_VALIDATION_M4PRO_24GB.md`.
 
+## Native inference (v0.3 development branch)
+
+The `v0.3-streaming` branch adds a native Qwen3-Next runtime that does not use
+llama.cpp or Python at inference time. It keeps the ~1.06 GiB of dense weights
+resident (mapped in place from the GGUF), streams the 22 GiB of routed experts
+through a bounded Metal-visible LRU cache, and runs the whole 48-layer hybrid
+DeltaNet / full-attention / MoE stack on Metal.
+
+```bash
+make native
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 64 --cache-mib 8192 --stats
+```
+
+Options: `--system`, `--raw`, `--max-tokens`, `--temperature`, `--top-k`,
+`--top-p`, `--seed`, `--context`, `--cache-mib`, `--no-stream`, `--stats`,
+`--tokens-out`. Greedy output is token-identical to the pinned llama.cpp on the
+validated prompts; on the M4 Pro / 24 GiB it generates at roughly 24–26 tok/s
+with an 8 GiB expert cache (physical footprint ~8.6 GiB). Details, validation
+numbers and limits: `docs/REDLITE_DEV18_ENGINE.md`; regression suite:
+`scripts/regress_m4.sh MODEL.gguf`.
+
 ## Requirements
 
 - Apple Silicon Mac (`arm64`)

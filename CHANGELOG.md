@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.3.0.dev18 — 2026-09-03
+
+Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
+`docs/REDLITE_DEV18_ENGINE.md`.
+
+- Added `rl_engine`, a persistent native runtime: mmap'd GGUF, audited per-layer
+  tensor table, and two independent stateful backends (double-precision CPU
+  oracle and Metal) with persistent DeltaNet conv/recurrent states and
+  full-attention KV caches carried across tokens.
+- Added a complete GGUF directory/metadata reader (hyper-parameters, tokenizer
+  vocabulary/merges/types, chat template) and scalar CPU decoders for Q8_0,
+  Q2_K (token embedding), Q4_K, Q5_K (LM head), Q6_K and IQ2_XXS; real rows
+  match gguf-py's dequantization exactly.
+- Added the model input/output path: Q2_K embedding lookup, final RMSNorm and
+  the untied Q5_K LM head producing all 151 936 logits.
+- Added a native byte-level BPE tokenizer (gpt2/qwen2 pre-tokenizer, Unicode
+  tables generated from the pinned llama.cpp) and the Instruct chat template;
+  identical ids to `llama_tokenize` on 26 inputs.
+- Added `redlite-generate`: prompt → template → tokens → prefill → decoder →
+  logits → sampler (greedy, temperature, top-k, top-p, seed) → text, stopping on
+  `<|im_end|>` / `<|endoftext|>` / `--max-tokens`, with `--stats`
+  (timings, expert-cache hit rate, SSD bytes per token, peak RSS, physical
+  footprint).
+- Added `redlite-engine` diagnostics: `info`, multi-token CPU-vs-Metal `parity`,
+  `logits` activation dumps, `tokenize`.
+- Fixed the DeltaNet key/value head pairing: value head `h` now uses key head
+  `h / (H_v / H_k)` (pinned llama.cpp repeat-interleave) instead of
+  `h % H_k` in the dev15 oracle and Metal kernels; found by the llama.cpp
+  activation comparison, re-validated with the dev15 tools.
+- Rewrote top-k expert execution as three batched SIMD-lane dispatches (gate+up+SiLU,
+  down, weighted sum) with a Metal 3 argument buffer of slot addresses, keeping
+  the validated IQ2_XS/IQ1_M block decode; added an encode-into-external-command-buffer
+  path so the engine issues one GPU sync per layer.
+- Metal engine kernels: SIMD-lane dense row kernels for every dense quant type,
+  threadgroup RMSNorm/residual norms, threadgroup-per-head GQA with chunked online
+  softmax (any context length), fused DeltaNet state kernel (decay, delta, in-place
+  update, output), fused attention q/k norm + RoPE + KV append, concurrent expert
+  miss loads.
+- Validation on the M4 Pro: 48-layer engine parity over stateful token
+  sequences (worst logits abs 1.5e-05, identical router selections and argmax);
+  pinned llama.cpp comparison of every layer output, final norm and logits
+  (cosine 1.000000, KL ≤ 3e-12, identical top-5); greedy generation identical to
+  llama.cpp for 28 tokens (short prompt) and 96 tokens after a 70-token prompt.
+- Performance on the M4 Pro (greedy, 8 GiB expert cache): decode step 43 ms,
+  generation 25.9 tok/s (short prompt) / 24.4 tok/s (166-position run), prompt
+  ingestion 15–20 tok/s token-by-token; expert cache hit rate 80–95 %, 17–67 MiB
+  SSD expert traffic per token; physical footprint 8.6 GiB with a fully
+  populated 8 GiB expert cache.
+- Added `scripts/regress_m4.sh` (31 checks incl. the pinned llama.cpp
+  tokenizer/logits/greedy comparisons) and the corresponding self-hosted M4
+  workflow steps; `make native` builds the engine and its offline test.
+- Refactored the dev17 decoder-stack loop into `rl_decoder_stack_parity_execute()`.
+
+## 0.3.0.dev17 — 2026-09-03
+
+- Audited 48-layer decoder-stack diagnostic (`redlite-decoder-stack`): dispatches
+  the 36 recurrent and 12 full-attention validated blocks from the real GGUF layer
+  map and propagates CPU and Metal hidden vectors independently
+  (stack max abs 2.38e-04). See `docs/REDLITE_DEV17_DECODER_STACK.md`.
+
+## 0.3.0.dev16 — 2026-09-03
+
+- Real full-attention tensor audit, complete single-token full-attention branch
+  (input norm, joint Q/gate projection, K/V, Q/K norm, NeoX RoPE, GQA, KV cache,
+  sigmoid gate, Q4_K output) with CPU/Metal parity at contexts 1, 2 and 16, and
+  the complete full-attention transformer block. See `docs/REDLITE_DEV16_FULL_ATTENTION.md`.
+
+## 0.3.0.dev15 — 2026-09-03
+
+- Gated DeltaNet bring-up: projection, prestate (conv, L2 norms, beta/gate),
+  recurrent state update, gated tail with Q4_K output, complete DeltaNet layer
+  and the complete recurrent transformer block, each with an independent CPU
+  oracle and M4 field validation. See `docs/REDLITE_DEV15_*.md`.
+
 ## 0.3.0.dev14 — 2026-09-03
 
 Shared-expert bring-up milestone on `v0.3-streaming`.

@@ -31,7 +31,10 @@ PYTHONPATH=. python3 -m unittest tests.test_planner.PlannerTests.test_24gb_18gib
 ruff check redlite tests --select E9,F63,F7,F82   # the only lint CI enforces (fatal errors only)
 make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes bridge for the Python dev CLIs; macOS only)
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
+bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (31 checks incl. pinned llama.cpp comparisons)
+bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
 make bootstrap                  # clone+build the pinned llama.cpp and oversized-moe-runtime into .deps/ (Apple Silicon only, slow)
 ```
 
@@ -43,6 +46,10 @@ Metal-only `build_*.sh` scripts exit 0 with a skip message.
 Real-model parity tools all follow the same shape and only work on macOS with the GGUF present:
 
 ```bash
+.deps/redmetal/redlite-generate MODEL --prompt "..." --max-tokens 64 --cache-mib 8192 --stats   # native end-to-end generation
+.deps/redmetal/redlite-engine parity MODEL --tokens 9707,11,1879 --cache-mib 1024 --context 64  # 48-layer CPU-vs-Metal multi-token parity
+.deps/redmetal/redlite-engine tokenize MODEL --text "..." --chat
+RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time profile
 .deps/redmetal/redlite-decoder-stack parity models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-attention-block parity MODEL --layer 3 --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-deltanet-layer  parity MODEL --layer 0
@@ -85,6 +92,15 @@ bridge; `REDLITE_JOBS` sets bootstrap build parallelism.
    reference, a Metal implementation, and a `parity` CLI that runs both in one process
    and reports max abs/rel error, SSD bytes read during GPU compute (must be zero after
    residency), and per-substage timings.
+
+4. **Persistent engine** (dev18: `redlite_native_engine*.{h,c}`, `redmetal_engine.m`,
+   `redlite_native_tokenizer.[ch]`, `redlite_native_sampler.[ch]`,
+   `redlite_native_generate_cli.c`). `rl_engine` owns the mmap'd GGUF
+   (`redlite_native_gguf_dir.[ch]`), the audited per-layer tensor table and two
+   independent stateful backends: a double-precision CPU oracle and the Metal backend.
+   Dense weights are wrapped in place from the mmap; routed experts go through the
+   top-k LRU pool with one GPU sync per layer (prepare/encode/release API). The stage
+   CLIs stay as regression tools; the engine reuses their kernel arithmetic.
 
 ### Native source conventions
 
@@ -129,6 +145,10 @@ executables, so ABI-visible changes there affect both layers.
   expert scale. Router is F32 `(2048, 512)` per layer.
 - Routed expert quant types in the target GGUF are mixed: layers 0–5 and 43–47 are
   IQ2_XS, layers 6–42 are IQ1_M. Dispatch is by the tensor's actual GGML type.
+- DeltaNet pairs value head `h` with key head `h / (H_v / H_k)` (repeat-interleave,
+  as in llama.cpp); `h % H_k` is wrong and was fixed in dev18.
+- Token embedding is Q2_K, the LM head is an untied Q5_K `output.weight`; tokenizer
+  is gpt2/qwen2 BPE with `<|im_end|>` (151645) as EOS and no BOS.
 - Shared expert: `down(SiLU(gate(x)) * up(x)) * sigmoid(ffn_gate_inp_shexp(x))`, added
   to the routed output.
 - Pinned llama.cpp (commit in `third_party/README.md` and `scripts/bootstrap_macos.sh`)
@@ -137,6 +157,9 @@ executables, so ABI-visible changes there affect both layers.
 
 ## Working conventions
 
+- **The pinned llama.cpp is an oracle only.** `scripts/dev/ref_llama/` dumps
+  activations/logits/greedy tokens for comparison; it must never be linked into a
+  runtime binary, and Python stays development-only.
 - **Honesty about validation is a project rule.** Docs and CHANGELOG distinguish
   "implemented", "synthetically tested", and "field-validated on the M4 Pro". Do not
   describe a stage as validated, or claim GPU expert streaming / throughput, unless a
