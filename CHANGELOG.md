@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0.dev14 — 2026-09-03
+
+Shared-expert bring-up milestone on `v0.3-streaming`.
+
+- Recorded real dev13 router field validation: F32 router CPU/Metal parity passes on representative IQ2_XS and IQ1_M layers, ordered top-10 IDs match exactly, and router-selected routed FFN parity passes with zero SSD reads during Metal compute.
+- Verified the pinned Qwen3-Next shared-expert formula: `down(SiLU(gate(x)) * up(x))`, multiplied by a separate `sigmoid(ffn_gate_inp_shexp(x))` scalar gate, then added to the routed MoE output.
+- Added `redlite-shared-audit`, a standalone native C scanner for exact `ffn_gate_inp_shexp`, `ffn_gate_shexp`, `ffn_up_shexp` and `ffn_down_shexp` tensors.
+- The audit reports layer completeness, hidden/shared-FFN dimensions, per-kind GGML type counts, physical spans and offsets, while keeping the dev13 routed path untouched.
+- Shared arithmetic is intentionally not implemented until the target GGUF audit reveals the real shared tensor formats and width.
+
 ## 0.3.0.dev13 — 2026-09-03
 
 Native Qwen3-Next router bring-up on `v0.3-streaming`.
