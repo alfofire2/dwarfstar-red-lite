@@ -26,6 +26,7 @@ typedef struct {
     uint32_t slab_count;
     uint64_t allocated_bytes;
     double gpu_ms;
+    double read_ms_total;
 } rl_native_metal_telemetry;
 
 rl_native_metal_runtime *rl_native_metal_create(

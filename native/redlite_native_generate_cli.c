@@ -189,8 +189,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "prompt tokens        : %u (%.1f ms, %.2f tok/s)\n", prompt_len, prefill_ms, prompt_len * 1000.0 / prefill_ms);
         fprintf(stderr, "generated tokens     : %u (%.1f ms, %.2f tok/s over %u decode passes)\n", generated, gen_ms,
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);
-        fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f shared %.1f out %.1f)\n",
-            st.total_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.shared_ms, st.output_ms);
+        fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f [load %.1f gpu %.1f] shared %.1f out %.1f) dense GPU %.1f ms\n",
+            st.total_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.routed_load_ms, st.routed_gpu_ms, st.shared_ms, st.output_ms, st.gpu_ms);
         fprintf(stderr, "expert cache         : hits=%" PRIu64 " misses=%" PRIu64 " loads=%" PRIu64 " resident=%u/%u slots (hit rate %.1f%%)\n",
             st.cache_hits - hits_start, st.cache_misses - misses_start, st.expert_loads - loads_start, st.resident_slots, st.slot_capacity,
             (st.cache_hits + st.cache_misses - hits_start - misses_start) ? 100.0 * (double)(st.cache_hits - hits_start) / (double)(st.cache_hits + st.cache_misses - hits_start - misses_start) : 0.0);

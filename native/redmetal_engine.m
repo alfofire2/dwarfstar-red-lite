@@ -363,6 +363,7 @@ struct rl_metal_engine {
     float *routed_host;
     uint64_t resident_bytes;
     uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
+    double last_read_ms;
 };
 
 static id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
@@ -460,13 +461,14 @@ static void enc_blit(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> d
     [blit endEncoding];
 }
 
-static int commit_wait(id<MTLCommandBuffer> cb, const char *what, char *error, size_t cap) {
+static int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap) {
     [cb commit];
     [cb waitUntilCompleted];
     if (cb.status != MTLCommandBufferStatusCompleted || cb.error) {
         snprintf(error, cap, "%s command buffer failed: %s", what, cb.error.localizedDescription.UTF8String ?: "unknown");
         return 0;
     }
+    if (gpu_ms) *gpu_ms += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
     return 1;
 }
 
@@ -773,7 +775,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; [enc endEncoding];
             }
             enc_rows(m, cb, &w->router, m->ffn_in, m->router_logits);
-            if (!commit_wait(cb, "layer attention/router", error, cap)) goto done;
+            if (!commit_wait(cb, "layer attention/router", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
 
@@ -783,12 +785,16 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             stats->router_ms += l2 - l1;
 
             rl_native_metal_telemetry tel;
+            const double read_before = m->last_read_ms;
             if (!rl_native_metal_execute_topk(m->experts, &e->expert_map, l, ids, weights, topk, 0u, hidden,
                     (const float *)m->ffn_in.contents, hidden, m->routed_host, hidden, &tel, error, cap)) goto done;
             memcpy(m->routed.contents, m->routed_host, (size_t)hidden * sizeof(float));
             stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
             stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
             stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
+            stats->routed_gpu_ms += tel.gpu_ms;
+            stats->routed_load_ms += tel.read_ms_total - read_before;
+            m->last_read_ms = tel.read_ms_total;
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
 
@@ -817,7 +823,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setBuffer:m->scalar offset:0 atIndex:3]; [enc setBuffer:m->x offset:0 atIndex:4]; [enc setBytes:&hidden length:4 atIndex:5];
                 enc_1d(enc, m->p_scale_add, hidden, 64u); [enc endEncoding];
             }
-            if (!commit_wait(cb, "layer shared/residual", error, cap)) goto done;
+            if (!commit_wait(cb, "layer shared/residual", &stats->gpu_ms, error, cap)) goto done;
             stats->shared_ms += rl_engine_now_ms() - l3;
             memcpy(s->layer_out + (size_t)l * hidden, m->x.contents, (size_t)hidden * sizeof(float));
         }
@@ -827,7 +833,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
         id<MTLCommandBuffer> cb = [m->queue commandBuffer];
         enc_rms(m, cb, m->x, &m->output_norm, m->final_norm, hidden, eps);
         if (logits) enc_rows(m, cb, &m->output, m->final_norm, m->logits);
-        if (!commit_wait(cb, "output head", error, cap)) goto done;
+        if (!commit_wait(cb, "output head", &stats->gpu_ms, error, cap)) goto done;
         memcpy(s->final_norm, m->final_norm.contents, (size_t)hidden * sizeof(float));
         if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));
         stats->output_ms = rl_engine_now_ms() - o0;

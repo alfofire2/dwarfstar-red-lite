@@ -64,6 +64,9 @@ typedef struct {
     double shared_ms;
     double output_ms;
     double total_ms;
+    double routed_load_ms;   /* expert miss loading (SSD/page cache) */
+    double routed_gpu_ms;    /* expert Metal execution */
+    double gpu_ms;           /* GPU-side time of the dense command buffers */
     uint64_t expert_loads;
     uint64_t cache_hits;
     uint64_t cache_misses;

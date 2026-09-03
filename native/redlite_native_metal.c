@@ -257,6 +257,7 @@ int rl_native_metal_execute_topk(
         telemetry->slab_count = redmetal_topk_pool_slab_count(runtime->pool);
         telemetry->allocated_bytes = redmetal_topk_pool_allocated_bytes(runtime->pool);
         telemetry->gpu_ms = gpu_ms;
+        telemetry->read_ms_total = redmetal_topk_pool_read_ms(runtime->pool);
     }
     if (error && error_cap) error[0] = '\0';
     return 1;
