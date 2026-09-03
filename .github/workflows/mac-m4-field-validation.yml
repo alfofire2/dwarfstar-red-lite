@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-deltanet-tail parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-tail-layer0.log
 
-      - name: Complete DeltaNet layer current milestone
+      - name: Complete DeltaNet layer regression
         id: deltanet_layer
         shell: bash
         run: |
@@ -99,6 +99,13 @@ jobs:
         run: |
           set -euo pipefail
           .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
+
+      - name: Full-width FFN layer 0 current milestone
+        id: ffn0_full
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 2048 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0-full.log
 
       - name: Complete FFN regression layer 6
         id: ffn6
@@ -125,6 +132,7 @@ jobs:
             "deltanet_tail": "${{ steps.tail.outcome }}",
             "deltanet_layer": "${{ steps.deltanet_layer.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
+            "ffn_layer_0_full": "${{ steps.ffn0_full.outcome }}",
             "ffn_layer_6": "${{ steps.ffn6.outcome }}"
           }
           JSON
