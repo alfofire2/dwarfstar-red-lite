@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwarfstar-red-lite"
-version = "0.3.0.dev14"
+version = "0.3.0.dev15"
 description = "Apple-Silicon-first native runtime and validation tools for Qwen3-Next MoE inference"
 requires-python = ">=3.10"
 authors = [{name = "DwarfStar Red Lite contributors"}]
