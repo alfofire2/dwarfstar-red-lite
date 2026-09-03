@@ -31,15 +31,6 @@ typedef struct {
 } rl_expert_tensor;
 
 typedef struct {
-    uint32_t layer;
-    uint32_t ggml_type;
-    uint32_t n_dims;
-    uint64_t shape[RL_NATIVE_MAX_DIMS];
-    uint64_t tensor_offset;
-    uint64_t tensor_span_bytes;
-} rl_router_tensor;
-
-typedef struct {
     uint32_t version;
     uint32_t alignment;
     uint64_t tensor_count;
@@ -47,12 +38,10 @@ typedef struct {
     uint32_t expert_count;
     uint32_t layer_count;
     uint32_t routed_tensor_count;
-    uint32_t router_tensor_count;
     uint64_t total_routed_payload_bytes;
     uint64_t max_expert_triplet_bytes;
     int all_slice_safe;
     rl_expert_tensor *routed;
-    rl_router_tensor *routers;
 } rl_expert_map;
 
 typedef struct {
@@ -85,15 +74,7 @@ int rl_native_expert_layout(
     char *error,
     size_t error_cap);
 
-int rl_native_router_tensor(
-    const rl_expert_map *map,
-    uint32_t layer,
-    rl_router_tensor *out,
-    char *error,
-    size_t error_cap);
-
 const char *rl_native_quant_name(uint32_t ggml_type);
-const char *rl_native_type_name(uint32_t ggml_type);
 const char *rl_native_kind_name(rl_expert_kind kind);
 
 #ifdef __cplusplus
