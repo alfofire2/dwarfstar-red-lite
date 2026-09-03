@@ -72,7 +72,8 @@ static void usage(FILE *out) {
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers]\n"
-        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out FILE] [--context N] [--cache-mib N]\n");
+        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--context N] [--cache-mib N]\n"
+        "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n");
 }
 
 static void print_info(const rl_engine_info *in) {
@@ -143,7 +144,13 @@ int main(int argc, char **argv) {
             const uint32_t best = argmax(logits, in->vocab);
             printf("token[%u]=%u -> argmax=%u logit=%.6f total=%.1f ms (layers %.1f, output %.1f)\n",
                 i, tokens[i], best, logits[best], st.total_ms, st.layers_ms, st.output_ms);
-            if (out) fwrite(logits, sizeof(float), in->vocab, out);
+            if (out) {
+                fwrite(rl_engine_last_embedding(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU), sizeof(float), in->hidden, out);
+                for (uint32_t l = 0; l < in->n_layer; ++l)
+                    fwrite(rl_engine_last_layer_output(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU, l), sizeof(float), in->hidden, out);
+                fwrite(rl_engine_last_final_norm(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU), sizeof(float), in->hidden, out);
+                fwrite(logits, sizeof(float), in->vocab, out);
+            }
         }
         if (out) fclose(out);
         free(logits);
