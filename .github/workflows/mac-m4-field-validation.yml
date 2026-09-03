@@ -93,6 +93,13 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-deltanet-layer parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-layer0.log
 
+      - name: Complete recurrent transformer block current milestone
+        id: recurrent_block
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-recurrent-block parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/recurrent-block-layer0.log
+
       - name: Complete FFN regression layer 0
         id: ffn0
         shell: bash
@@ -131,6 +138,7 @@ jobs:
             "deltanet_state": "${{ steps.state.outcome }}",
             "deltanet_tail": "${{ steps.tail.outcome }}",
             "deltanet_layer": "${{ steps.deltanet_layer.outcome }}",
+            "recurrent_block": "${{ steps.recurrent_block.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
             "ffn_layer_0_full": "${{ steps.ffn0_full.outcome }}",
             "ffn_layer_6": "${{ steps.ffn6.outcome }}"
