@@ -4,6 +4,7 @@
 #include "redlite_native_cache.h"
 #include "redlite_native_gguf.h"
 #include "redlite_native_model.h"
+#include "redlite_native_router.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +32,7 @@ static int write_string(FILE *f, const char *s) {
     return write_u64(f, (uint64_t)n) && fwrite(s, 1, n, f) == n;
 }
 
-static int write_tensor(
+static int write_tensor3(
         FILE *f,
         const char *name,
         uint64_t d0,
@@ -41,6 +42,18 @@ static int write_tensor(
         uint64_t offset) {
     return write_string(f, name) && write_u32(f, 3u) &&
            write_u64(f, d0) && write_u64(f, d1) && write_u64(f, d2) &&
+           write_u32(f, type) && write_u64(f, offset);
+}
+
+static int write_tensor2(
+        FILE *f,
+        const char *name,
+        uint64_t d0,
+        uint64_t d1,
+        uint32_t type,
+        uint64_t offset) {
+    return write_string(f, name) && write_u32(f, 2u) &&
+           write_u64(f, d0) && write_u64(f, d1) &&
            write_u32(f, type) && write_u64(f, offset);
 }
 
@@ -56,11 +69,12 @@ static int make_fixture(char path[64]) {
     }
 
     int ok = fwrite("GGUF", 1, 4, f) == 4 &&
-             write_u32(f, 3u) && write_u64(f, 3u) && write_u64(f, 1u) &&
+             write_u32(f, 3u) && write_u64(f, 4u) && write_u64(f, 1u) &&
              write_string(f, "general.alignment") && write_u32(f, 4u) && write_u32(f, 32u) &&
-             write_tensor(f, "blk.0.ffn_gate_exps.weight", 256u, 8u, 4u, 17u, 0u) &&
-             write_tensor(f, "blk.0.ffn_up_exps.weight",   256u, 8u, 4u, 17u, 128u) &&
-             write_tensor(f, "blk.0.ffn_down_exps.weight",   8u, 256u, 4u, 17u, 256u);
+             write_tensor3(f, "blk.0.ffn_gate_exps.weight", 256u, 8u, 4u, 17u, 0u) &&
+             write_tensor3(f, "blk.0.ffn_up_exps.weight",   256u, 8u, 4u, 17u, 128u) &&
+             write_tensor3(f, "blk.0.ffn_down_exps.weight",   8u, 256u, 4u, 17u, 256u) &&
+             write_tensor2(f, "blk.0.ffn_gate_inp.weight", 256u, 4u, 1u, 384u);
 
     long pos = ftell(f);
     if (pos < 0) ok = 0;
@@ -68,7 +82,7 @@ static int make_fixture(char path[64]) {
         if (fputc(0, f) == EOF) ok = 0;
         pos++;
     }
-    unsigned char zero[384] = {0};
+    unsigned char zero[2432] = {0};
     if (ok && fwrite(zero, 1, sizeof(zero), f) != sizeof(zero)) ok = 0;
     if (fclose(f) != 0) ok = 0;
     if (!ok) unlink(path);
@@ -85,19 +99,20 @@ static int test_synthetic_gguf(void) {
     char error[256];
     rl_expert_map map;
     const int parsed = rl_native_build_expert_map(path, 4u, &map, error, sizeof(error));
-    unlink(path);
     if (!parsed) {
         fprintf(stderr, "synthetic GGUF parse failed: %s\n", error);
+        unlink(path);
         return 0;
     }
 
-    int ok = map.version == 3u && map.alignment == 32u && map.tensor_count == 3u &&
+    int ok = map.version == 3u && map.alignment == 32u && map.tensor_count == 4u &&
              map.routed_tensor_count == 3u && map.layer_count == 1u && map.expert_count == 4u &&
              map.all_slice_safe && map.total_routed_payload_bytes == 384u &&
              map.max_expert_triplet_bytes == 96u;
     if (!ok) {
         fprintf(stderr, "synthetic GGUF map invariants failed\n");
         rl_native_free_expert_map(&map);
+        unlink(path);
         return 0;
     }
 
@@ -107,6 +122,7 @@ static int test_synthetic_gguf(void) {
         info.expert_count != 4u) {
         fprintf(stderr, "synthetic GGUF layer-info invariants failed: %s\n", error);
         rl_native_free_expert_map(&map);
+        unlink(path);
         return 0;
     }
 
@@ -118,10 +134,24 @@ static int test_synthetic_gguf(void) {
         layout.down_offset - layout.up_offset != 128u) {
         fprintf(stderr, "synthetic GGUF expert-layout invariants failed: %s\n", error);
         rl_native_free_expert_map(&map);
+        unlink(path);
+        return 0;
+    }
+
+    rl_router_tensor_info routers[4];
+    uint32_t router_count = 0;
+    if (!rl_native_router_audit(path, routers, 4u, &router_count, error, sizeof(error)) ||
+        router_count != 1u || routers[0].layer != 0u || routers[0].ggml_type != 1u ||
+        routers[0].n_dims != 2u || routers[0].shape[0] != 256u || routers[0].shape[1] != 4u ||
+        routers[0].tensor_span_bytes != 2048u) {
+        fprintf(stderr, "synthetic router audit invariants failed: %s\n", error);
+        rl_native_free_expert_map(&map);
+        unlink(path);
         return 0;
     }
 
     rl_native_free_expert_map(&map);
+    unlink(path);
     return 1;
 }
 
@@ -162,8 +192,6 @@ static int test_lru_transaction(void) {
         return 0;
     }
 
-    /* Simulate a failed replacement load: abort must never leave old metadata
-       claiming bytes that may have been overwritten in the victim slot. */
     rl_native_lru_abort(&cache, &tx);
     rl_native_lru_transaction_free(&tx);
     if (!rl_native_lru_lookup(&cache, initial[0], &ignored) ||
@@ -200,6 +228,7 @@ int main(void) {
     printf("synthetic GGUF      : OK\n");
     printf("native layer info  : OK\n");
     printf("expert slicing     : OK\n");
+    printf("router discovery   : OK\n");
     printf("LRU transaction    : OK\n");
     return 0;
 }
