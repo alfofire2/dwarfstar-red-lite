@@ -26,6 +26,16 @@ ROUTER_AUDIT=(
   "$ROOT/native/redlite_native_router_cli.c"
   "$ROOT/native/redlite_native_router.c"
 )
+ROUTER_PARITY_COMMON=(
+  "$ROOT/native/redlite_native_routed_cli.c"
+  "$ROOT/native/redlite_native_router.c"
+  "$ROOT/native/redlite_native_router_exec.c"
+  "$ROOT/native/redlite_native_gguf.c"
+  "$ROOT/native/redlite_native_cache.c"
+  "$ROOT/native/redlite_native_model.c"
+  "$ROOT/native/redlite_native_tables.c"
+  "$ROOT/native/redlite_native_reference.c"
+)
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
@@ -58,6 +68,17 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
     "${ROUTER_AUDIT[@]}" \
     -o "$OUT/redlite-router-audit"
+
+  xcrun --sdk macosx clang \
+    -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    "${ROUTER_PARITY_COMMON[@]}" \
+    "$ROOT/native/redlite_native_metal.c" \
+    "$ROOT/native/redmetal_topk.m" \
+    "$ROOT/native/redmetal_router.m" \
+    -framework Foundation -framework Metal -lm \
+    -o "$OUT/redlite-router"
 else
   "$CC_BIN" \
     -O3 \
@@ -87,6 +108,12 @@ fi
 "$OUT/redlite-native" selftest
 "$OUT/redlite-native-offline-test"
 "$OUT/redlite-router-audit" --help >/dev/null
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  "$OUT/redlite-router" --help >/dev/null
+fi
 
 echo "Built $OUT/redlite-native"
 echo "Built $OUT/redlite-router-audit"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  echo "Built $OUT/redlite-router"
+fi
