@@ -13,12 +13,14 @@ COMMON=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
+  "$ROOT/native/redlite_native_router.c"
 )
 OFFLINE_TEST=(
   "$ROOT/native/redlite_native_offline_test.c"
   "$ROOT/native/redlite_native_gguf.c"
   "$ROOT/native/redlite_native_cache.c"
   "$ROOT/native/redlite_native_model.c"
+  "$ROOT/native/redlite_native_router.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
