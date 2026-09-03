@@ -627,7 +627,7 @@ static void cpu_state_update(const float *q, const float *k, const float *v,
     memcpy(next_state, prev_state, matrix * value_heads * sizeof(float));
 
     for (uint32_t h = 0; h < value_heads; ++h) {
-        const uint32_t kh = h % key_heads;
+        const uint32_t kh = h / (value_heads / key_heads); /* pinned llama.cpp repeat-interleave */
         const float *qh = q + (size_t)kh * state_size;
         const float *khv = k + (size_t)kh * state_size;
         const float *vh = v + (size_t)h * state_size;
