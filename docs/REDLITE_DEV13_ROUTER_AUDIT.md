@@ -8,9 +8,7 @@ The pinned llama.cpp Qwen3-Next implementation (`7798007a29a90e3053e799394da48cf
 
 `blk.<layer>.ffn_gate_inp.weight`
 
-with logical shape:
-
-`{ hidden_size, expert_count }`
+with logical shape `{ hidden_size, expert_count }`.
 
 For the target 80B-A3B architecture that means 2048 hidden features and 512 router logits.
 
@@ -23,57 +21,63 @@ The pinned graph calls `build_moe_ffn()` with:
 - softmax expert gating;
 - default `expert_weights_scale = 0.0`, which means the generic MoE graph does not apply an additional post-normalization weight scale.
 
-The effective router sequence is therefore:
+The effective router sequence is:
 
 1. router matrix-vector product -> 512 logits;
 2. softmax across all 512 logits;
 3. select top-10 experts;
 4. gather those 10 softmax probabilities;
-5. because `norm_w=true`, renormalize the selected 10 probabilities by their selected-weight sum;
-6. multiply routed expert outputs by the resulting normalized weights and sum.
+5. renormalize selected probabilities by their selected-weight sum;
+6. use those weights for routed expert accumulation.
 
-Dev13 reproduces this sequence; it does not substitute sigmoid gating, pre-softmax weighting, or unnormalized selected probabilities.
+## Real-model router audit — field validated
 
-## Real-model router audit — field result
+Target model: Bartowski `Qwen3-Next-80B-A3B-Instruct` IQ2_XXS GGUF on Apple M4 Pro / 24 GiB.
 
-The target Bartowski Qwen3-Next-80B-A3B GGUF was audited on the Apple M4 Pro target system.
+Observed result:
 
-Result:
+- router tensors: 48;
+- unique layers: YES;
+- consistent shape: YES;
+- logical shape: `(2048, 512)`;
+- all router tensors: `GGML_TYPE_F32 (0)`;
+- each router: exactly 4.000 MiB;
+- total router payload: 192.000 MiB;
+- layer coverage: 0 through 47.
 
-- 48 exact `blk.N.ffn_gate_inp.weight` tensors;
-- one unique router for each routed layer 0-47;
-- consistent logical shape `(2048, 512)`;
-- all 48 routers are `GGML_TYPE_F32 (0)`;
-- each router occupies exactly 4.000 MiB;
-- total router payload is 192.000 MiB.
-
-This removes the need for any quantized router decoder in the target path.
+This removes the need for any quantized router decoder in the target runtime.
 
 ## Native F32 router execution
 
-Dev13 now adds two independent router arithmetic paths:
+Dev13 adds two independent arithmetic paths.
 
-1. CPU oracle:
-   - positional read of the real 4 MiB F32 router tensor;
-   - independent 2048x512 matrix-vector product;
-   - stable softmax;
-   - deterministic top-k;
-   - selected-weight renormalization.
+### CPU oracle
 
-2. Metal path:
-   - positional read of the same real router directly into a shared `MTLBuffer`;
-   - correctness-first F32 Metal router matvec producing all 512 logits;
-   - the same native softmax/top-k/renormalization stage.
+- positional read of the real 4 MiB F32 router tensor;
+- independent 2048x512 matrix-vector product;
+- stable softmax;
+- deterministic top-k;
+- selected-weight renormalization.
 
-The CPU and GPU paths read the router independently so the field test verifies both real GGUF bytes and Metal arithmetic rather than comparing two views of one copied buffer.
+### Metal path
 
-## New validation executable
+- positional read of the same real router directly into a shared `MTLBuffer`;
+- correctness-first F32 Metal router matvec producing all 512 logits;
+- the same native softmax/top-k/renormalization stage.
 
-On macOS, `make native` now builds `.deps/redmetal/redlite-router`.
+The CPU and GPU paths read the router independently so the field test checks the real GGUF bytes and the Metal arithmetic rather than comparing aliases of one copied buffer.
+
+## Validation executable
+
+On macOS, `make native` builds:
+
+`.deps/redmetal/redlite-router`
 
 ### Router-only parity
 
-`redlite-router router-parity MODEL --layer N --top-k 10`
+```text
+redlite-router router-parity MODEL --layer N --top-k 10
+```
 
 Checks:
 
@@ -84,15 +88,17 @@ Checks:
 
 ### Real-router routed-MoE parity
 
-`redlite-router routed-parity MODEL --layer N --top-k 10 --rows 8 --cache-mib 256`
+```text
+redlite-router routed-parity MODEL --layer N --top-k 10 --rows 8 --cache-mib 256
+```
 
-After router parity passes, this command feeds the **real router-selected** expert IDs and weights into the existing native resident Metal expert executor. It compares the routed output against the independent C expert reference.
+After router parity passes, this command feeds the **real router-selected** expert IDs and weights into the existing native resident Metal expert executor and compares the routed output against the independent C expert reference.
 
-This validates the chain:
+This validates:
 
 `real F32 router -> softmax -> top-10 -> renorm -> LRU residency -> SSD expert loads -> IQ2_XS/IQ1_M Metal FFNs -> GPU weighted accumulation`
 
-The command intentionally validates only the routed-expert branch. Qwen3-Next's separate gated shared-expert branch is not integrated in dev13 yet.
+The command intentionally validates only the routed-expert branch. Qwen3-Next's separate gated shared-expert branch is not integrated yet.
 
 ## Portable regression coverage
 
@@ -103,8 +109,8 @@ A platform-independent test verifies:
 - selected-weight renormalization to sum 1;
 - deterministic lower-index tie breaking.
 
-The existing synthetic GGUF fixture also proves that exact `ffn_gate_inp.weight` discovery does not accidentally match `ffn_gate_inp_shexp`.
+The synthetic GGUF fixture also proves exact `ffn_gate_inp.weight` discovery without matching `ffn_gate_inp_shexp`.
 
-## Next step after field parity
+## Next milestone
 
-If both a representative IQ2_XS layer and IQ1_M layer pass `routed-parity`, the next milestone is shared-expert integration. Only after routed + shared FFN parity is established should Red Lite move upward into post-attention RMSNorm/full layer parity and eventually the Gated DeltaNet / attention graph.
+If representative IQ2_XS and IQ1_M layers pass `routed-parity`, dev14 will integrate the shared-expert branch. Only after routed + shared FFN parity is established should Red Lite move upward into post-attention RMSNorm/full layer parity and eventually the Gated DeltaNet / attention graph.
