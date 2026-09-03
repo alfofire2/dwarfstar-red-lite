@@ -92,33 +92,42 @@ int main(int argc, char **argv) {
         float *gpu = calloc(use_rows, sizeof(float));
         double *cpu = calloc(use_rows, sizeof(double));
         uint8_t *rowbuf = malloc(rb);
-        if (!input || !gpu || !cpu || !rowbuf) { fprintf(stderr, "oom\n"); overall = 0; free(input); free(gpu); free(cpu); free(rowbuf); break; }
+        if (!input || !gpu || !cpu || !rowbuf) {
+            fprintf(stderr, "oom\n"); overall = 0;
+            free(input); free(gpu); free(cpu); free(rowbuf); break;
+        }
         make_input(input, ncols);
+
+        int stage_ok = 1;
         for (uint32_t r = 0; r < use_rows; ++r) {
             if (!pread_full(fd, rowbuf, rb, m->tensor_offset + (uint64_t)r * rb) ||
                 !rl_native_shared_quant_row_dot(rowbuf, rb, 14u, input, ncols, grid, sizeof(grid), &cpu[r], error, sizeof(error))) {
-                fprintf(stderr, "%s CPU row %u failed: %s\n", kind_name(kind), r, error); overall = 0; break;
+                fprintf(stderr, "%s CPU row %u failed: %s\n", kind_name(kind), r, error);
+                stage_ok = 0; break;
             }
         }
 #ifdef __APPLE__
-        if (overall && !rl_native_q6_gpu_rows(model, m, input, ncols, 0u, use_rows, gpu, use_rows, error, sizeof(error))) {
-            fprintf(stderr, "%s GPU rows failed: %s\n", kind_name(kind), error); overall = 0;
+        if (stage_ok && !rl_native_q6_gpu_rows(model, m, input, ncols, 0u, use_rows, gpu, use_rows, error, sizeof(error))) {
+            fprintf(stderr, "%s GPU rows failed: %s\n", kind_name(kind), error);
+            stage_ok = 0;
         }
 #else
-        fprintf(stderr, "Metal Q6 probe requires macOS\n"); overall = 0;
+        fprintf(stderr, "Metal Q6 probe requires macOS\n"); stage_ok = 0;
 #endif
         double max_abs = 0.0, max_rel = 0.0;
-        int match = overall;
-        for (uint32_t r = 0; r < use_rows; ++r) {
-            const double ae = fabs((double)gpu[r] - cpu[r]);
-            const double re = ae / fmax(fabs(cpu[r]), 1e-12);
-            if (ae > max_abs) max_abs = ae;
-            if (re > max_rel) max_rel = re;
-            if (ae > 1e-4 + 1e-5 * fabs(cpu[r])) match = 0;
+        int match = stage_ok;
+        if (stage_ok) {
+            for (uint32_t r = 0; r < use_rows; ++r) {
+                const double ae = fabs((double)gpu[r] - cpu[r]);
+                const double re = ae / fmax(fabs(cpu[r]), 1e-12);
+                if (ae > max_abs) max_abs = ae;
+                if (re > max_rel) max_rel = re;
+                if (ae > 1e-4 + 1e-5 * fabs(cpu[r])) match = 0;
+            }
         }
         printf("%-19s: ncols=%u rows=%u max_abs=%.6g max_rel=%.6g parity=%s\n",
             kind_name(kind), ncols, use_rows, max_abs, max_rel, match ? "YES" : "NO");
-        for (uint32_t r = 0; r < use_rows && r < 4u; ++r)
+        for (uint32_t r = 0; stage_ok && r < use_rows && r < 4u; ++r)
             printf("  row %u: gpu=%+0.7f cpu=%+0.7f delta=%+.3e\n", r, gpu[r], cpu[r], (double)gpu[r] - cpu[r]);
         if (!match) overall = 0;
         free(input); free(gpu); free(cpu); free(rowbuf);
