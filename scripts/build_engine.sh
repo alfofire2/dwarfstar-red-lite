@@ -18,6 +18,7 @@ ENGINE=(
   "$ROOT/native/redlite_native_engine_cli.c"
   "$ROOT/native/redlite_native_engine.c"
   "$ROOT/native/redlite_native_engine_cpu.c"
+  "$ROOT/native/redlite_native_tokenizer.c"
   "$ROOT/native/redlite_native_gguf_dir.c"
   "$ROOT/native/redlite_native_quant_cpu.c"
   "$ROOT/native/redlite_native_layer_map.c"

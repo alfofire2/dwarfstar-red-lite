@@ -13,6 +13,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_tokenizer.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -71,6 +72,7 @@ static void usage(FILE *out) {
         "redlite-engine 0.3.0.dev18\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
+        "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
         "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers]\n"
         "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--context N] [--cache-mib N]\n"
         "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n");
@@ -99,9 +101,12 @@ int main(int argc, char **argv) {
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
     const char *out_path = NULL;
-    int report_layers = 0;
+    const char *text = NULL;
+    int report_layers = 0, no_special = 0, chat = 0;
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--layers") == 0) { report_layers = 1; continue; }
+        if (strcmp(argv[i], "--no-special") == 0) { no_special = 1; continue; }
+        if (strcmp(argv[i], "--chat") == 0) { chat = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--tokens") == 0) {
             token_count = parse_tokens(argv[++i], tokens, 4096u);
@@ -111,6 +116,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--threads") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cpu_threads = (int)v; }
         else if (strcmp(argv[i], "--backend") == 0) backend_name = argv[++i];
         else if (strcmp(argv[i], "--out") == 0) out_path = argv[++i];
+        else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     char error[512] = {0};
@@ -122,6 +128,30 @@ int main(int argc, char **argv) {
         printf("runtime              : native Qwen3-Next persistent engine\n");
         print_info(rl_engine_info_get(e));
         rl_engine_close(e);
+        return 0;
+    }
+
+    if (strcmp(cmd, "tokenize") == 0) {
+        if (!text) { fprintf(stderr, "--text is required\n"); return 2; }
+        rl_gguf_model g;
+        if (!rl_gguf_model_open(model, &g, error, sizeof(error))) { fprintf(stderr, "open failed: %s\n", error); return 1; }
+        rl_tokenizer *tk = rl_tokenizer_create(&g, error, sizeof(error));
+        if (!tk) { fprintf(stderr, "tokenizer failed: %s\n", error); rl_gguf_model_close(&g); return 1; }
+        char prompt[65536];
+        const char *input = text;
+        if (chat) { if (!rl_tokenizer_chat_prompt(NULL, text, prompt, sizeof(prompt))) { fprintf(stderr, "prompt too long\n"); return 1; } input = prompt; }
+        uint32_t ids[16384];
+        const int32_t n = rl_tokenizer_encode(tk, input, strlen(input), !no_special, ids, 16384u, error, sizeof(error));
+        if (n < 0) { fprintf(stderr, "tokenize failed: %s\n", error); return 1; }
+        for (int32_t i = 0; i < n && i < 16384; ++i) printf("%s%u", i ? "," : "", ids[i]);
+        printf("\n");
+        for (int32_t i = 0; i < n && i < 16384; ++i) {
+            char piece[512];
+            const int32_t len = rl_tokenizer_decode(tk, ids[i], piece, sizeof(piece));
+            printf("%u\t%.*s\n", ids[i], len > 0 ? len : 0, piece);
+        }
+        rl_tokenizer_destroy(tk);
+        rl_gguf_model_close(&g);
         return 0;
     }
 
