@@ -62,6 +62,19 @@ Q6_PROBE_COMMON=(
   "$ROOT/native/redlite_native_shared_exec.c"
   "$ROOT/native/redlite_native_iq2_xxs.c"
 )
+FFN_PARITY_COMMON=(
+  "$ROOT/native/redlite_native_ffn_parity_cli.c"
+  "$ROOT/native/redlite_native_router.c"
+  "$ROOT/native/redlite_native_router_exec.c"
+  "$ROOT/native/redlite_native_shared.c"
+  "$ROOT/native/redlite_native_shared_exec.c"
+  "$ROOT/native/redlite_native_iq2_xxs.c"
+  "$ROOT/native/redlite_native_gguf.c"
+  "$ROOT/native/redlite_native_cache.c"
+  "$ROOT/native/redlite_native_model.c"
+  "$ROOT/native/redlite_native_tables.c"
+  "$ROOT/native/redlite_native_reference.c"
+)
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
@@ -141,6 +154,18 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_q6_probe.m" \
     -framework Foundation -framework Metal -lm \
     -o "$OUT/redlite-q6-probe"
+
+  xcrun --sdk macosx clang \
+    -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    "${FFN_PARITY_COMMON[@]}" \
+    "$ROOT/native/redlite_native_metal.c" \
+    "$ROOT/native/redmetal_topk.m" \
+    "$ROOT/native/redmetal_router.m" \
+    "$ROOT/native/redmetal_shared.m" \
+    -framework Foundation -framework Metal -lm \
+    -o "$OUT/redlite-ffn"
 else
   "$CC_BIN" \
     -O3 \
@@ -195,6 +220,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   "$OUT/redlite-router" --help >/dev/null
   "$OUT/redlite-shared" --help >/dev/null
   "$OUT/redlite-q6-probe" --help >/dev/null
+  "$OUT/redlite-ffn" --help >/dev/null
 fi
 
 echo "Built $OUT/redlite-native"
@@ -204,4 +230,5 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "Built $OUT/redlite-router"
   echo "Built $OUT/redlite-shared"
   echo "Built $OUT/redlite-q6-probe"
+  echo "Built $OUT/redlite-ffn"
 fi
