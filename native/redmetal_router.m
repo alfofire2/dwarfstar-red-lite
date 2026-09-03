@@ -3,6 +3,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <TargetConditionals.h>
 
 #include "redlite_native_router_exec.h"
 
@@ -131,13 +132,7 @@ int rl_native_router_gpu_f32(
             set_error(error, error_cap, "pread F32 router into shared Metal buffer failed");
             return 0;
         }
-#if TARGET_OS_OSX
-        [weights didModifyRange:NSMakeRange(0, (NSUInteger)weight_bytes64)];
-#endif
         memcpy(xbuf.contents, input, (size_t)hidden * sizeof(float));
-#if TARGET_OS_OSX
-        [xbuf didModifyRange:NSMakeRange(0, (NSUInteger)hidden * sizeof(float))];
-#endif
 
         id<MTLCommandBuffer> cb = [queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
