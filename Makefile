@@ -17,3 +17,4 @@ redmetal:
 
 native:
 	bash ./scripts/build_native.sh
+	bash ./scripts/build_layer_audit.sh
