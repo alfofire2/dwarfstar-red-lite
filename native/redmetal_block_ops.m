@@ -26,7 +26,7 @@ static NSString * const kBlockOpsSource = @
 "}\n"
 "kernel void block_residual(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device float *out [[buffer(2)]], constant uint &n [[buffer(3)]], uint gid [[thread_position_in_grid]]) { if(gid<n) out[gid]=a[gid]+b[gid]; }\n";
 
-static id<MTLComputePipelineState> pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
+static id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
     id<MTLFunction> fn=[lib newFunctionWithName:name]; if(!fn){snprintf(error,cap,"missing Metal function %s",name.UTF8String);return nil;}
     NSError *e=nil; id<MTLComputePipelineState> p=[dev newComputePipelineStateWithFunction:fn error:&e];
     if(!p) snprintf(error,cap,"pipeline %s failed: %s",name.UTF8String,e.localizedDescription.UTF8String ?: "unknown"); return p;
@@ -38,7 +38,7 @@ int rl_block_residual_rmsnorm_gpu(const float *residual,const float *branch,cons
         id<MTLDevice> dev=MTLCreateSystemDefaultDevice(); if(!dev||!dev.hasUnifiedMemory){set_error(error,cap,"Apple unified memory required");return 0;}
         id<MTLCommandQueue> q=[dev newCommandQueue]; NSError *e=nil; id<MTLLibrary> lib=[dev newLibraryWithSource:kBlockOpsSource options:nil error:&e];
         if(!q||!lib){snprintf(error,cap,"block Metal setup failed: %s",e.localizedDescription.UTF8String ?: "unknown");return 0;}
-        id<MTLComputePipelineState> p=pipe(dev,lib,@"block_residual_rmsnorm",error,cap); if(!p)return 0;
+        id<MTLComputePipelineState> p=make_pipe(dev,lib,@"block_residual_rmsnorm",error,cap); if(!p)return 0;
         size_t bytes=(size_t)n*sizeof(float);
         id<MTLBuffer> a=[dev newBufferWithBytes:residual length:bytes options:MTLResourceStorageModeShared];
         id<MTLBuffer> b=[dev newBufferWithBytes:branch length:bytes options:MTLResourceStorageModeShared];
@@ -58,7 +58,7 @@ int rl_block_residual_gpu(const float *residual,const float *branch,uint32_t n,f
     if(!residual||!branch||!n||!out){set_error(error,cap,"invalid residual args");return 0;}
     @autoreleasepool {
         id<MTLDevice> dev=MTLCreateSystemDefaultDevice();id<MTLCommandQueue> q=[dev newCommandQueue];NSError *e=nil;id<MTLLibrary> lib=[dev newLibraryWithSource:kBlockOpsSource options:nil error:&e];
-        if(!dev||!q||!lib){set_error(error,cap,"block residual Metal setup failed");return 0;}id<MTLComputePipelineState> p=pipe(dev,lib,@"block_residual",error,cap);if(!p)return 0;
+        if(!dev||!q||!lib){set_error(error,cap,"block residual Metal setup failed");return 0;}id<MTLComputePipelineState> p=make_pipe(dev,lib,@"block_residual",error,cap);if(!p)return 0;
         size_t bytes=(size_t)n*sizeof(float);id<MTLBuffer>a=[dev newBufferWithBytes:residual length:bytes options:MTLResourceStorageModeShared];id<MTLBuffer>b=[dev newBufferWithBytes:branch length:bytes options:MTLResourceStorageModeShared];id<MTLBuffer>o=[dev newBufferWithLength:bytes options:MTLResourceStorageModeShared];
         id<MTLCommandBuffer>cb=[q commandBuffer];id<MTLComputeCommandEncoder>enc=[cb computeCommandEncoder];[enc setComputePipelineState:p];[enc setBuffer:a offset:0 atIndex:0];[enc setBuffer:b offset:0 atIndex:1];[enc setBuffer:o offset:0 atIndex:2];[enc setBytes:&n length:sizeof(n) atIndex:3];NSUInteger tg=MIN((NSUInteger)256,p.maxTotalThreadsPerThreadgroup);[enc dispatchThreads:MTLSizeMake(n,1,1) threadsPerThreadgroup:MTLSizeMake(tg?tg:1,1,1)];[enc endEncoding];double t0=now_ms();[cb commit];[cb waitUntilCompleted];double t1=now_ms();
         if(cb.status!=MTLCommandBufferStatusCompleted||cb.error){set_error(error,cap,"block residual Metal failed");return 0;}memcpy(out,o.contents,bytes);if(tel)tel->compute_ms=t1-t0;
