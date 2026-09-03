@@ -1,0 +1,145 @@
+name: Red Lite M4 Field Validation
+
+on:
+  push:
+    branches:
+      - v0.3-streaming
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redlite-m4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  m4-field-validation:
+    name: M4 Pro 24GB field validation
+    runs-on: [self-hosted, macOS, ARM64, redlite]
+    timeout-minutes: 45
+    env:
+      REDLITE_MODEL_PATH: ${{ vars.REDLITE_MODEL_PATH }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          clean: true
+
+      - name: Verify runner and model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          {
+            echo "github_sha=${GITHUB_SHA}"
+            echo "runner_name=${RUNNER_NAME:-unknown}"
+            echo "runner_arch=${RUNNER_ARCH:-unknown}"
+            echo "runner_os=${RUNNER_OS:-unknown}"
+            uname -a
+            sw_vers
+            sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+            sysctl -n hw.memsize 2>/dev/null || true
+          } | tee artifacts/runner-info.log
+
+          if [[ -z "${REDLITE_MODEL_PATH:-}" ]]; then
+            echo "Repository variable REDLITE_MODEL_PATH is not configured." >&2
+            exit 2
+          fi
+          if [[ ! -f "$REDLITE_MODEL_PATH" ]]; then
+            echo "Model not found at REDLITE_MODEL_PATH=$REDLITE_MODEL_PATH" >&2
+            exit 2
+          fi
+
+          {
+            echo "model_path=$REDLITE_MODEL_PATH"
+            stat -f 'model_bytes=%z' "$REDLITE_MODEL_PATH"
+            du -h "$REDLITE_MODEL_PATH"
+          } | tee artifacts/model-info.log
+
+      - name: Build native runtime
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          make native 2>&1 | tee artifacts/make-native.log
+
+      - name: DeltaNet projection regression
+        id: projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          .deps/redmetal/redlite-deltanet-proj parity \
+            "$REDLITE_MODEL_PATH" \
+            --layer 0 \
+            --rows 8 2>&1 | tee artifacts/deltanet-proj-layer0.log
+
+      - name: DeltaNet prestate current milestone
+        id: prestate
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          .deps/redmetal/redlite-deltanet-prestate parity \
+            "$REDLITE_MODEL_PATH" \
+            --layer 0 2>&1 | tee artifacts/deltanet-prestate-layer0.log
+
+      - name: Complete FFN regression layer 0
+        id: ffn0
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          .deps/redmetal/redlite-ffn parity \
+            "$REDLITE_MODEL_PATH" \
+            --layer 0 \
+            --top-k 10 \
+            --rows 8 \
+            --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
+
+      - name: Complete FFN regression layer 6
+        id: ffn6
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          .deps/redmetal/redlite-ffn parity \
+            "$REDLITE_MODEL_PATH" \
+            --layer 6 \
+            --top-k 10 \
+            --rows 8 \
+            --cache-mib 256 2>&1 | tee artifacts/ffn-layer6.log
+
+      - name: Write diagnostics summary
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cat > artifacts/diagnostics.json <<JSON
+          {
+            "commit": "${GITHUB_SHA}",
+            "runner": "${RUNNER_NAME:-unknown}",
+            "os": "${RUNNER_OS:-unknown}",
+            "arch": "${RUNNER_ARCH:-unknown}",
+            "build": "${{ steps.build.outcome }}",
+            "deltanet_projection": "${{ steps.projection.outcome }}",
+            "deltanet_prestate": "${{ steps.prestate.outcome }}",
+            "ffn_layer_0": "${{ steps.ffn0.outcome }}",
+            "ffn_layer_6": "${{ steps.ffn6.outcome }}"
+          }
+          JSON
+          cat artifacts/diagnostics.json
+
+      - name: Upload M4 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redlite-m4-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
