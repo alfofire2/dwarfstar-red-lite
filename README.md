@@ -92,8 +92,9 @@ make native
 Options: `--system`, `--raw`, `--max-tokens`, `--temperature`, `--top-k`,
 `--top-p`, `--seed`, `--context`, `--cache-mib`, `--no-stream`, `--stats`,
 `--tokens-out`. Greedy output is token-identical to the pinned llama.cpp on the
-validated prompts; on the M4 Pro / 24 GiB it generates at roughly 24–26 tok/s
-with an 8 GiB expert cache (physical footprint ~8.6 GiB). Details, validation
+validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
+with the default 4 GiB expert cache (physical footprint ~4.5 GiB); see
+`benchmarks/m4pro-24gb-native-dev18.json`. Details, validation
 numbers and limits: `docs/REDLITE_DEV18_ENGINE.md`; regression suite:
 `scripts/regress_m4.sh MODEL.gguf`.
 

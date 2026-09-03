@@ -128,6 +128,11 @@ The sky appears blue because molecules in the Earth's atmosphere scatter shorter
 
 See "Final field run" below for the exact numbers of the clean-build run.
 
+A longer run (70 template tokens of prompt, 96 generated tokens, 166 positions)
+about cooking pasta at altitude is also token-identical to llama.cpp's greedy
+decode; with a warm 8 GiB expert cache it reached a 95 % hit rate, 17 MiB of
+SSD expert traffic per token and 24.4 tok/s.
+
 ## Performance work (all measured on the M4 Pro, greedy, 27 decode passes)
 
 | change | decode step | generation tok/s |
@@ -179,3 +184,46 @@ resident.
   distributionally.
 - `--context` bounds the KV cache; the GQA kernel handles any length by chunked
   online softmax but long-context throughput has not been benchmarked.
+
+## Final field run (clean build)
+
+```bash
+rm -rf .deps/redmetal && make native
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 64 --cache-mib 8192 --stats
+```
+
+Commit of the run: `280f7881629a04faa15683f4db6140a6e5c4f2a3` (documentation and
+this record were committed on top; no code changed after the run).
+
+```text
+The sky appears blue because molecules in the Earth's atmosphere scatter shorter blue wavelengths of sunlight more than other colors due to Rayleigh scattering.
+--- redlite-generate stats ---
+model open           : 174.2 ms
+prompt tokens        : 19 (1341.3 ms, 14.17 tok/s)
+generated tokens     : 28 (1518.6 ms, 17.78 tok/s over 27 decode passes)
+last step            : 63.9 ms (rec 23.2 attn 8.5 router 0.2 routed 30.4 [load 76.5 gpu 8.8] shared 0.0 out 1.5) dense GPU 14.4 ms
+expert cache         : hits=10433 misses=2527 loads=2527 resident=6387/9446 slots (hit rate 80.5%)
+SSD expert traffic   : 1795.7 MiB / 7581 reads during generation (66.51 MiB/token)
+SSD expert total     : 4556.6 MiB / 19161 reads since open
+peak RSS             : 4653.5 MiB
+physical footprint   : 5940.7 MiB (process, incl. Metal buffers; mmap'd weights are file-backed)
+```
+
+Generated ids: `785 12884 7952 6303 1576 34615 304 279 9237 594 16566 44477 23327
+6303 92859 315 39020 803 1091 1008 7987 4152 311 13255 62969 71816 13 151645`
+(28 tokens, stop at `<|im_end|>`), identical to the pinned llama.cpp greedy decode.
+
+The same prompt immediately afterwards:
+
+| setting | prompt tok/s | generation tok/s | decode step | hit rate | SSD MiB/token | physical footprint |
+|---|---:|---:|---:|---:|---:|---:|
+| `--cache-mib 8192`, second run | 12.0 | 17.9 | 63.1 ms | 80.5 % | 66.5 | 5.9 GiB |
+| `--cache-mib 4096` (default) | 16.3 | **27.8** | 38.7 ms | 79.2 % | 71.2 | 4.5 GiB |
+
+The 8 GiB cache runs were slower only because their expert miss reads came from
+the SSD instead of the macOS page cache (the concurrent `pread` sum was 72–77 ms
+per step versus 14.5 ms); on a 24 GiB machine a larger explicit expert cache
+competes with the page cache for the 18 GiB file. The default 4 GiB cache is
+therefore the recommended setting for this model on 24 GiB. Full regression
+suite after the clean build: 31/31 pass (`scripts/regress_m4.sh`, 68 s).

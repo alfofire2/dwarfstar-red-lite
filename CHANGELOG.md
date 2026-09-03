@@ -43,11 +43,12 @@ Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
   pinned llama.cpp comparison of every layer output, final norm and logits
   (cosine 1.000000, KL ≤ 3e-12, identical top-5); greedy generation identical to
   llama.cpp for 28 tokens (short prompt) and 96 tokens after a 70-token prompt.
-- Performance on the M4 Pro (greedy, 8 GiB expert cache): decode step 43 ms,
-  generation 25.9 tok/s (short prompt) / 24.4 tok/s (166-position run), prompt
-  ingestion 15–20 tok/s token-by-token; expert cache hit rate 80–95 %, 17–67 MiB
-  SSD expert traffic per token; physical footprint 8.6 GiB with a fully
-  populated 8 GiB expert cache.
+- Performance on the M4 Pro (greedy): decode step 39–43 ms, generation
+  25.9–27.8 tok/s (short prompt, 4 GiB expert cache) / 24.4 tok/s (166-position
+  run, warm 8 GiB cache), prompt ingestion 14–20 tok/s token-by-token; expert
+  cache hit rate 79–95 %, 17–71 MiB SSD expert traffic per token; physical
+  footprint 4.5 GiB (4 GiB cache) to 8.6 GiB (fully populated 8 GiB cache).
+  Recorded in `benchmarks/m4pro-24gb-native-dev18.json`.
 - Added `scripts/regress_m4.sh` (31 checks incl. the pinned llama.cpp
   tokenizer/logits/greedy comparisons) and the corresponding self-hosted M4
   workflow steps; `make native` builds the engine and its offline test.
