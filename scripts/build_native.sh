@@ -22,6 +22,10 @@ OFFLINE_TEST=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_router.c"
 )
+ROUTER_AUDIT=(
+  "$ROOT/native/redlite_native_router_cli.c"
+  "$ROOT/native/redlite_native_router.c"
+)
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
@@ -48,6 +52,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
     "${OFFLINE_TEST[@]}" \
     -o "$OUT/redlite-native-offline-test"
+
+  xcrun --sdk macosx clang \
+    -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    "${ROUTER_AUDIT[@]}" \
+    -o "$OUT/redlite-router-audit"
 else
   "$CC_BIN" \
     -O3 \
@@ -66,9 +76,17 @@ else
     -Wall -Wextra -Wpedantic -march=native -I"$ROOT/native" \
     "${OFFLINE_TEST[@]}" \
     -o "$OUT/redlite-native-offline-test"
+
+  "$CC_BIN" \
+    -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -march=native -I"$ROOT/native" \
+    "${ROUTER_AUDIT[@]}" \
+    -o "$OUT/redlite-router-audit"
 fi
 
 "$OUT/redlite-native" selftest
 "$OUT/redlite-native-offline-test"
+"$OUT/redlite-router-audit" --help >/dev/null
 
 echo "Built $OUT/redlite-native"
+echo "Built $OUT/redlite-router-audit"
