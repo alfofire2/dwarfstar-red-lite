@@ -151,6 +151,40 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 6 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer6.log
 
+      - name: Native engine offline self-test
+        id: engine_offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine-offline-test "$REDLITE_MODEL_PATH" 2>&1 | tee artifacts/engine-offline.log
+
+      - name: Persistent engine multi-token CPU-vs-Metal parity
+        id: engine_parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine parity "$REDLITE_MODEL_PATH" --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64 2>&1 | tee artifacts/engine-parity.log
+
+      - name: Native tokenizer and greedy generation
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine tokenize "$REDLITE_MODEL_PATH" --text "Explain in one sentence why the sky is blue." --chat 2>&1 | tee artifacts/tokenize.log
+          .deps/redmetal/redlite-generate "$REDLITE_MODEL_PATH" --prompt "Explain in one sentence why the sky is blue." --max-tokens 48 --cache-mib 2048 --no-stream --stats 2>&1 | tee artifacts/generate.log
+          grep -q "Rayleigh scattering" artifacts/generate.log
+
+      - name: Pinned llama.cpp oracle comparison (when bootstrapped)
+        id: oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .deps/llama.cpp/build/bin/libllama.dylib ]]; then
+            REDLITE_REGRESS_LOG=artifacts/regress scripts/regress_m4.sh "$REDLITE_MODEL_PATH" --quick 2>&1 | tee artifacts/regress.log
+          else
+            echo "pinned llama.cpp not bootstrapped on this runner; oracle comparison skipped" | tee artifacts/regress.log
+          fi
+
       - name: Write diagnostics summary
         if: always()
         shell: bash
@@ -175,7 +209,11 @@ jobs:
             "recurrent_block": "${{ steps.recurrent_block.outcome }}",
             "ffn_layer_0": "${{ steps.ffn0.outcome }}",
             "ffn_layer_0_full": "${{ steps.ffn0_full.outcome }}",
-            "ffn_layer_6": "${{ steps.ffn6.outcome }}"
+            "ffn_layer_6": "${{ steps.ffn6.outcome }}",
+            "engine_offline": "${{ steps.engine_offline.outcome }}",
+            "engine_parity": "${{ steps.engine_parity.outcome }}",
+            "generate": "${{ steps.generate.outcome }}",
+            "oracle": "${{ steps.oracle.outcome }}"
           }
           JSON
           cat artifacts/diagnostics.json

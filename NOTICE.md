@@ -20,6 +20,11 @@ by the Red Metal kernels. These adapted data remain subject to the upstream MIT
 license and copyright notices; the source file identifies the pinned upstream
 commit from which they were derived.
 
+The native tokenizer's Unicode category, whitespace and lowercase tables
+(`native/redlite_native_unicode_data.h`) are generated from the pinned
+llama.cpp `src/unicode-data.cpp` by `scripts/dev/gen_unicode_data.py` and remain
+subject to the upstream MIT license and copyright notices.
+
 Those projects retain their own copyright notices and license files in `.deps/`
 after bootstrap. DwarfStar, llama.cpp, Qwen, Hugging Face, Apple and other names
 belong to their respective owners. This project is not endorsed by them.

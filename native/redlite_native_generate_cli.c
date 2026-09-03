@@ -25,6 +25,10 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <time.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 static double now_ms(void) {
     struct timespec ts;
@@ -40,6 +44,14 @@ static uint64_t peak_rss_bytes(void) {
 #else
     return (uint64_t)ru.ru_maxrss * 1024u;  /* KiB elsewhere */
 #endif
+}
+
+static uint64_t phys_footprint_bytes(void) {
+#ifdef __APPLE__
+    struct rusage_info_v4 ri;
+    if (proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&ri) == 0) return (uint64_t)ri.ri_phys_footprint;
+#endif
+    return 0;
 }
 
 static void usage(FILE *out) {
@@ -199,6 +211,7 @@ int main(int argc, char **argv) {
             decoded ? (double)(st.ssd_bytes - ssd_start) / (1024.0 * 1024.0) / decoded : 0.0);
         fprintf(stderr, "SSD expert total     : %.1f MiB / %" PRIu64 " reads since open\n", (double)st.ssd_bytes / (1024.0 * 1024.0), st.ssd_reads);
         fprintf(stderr, "peak RSS             : %.1f MiB\n", (double)peak_rss_bytes() / (1024.0 * 1024.0));
+        fprintf(stderr, "physical footprint   : %.1f MiB (process, incl. Metal buffers; mmap'd weights are file-backed)\n", (double)phys_footprint_bytes() / (1024.0 * 1024.0));
         (void)last_routed_ms;
     }
     rl_sampler_free(&sampler);
