@@ -47,10 +47,24 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -framework Foundation -framework Metal -lm -lpthread \
     -o "$OUT/redlite-engine"
   "$OUT/redlite-engine" --help >/dev/null || true
+  GEN=("${ENGINE[@]:1}")
+  xcrun --sdk macosx clang \
+    -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    "$ROOT/native/redlite_native_generate_cli.c" \
+    "$ROOT/native/redlite_native_sampler.c" \
+    "${GEN[@]}" \
+    "$ROOT/native/redmetal_topk.m" \
+    "$ROOT/native/redmetal_router.m" \
+    "$ROOT/native/redmetal_engine.m" \
+    -framework Foundation -framework Metal -lm -lpthread \
+    -o "$OUT/redlite-generate"
+  "$OUT/redlite-generate" --help >/dev/null
 else
   "$CC_BIN" "${FLAGS[@]}" -march=native "${OFFLINE[@]}" -lm -o "$OUT/redlite-engine-offline-test"
 fi
 
 "$OUT/redlite-engine-offline-test"
 echo "Built $OUT/redlite-engine-offline-test"
-if [[ "$(uname -s)" == "Darwin" ]]; then echo "Built $OUT/redlite-engine"; fi
+if [[ "$(uname -s)" == "Darwin" ]]; then echo "Built $OUT/redlite-engine"; echo "Built $OUT/redlite-generate"; fi
