@@ -26,3 +26,4 @@ native:
 	bash ./scripts/build_recurrent_block.sh
 	bash ./scripts/build_attention.sh
 	bash ./scripts/build_attention_block.sh
+	bash ./scripts/build_decoder_stack.sh

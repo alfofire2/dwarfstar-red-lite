@@ -81,6 +81,13 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-attention-block parity "$REDLITE_MODEL_PATH" --layer 3 --position 7 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/full-attention-block-layer3.log
 
+      - name: Complete 48-layer decoder stack regression
+        id: decoder_stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-decoder-stack parity "$REDLITE_MODEL_PATH" --position 7 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/decoder-stack-48.log
+
       - name: DeltaNet projection regression
         id: projection
         shell: bash
@@ -159,6 +166,7 @@ jobs:
             "full_attn_audit": "${{ steps.full_attn_audit.outcome }}",
             "full_attention": "${{ steps.full_attention.outcome }}",
             "full_attention_block": "${{ steps.full_attention_block.outcome }}",
+            "decoder_stack": "${{ steps.decoder_stack.outcome }}",
             "deltanet_projection": "${{ steps.projection.outcome }}",
             "deltanet_prestate": "${{ steps.prestate.outcome }}",
             "deltanet_state": "${{ steps.state.outcome }}",
