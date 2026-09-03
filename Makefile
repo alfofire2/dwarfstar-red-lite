@@ -19,3 +19,4 @@ native:
 	bash ./scripts/build_native.sh
 	bash ./scripts/build_layer_audit.sh
 	bash ./scripts/build_deltanet_proj.sh
+	bash ./scripts/build_deltanet_prestate.sh
