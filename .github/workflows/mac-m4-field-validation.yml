@@ -58,6 +58,13 @@ jobs:
           set -euo pipefail
           make native 2>&1 | tee artifacts/make-native.log
 
+      - name: Full-attention tensor audit current milestone
+        id: full_attn_audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-layer-audit "$REDLITE_MODEL_PATH" --tensors 2>&1 | tee artifacts/layer-audit-tensors.log
+
       - name: DeltaNet projection regression
         id: projection
         shell: bash
@@ -93,7 +100,7 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-deltanet-layer parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-layer0.log
 
-      - name: Complete recurrent transformer block current milestone
+      - name: Complete recurrent transformer block regression
         id: recurrent_block
         shell: bash
         run: |
@@ -107,7 +114,7 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
 
-      - name: Full-width FFN layer 0 current milestone
+      - name: Full-width FFN layer 0 regression
         id: ffn0_full
         shell: bash
         run: |
@@ -133,6 +140,7 @@ jobs:
             "os": "${RUNNER_OS:-unknown}",
             "arch": "${RUNNER_ARCH:-unknown}",
             "build": "${{ steps.build.outcome }}",
+            "full_attn_audit": "${{ steps.full_attn_audit.outcome }}",
             "deltanet_projection": "${{ steps.projection.outcome }}",
             "deltanet_prestate": "${{ steps.prestate.outcome }}",
             "deltanet_state": "${{ steps.state.outcome }}",
