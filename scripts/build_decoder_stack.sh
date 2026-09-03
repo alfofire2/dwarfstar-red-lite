@@ -15,6 +15,7 @@ xcrun --sdk macosx clang \
   -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
   -mcpu=native -fobjc-arc -I"$ROOT/native" \
   "$ROOT/native/redlite_native_decoder_stack_cli.c" \
+  "$ROOT/native/redlite_native_decoder_stack_runtime.c" \
   "$ROOT/native/redlite_native_layer_map.c" \
   "$ROOT/native/redlite_native_recurrent_block_runtime.c" \
   "$ROOT/native/redlite_native_attention_block_runtime.c" \
