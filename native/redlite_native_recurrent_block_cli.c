@@ -3,6 +3,7 @@
 #undef main
 
 #include "redlite_native_block_ops.h"
+#include "redlite_native_decoder_block.h"
 #include "redlite_native_gguf.h"
 #include "redlite_native_metal.h"
 #include "redlite_native_reference.h"
@@ -36,7 +37,7 @@ static int rb_find_tensor(const char *model, const char *wanted, rb_tensor *out,
     free_raw(raw,tc);if(!out->found){snprintf(error,cap,"tensor %s not found",wanted);return 0;}return 1;
 }
 
-static int rb_attention(const char *model,uint32_t layer,float *input,uint32_t hidden,float *cpu_out,float *gpu_out,float *cpu_conv_next,float *gpu_conv_next,float *cpu_state_next,float *gpu_state_next,size_t *conv_count,size_t *state_count,float *eps_out,char *error,size_t cap) {
+static int rb_attention(const char *model,uint32_t layer,const float *cpu_input,const float *gpu_input,uint32_t hidden,float *cpu_out,float *gpu_out,float *cpu_conv_next,float *gpu_conv_next,float *cpu_state_next,float *gpu_state_next,size_t *conv_count,size_t *state_count,float *eps_out,char *error,size_t cap) {
     model_meta m;tensor_info t[LT_COUNT];if(!audit_layer(model,layer,&m,t,error,cap))return 0;uint32_t h=0,channels=0,qk=0,hv=0;if(!validate_layout(&m,t,&h,&channels,&qk,&hv,error,cap)||h!=hidden)return 0;
     uint32_t zc=m.d_inner,bac=2u*m.dt_rank;size_t csc=(size_t)(m.d_conv-1u)*channels,rsc=(size_t)m.dt_rank*hv*hv,corec=(size_t)m.dt_rank*hv;
     *conv_count=csc;*state_count=rsc;*eps_out=m.rms_eps;
@@ -48,14 +49,14 @@ static int rb_attention(const char *model,uint32_t layer,float *input,uint32_t h
     if(!nw||!cw||!dt||!av||!snw||!qw||!zw||!baw||!sow||!conv_state||!rec_state||!cn||!cqv||!cz||!cba||!cbet||!cgat||!ccv||!cq||!ck||!cv||!cd||!ccore||!cng||!gn||!gqv||!gz||!gba||!gbet||!ggat||!gcv||!gq||!gk||!gv||!gd||!gcore||!gng){snprintf(error,cap,"attention allocation failed");goto fail;}
     make_conv_state(conv_state,csc);make_recurrent_state(rec_state,m.dt_rank,hv);
     int fd=open(model,O_RDONLY);if(fd<0){snprintf(error,cap,"open weights failed");goto fail;}uint64_t calls=0;int rok=pread_full(fd,nw,nb,t[LT_ATTN_NORM].offset,&calls)&&pread_full(fd,qw,qb,t[LT_QKV].offset,&calls)&&pread_full(fd,zw,zb,t[LT_Z].offset,&calls)&&pread_full(fd,baw,bab,t[LT_BA].offset,&calls)&&pread_full(fd,cw,cb,t[LT_CONV].offset,&calls)&&pread_full(fd,dt,vb,t[LT_DT].offset,&calls)&&pread_full(fd,av,vb,t[LT_A].offset,&calls)&&pread_full(fd,snw,snb,t[LT_SSM_NORM].offset,&calls)&&pread_full(fd,sow,sob,t[LT_SSM_OUT].offset,&calls);close(fd);if(!rok){snprintf(error,cap,"attention pread failed");goto fail;}
-    uint8_t grid[RL_IQ2_XXS_GRID_COUNT];if(!rl_native_iq2_xxs_build_grid(grid,error,cap))goto fail;rmsnorm_cpu(input,nw,hidden,m.rms_eps,cn);
+    uint8_t grid[RL_IQ2_XXS_GRID_COUNT];if(!rl_native_iq2_xxs_build_grid(grid,error,cap))goto fail;rmsnorm_cpu(cpu_input,nw,hidden,m.rms_eps,cn);
     for(uint32_t r=0;r<channels;++r){double d=0;if(!rl_native_shared_quant_row_dot(qw+(size_t)r*iqr,iqr,16u,cn,hidden,grid,sizeof(grid),&d,error,cap))goto fail;cqv[r]=(float)d;}
     for(uint32_t r=0;r<zc;++r){double d=0;if(!rl_native_shared_quant_row_dot(zw+(size_t)r*iqr,iqr,16u,cn,hidden,grid,sizeof(grid),&d,error,cap))goto fail;cz[r]=(float)d;}
     for(uint32_t r=0;r<bac;++r){double d=0;if(!q8_row_dot(baw+(size_t)r*q8r,cn,hidden,&d))goto fail;cba[r]=(float)d;}
     cpu_ba_params(cba,dt,av,m.dt_rank,m.n_group,cbet,cgat);cpu_conv_silu(conv_state,cqv,cw,channels,m.d_conv,ccv);cpu_l2_heads(ccv,0,m.d_state,m.n_group,m.rms_eps,cq);cpu_l2_heads(ccv,qk,m.d_state,m.n_group,m.rms_eps,ck);memcpy(cv,ccv+2u*qk,(size_t)m.d_inner*4);cpu_shift_conv_state(conv_state,cqv,channels,m.d_conv,cpu_conv_next);cpu_state_update(cq,ck,cv,cgat,cbet,rec_state,hv,m.n_group,m.dt_rank,cd,cpu_state_next,ccore);cpu_gated_norm(ccore,cz,snw,m.rms_eps,hv,m.dt_rank,cng);for(uint32_t r=0;r<hidden;++r){double d=0;if(!q4_row_dot(sow+(size_t)r*q4r,cng,m.d_inner,&d))goto fail;cpu_out[r]=(float)d;}
 #ifdef __APPLE__
     rl_dn_proj_tensor_info pi[RL_DN_PROJ_TENSOR_COUNT];rl_dn_prestate_tensor_info pri[RL_DN_PRESTATE_TENSOR_COUNT];fill_proj_info(t,layer,pi);fill_prestate_info(t,layer,pri);rl_dn_proj_telemetry pt={0};rl_dn_prestate_telemetry prt={0};rl_dn_state_telemetry st={0};rl_dn_tail_telemetry tt={0};
-    if(!rl_deltanet_proj_gpu_execute_full(model,pi,input,hidden,m.rms_eps,gn,hidden,gqv,channels,gz,zc,gba,bac,&pt,error,cap)||!rl_deltanet_prestate_gpu_execute(model,pri,gqv,channels,gba,bac,conv_state,(uint32_t)csc,m.d_conv,m.d_inner,m.d_state,m.dt_rank,m.n_group,m.rms_eps,gbet,ggat,gcv,gq,gk,gv,gpu_conv_next,&prt,error,cap)||!rl_deltanet_state_gpu_execute(gq,gk,gv,ggat,gbet,rec_state,hv,m.n_group,m.dt_rank,gd,gpu_state_next,gcore,&st,error,cap)||!rl_deltanet_tail_gpu_execute(gcore,gz,snw,sow,sob,m.rms_eps,hv,m.dt_rank,hidden,gng,gpu_out,&tt,error,cap))goto fail;
+    if(!rl_deltanet_proj_gpu_execute_full(model,pi,gpu_input,hidden,m.rms_eps,gn,hidden,gqv,channels,gz,zc,gba,bac,&pt,error,cap)||!rl_deltanet_prestate_gpu_execute(model,pri,gqv,channels,gba,bac,conv_state,(uint32_t)csc,m.d_conv,m.d_inner,m.d_state,m.dt_rank,m.n_group,m.rms_eps,gbet,ggat,gcv,gq,gk,gv,gpu_conv_next,&prt,error,cap)||!rl_deltanet_state_gpu_execute(gq,gk,gv,ggat,gbet,rec_state,hv,m.n_group,m.dt_rank,gd,gpu_state_next,gcore,&st,error,cap)||!rl_deltanet_tail_gpu_execute(gcore,gz,snw,sow,sob,m.rms_eps,hv,m.dt_rank,hidden,gng,gpu_out,&tt,error,cap))goto fail;
 #else
     snprintf(error,cap,"Metal required");goto fail;
 #endif
@@ -84,12 +85,167 @@ fail: free(cl);free(gl);free(cp);free(gp);free(gr);free(gs);free(cr);free(cs);re
 
 static void rb_cpu_resnorm(const float *a,const float *b,const float *w,uint32_t n,float eps,float *sum,float *norm){double ss=0;for(uint32_t i=0;i<n;++i){sum[i]=a[i]+b[i];ss+=(double)sum[i]*sum[i];}double inv=1.0/sqrt(ss/n+eps);for(uint32_t i=0;i<n;++i)norm[i]=(float)((double)sum[i]*inv*w[i]);}
 
-int main(int argc,char **argv){
-    if(argc<5||strcmp(argv[1],"parity")||strcmp(argv[3],"--layer")){fprintf(stderr,"usage: redlite-recurrent-block parity MODEL --layer N [--top-k 10] [--cache-mib 256]\n");return 2;}uint32_t layer=0;if(!parse_u32(argv[4],&layer))return 2;uint32_t topk=10;uint64_t cache=256;for(int i=5;i<argc;++i){if(i+1>=argc)return 2;if(!strcmp(argv[i],"--top-k")){uint32_t v=0;if(!parse_u32(argv[++i],&v))return 2;topk=v;}else if(!strcmp(argv[i],"--cache-mib")){char *e=NULL;cache=strtoull(argv[++i],&e,10);if(!e||*e)return 2;}else return 2;}if(!topk||topk>RB_MAX_TOPK||!cache)return 2;
-    const char *model=argv[2];char error[512]={0};model_meta m;tensor_info tt[LT_COUNT];if(!audit_layer(model,layer,&m,tt,error,sizeof(error))){fprintf(stderr,"block audit failed: %s\n",error);return 1;}uint32_t hidden=0,ch=0,qk=0,hv=0;if(!validate_layout(&m,tt,&hidden,&ch,&qk,&hv,error,sizeof(error)))return 1;
-    char pn[96];snprintf(pn,sizeof(pn),"blk.%u.post_attention_norm.weight",layer);rb_tensor post;if(!rb_find_tensor(model,pn,&post,error,sizeof(error))||post.type!=0u||post.dims!=1u||post.shape[0]!=hidden||post.span<(uint64_t)hidden*4){fprintf(stderr,"post norm audit failed: %s\n",error);return 1;}float *pw=malloc((size_t)hidden*4),*input=calloc(hidden,4),*ca=calloc(hidden,4),*ga=calloc(hidden,4),*cres=calloc(hidden,4),*gres=calloc(hidden,4),*cn=calloc(hidden,4),*gn=calloc(hidden,4),*cf=calloc(hidden,4),*gf=calloc(hidden,4),*cout=calloc(hidden,4),*gout=calloc(hidden,4);size_t ccap=(size_t)(m.d_conv-1u)*ch,scap=(size_t)m.dt_rank*hv*hv;float *ccs=calloc(ccap,4),*gcs=calloc(ccap,4),*css=calloc(scap,4),*gss=calloc(scap,4);if(!pw||!input||!ca||!ga||!cres||!gres||!cn||!gn||!cf||!gf||!cout||!gout||!ccs||!gcs||!css||!gss){fprintf(stderr,"block allocation failed\n");return 1;}make_input(input,hidden);int fd=open(model,O_RDONLY);uint64_t calls=0;if(fd<0||!pread_full(fd,pw,(size_t)hidden*4,post.offset,&calls)){if(fd>=0)close(fd);fprintf(stderr,"post norm read failed\n");return 1;}close(fd);size_t cc=0,ss=0;float eps=0;if(!rb_attention(model,layer,input,hidden,ca,ga,ccs,gcs,css,gss,&cc,&ss,&eps,error,sizeof(error))){fprintf(stderr,"composed attention failed: %s\n",error);return 1;}if(cc!=ccap||ss!=scap){fprintf(stderr,"state geometry changed\n");return 1;}
-    rb_cpu_resnorm(input,ca,pw,hidden,eps,cres,cn);rl_block_ops_telemetry rnt={0},frt={0};if(!rl_block_residual_rmsnorm_gpu(input,ga,pw,hidden,eps,gres,gn,&rnt,error,sizeof(error))){fprintf(stderr,"Metal post norm failed: %s\n",error);return 1;}if(!rb_ffn(model,layer,topk,cache,cn,gn,hidden,cf,gf,error,sizeof(error))){fprintf(stderr,"composed FFN failed: %s\n",error);return 1;}for(uint32_t i=0;i<hidden;++i)cout[i]=cres[i]+cf[i];if(!rl_block_residual_gpu(gres,gf,hidden,gout,&frt,error,sizeof(error))){fprintf(stderr,"Metal final residual failed: %s\n",error);return 1;}
-    error_stats ae=compare_arrays(ga,ca,hidden),re=compare_arrays(gres,cres,hidden),ne=compare_arrays(gn,cn,hidden),fe=compare_arrays(gf,cf,hidden),oe=compare_arrays(gout,cout,hidden),ce=compare_arrays(gcs,ccs,ccap),se=compare_arrays(gss,css,scap);int aok=within(ga,ca,hidden,5e-4f,1e-3f),rok=within(gres,cres,hidden,7e-4f,1e-3f),nok=within(gn,cn,hidden,8e-4f,1.5e-3f),fok=within(gf,cf,hidden,2e-3f,2e-3f),ook=within(gout,cout,hidden,3e-3f,2e-3f),cok=within(gcs,ccs,ccap,2e-3f,2e-4f),sok=within(gss,css,scap,5e-5f,5e-4f);int all=aok&&rok&&nok&&fok&&ook&&cok&&sok;
-    printf("runtime              : complete native Qwen3-Next recurrent transformer block parity\n");printf("layer / top-k        : %u / %u\n",layer,topk);printf("hidden               : %u\n",hidden);printf("attention abs/rel    : %.6g / %.6g parity=%s\n",ae.max_abs,ae.max_rel,aok?"YES":"NO");printf("attention residual   : %.6g / %.6g parity=%s\n",re.max_abs,re.max_rel,rok?"YES":"NO");printf("post-attn RMSNorm    : %.6g / %.6g parity=%s\n",ne.max_abs,ne.max_rel,nok?"YES":"NO");printf("full FFN abs/rel     : %.6g / %.6g parity=%s\n",fe.max_abs,fe.max_rel,fok?"YES":"NO");printf("conv state abs/rel   : %.6g / %.6g parity=%s\n",ce.max_abs,ce.max_rel,cok?"YES":"NO");printf("recurrent state      : %.6g / %.6g parity=%s\n",se.max_abs,se.max_rel,sok?"YES":"NO");printf("FINAL block abs/rel  : %.6g / %.6g parity=%s\n",oe.max_abs,oe.max_rel,ook?"YES":"NO");printf("resnorm/final Metal  : %.3f / %.3f ms\n",rnt.compute_ms,frt.compute_ms);printf("COMPLETE BLOCK       : %s\n",all?"YES":"NO");for(uint32_t i=0;i<4;++i)printf("row %-3u             : gpu=%+.7f cpu=%+.7f delta=%+.3e\n",i,gout[i],cout[i],(double)gout[i]-cout[i]);
-    free(pw);free(input);free(ca);free(ga);free(cres);free(gres);free(cn);free(gn);free(cf);free(gf);free(cout);free(gout);free(ccs);free(gcs);free(css);free(gss);return all?0:3;
+int rl_recurrent_block_parity_execute(
+        const char *model, uint32_t layer, uint32_t topk, uint64_t cache_mib,
+        const float *cpu_input, const float *gpu_input, uint32_t input_count,
+        float *cpu_output, float *gpu_output, uint32_t output_count,
+        rl_decoder_block_stats *stats, char *error, size_t cap) {
+    if (!model || !cpu_input || !gpu_input || !cpu_output || !gpu_output || !stats ||
+        !topk || topk > RB_MAX_TOPK || !cache_mib) {
+        if (error && cap) snprintf(error, cap, "invalid recurrent block arguments");
+        return 0;
+    }
+    memset(stats, 0, sizeof(*stats));
+    model_meta m;
+    tensor_info tensors[LT_COUNT];
+    if (!audit_layer(model, layer, &m, tensors, error, cap)) return 0;
+    uint32_t hidden = 0, channels = 0, qk = 0, head_value = 0;
+    if (!validate_layout(&m, tensors, &hidden, &channels, &qk, &head_value, error, cap) ||
+        input_count != hidden || output_count < hidden) return 0;
+
+    char post_name[96];
+    snprintf(post_name, sizeof(post_name), "blk.%u.post_attention_norm.weight", layer);
+    rb_tensor post;
+    if (!rb_find_tensor(model, post_name, &post, error, cap) || post.type != 0u ||
+        post.dims != 1u || post.shape[0] != hidden || post.span < (uint64_t)hidden * sizeof(float)) {
+        if (error && cap && !error[0]) snprintf(error, cap, "recurrent post-attention norm mismatch");
+        return 0;
+    }
+    float *post_weight = malloc((size_t)hidden * sizeof(float));
+    float *cpu_attention = calloc(hidden, sizeof(float)), *gpu_attention = calloc(hidden, sizeof(float));
+    float *cpu_residual = calloc(hidden, sizeof(float)), *gpu_residual = calloc(hidden, sizeof(float));
+    float *cpu_norm = calloc(hidden, sizeof(float)), *gpu_norm = calloc(hidden, sizeof(float));
+    float *cpu_ffn = calloc(hidden, sizeof(float)), *gpu_ffn = calloc(hidden, sizeof(float));
+    const size_t conv_capacity = (size_t)(m.d_conv - 1u) * channels;
+    const size_t state_capacity = (size_t)m.dt_rank * head_value * head_value;
+    float *cpu_conv = calloc(conv_capacity, sizeof(float)), *gpu_conv = calloc(conv_capacity, sizeof(float));
+    float *cpu_state = calloc(state_capacity, sizeof(float)), *gpu_state = calloc(state_capacity, sizeof(float));
+    int result = 0;
+    if (!post_weight || !cpu_attention || !gpu_attention || !cpu_residual || !gpu_residual ||
+        !cpu_norm || !gpu_norm || !cpu_ffn || !gpu_ffn || !cpu_conv || !gpu_conv ||
+        !cpu_state || !gpu_state) {
+        if (error && cap) snprintf(error, cap, "recurrent block allocation failed");
+        goto cleanup;
+    }
+    int fd = open(model, O_RDONLY);
+    uint64_t calls = 0;
+    if (fd < 0 || !pread_full(fd, post_weight, (size_t)hidden * sizeof(float), post.offset, &calls)) {
+        if (fd >= 0) close(fd);
+        if (error && cap) snprintf(error, cap, "recurrent post-attention norm read failed");
+        goto cleanup;
+    }
+    close(fd);
+    size_t conv_count = 0, state_count = 0;
+    float eps = 0.0f;
+    if (!rb_attention(model, layer, cpu_input, gpu_input, hidden, cpu_attention, gpu_attention,
+            cpu_conv, gpu_conv, cpu_state, gpu_state, &conv_count, &state_count, &eps, error, cap) ||
+        conv_count != conv_capacity || state_count != state_capacity) {
+        if (error && cap && !error[0]) snprintf(error, cap, "recurrent state geometry changed");
+        goto cleanup;
+    }
+    rb_cpu_resnorm(cpu_input, cpu_attention, post_weight, hidden, eps, cpu_residual, cpu_norm);
+    rl_block_ops_telemetry resnorm_tel = {0}, final_tel = {0};
+#ifdef __APPLE__
+    if (!rl_block_residual_rmsnorm_gpu(gpu_input, gpu_attention, post_weight, hidden, eps,
+            gpu_residual, gpu_norm, &resnorm_tel, error, cap)) goto cleanup;
+#else
+    if (error && cap) snprintf(error, cap, "recurrent block requires macOS Metal");
+    goto cleanup;
+#endif
+    if (!rb_ffn(model, layer, topk, cache_mib, cpu_norm, gpu_norm, hidden,
+            cpu_ffn, gpu_ffn, error, cap)) goto cleanup;
+    for (uint32_t i = 0; i < hidden; ++i) cpu_output[i] = cpu_residual[i] + cpu_ffn[i];
+#ifdef __APPLE__
+    if (!rl_block_residual_gpu(gpu_residual, gpu_ffn, hidden, gpu_output,
+            &final_tel, error, cap)) goto cleanup;
+#endif
+
+    const error_stats branch_e = compare_arrays(gpu_attention, cpu_attention, hidden);
+    const error_stats residual_e = compare_arrays(gpu_residual, cpu_residual, hidden);
+    const error_stats norm_e = compare_arrays(gpu_norm, cpu_norm, hidden);
+    const error_stats ffn_e = compare_arrays(gpu_ffn, cpu_ffn, hidden);
+    const error_stats output_e = compare_arrays(gpu_output, cpu_output, hidden);
+    const error_stats conv_e = compare_arrays(gpu_conv, cpu_conv, conv_capacity);
+    const error_stats state_e = compare_arrays(gpu_state, cpu_state, state_capacity);
+    stats->branch_max_abs = branch_e.max_abs; stats->branch_max_rel = branch_e.max_rel;
+    stats->cache_max_abs = fmaxf(conv_e.max_abs, state_e.max_abs);
+    stats->cache_max_rel = fmaxf(conv_e.max_rel, state_e.max_rel);
+    stats->residual_max_abs = residual_e.max_abs; stats->residual_max_rel = residual_e.max_rel;
+    stats->norm_max_abs = norm_e.max_abs; stats->norm_max_rel = norm_e.max_rel;
+    stats->ffn_max_abs = ffn_e.max_abs; stats->ffn_max_rel = ffn_e.max_rel;
+    stats->output_max_abs = output_e.max_abs; stats->output_max_rel = output_e.max_rel;
+    stats->branch_ok = within(gpu_attention, cpu_attention, hidden, 5e-4f, 1e-3f);
+    stats->residual_ok = within(gpu_residual, cpu_residual, hidden, 7e-4f, 1e-3f);
+    stats->norm_ok = within(gpu_norm, cpu_norm, hidden, 8e-4f, 1.5e-3f);
+    stats->ffn_ok = within(gpu_ffn, cpu_ffn, hidden, 2e-3f, 2e-3f);
+    stats->output_ok = within(gpu_output, cpu_output, hidden, 3e-3f, 2e-3f);
+    const int isolated_parity = memcmp(cpu_input, gpu_input,
+        (size_t)hidden * sizeof(float)) == 0;
+    stats->cache_ok = !isolated_parity ||
+        (within(gpu_conv, cpu_conv, conv_capacity, 2e-3f, 2e-4f) &&
+         within(gpu_state, cpu_state, state_capacity, 5e-5f, 5e-4f));
+    stats->residual_norm_gpu_ms = resnorm_tel.compute_ms;
+    stats->final_residual_gpu_ms = final_tel.compute_ms;
+    stats->all_ok = stats->branch_ok && stats->cache_ok && stats->residual_ok &&
+        stats->norm_ok && stats->ffn_ok && stats->output_ok;
+    result = 1;
+
+cleanup:
+    free(post_weight); free(cpu_attention); free(gpu_attention); free(cpu_residual); free(gpu_residual);
+    free(cpu_norm); free(gpu_norm); free(cpu_ffn); free(gpu_ffn); free(cpu_conv); free(gpu_conv);
+    free(cpu_state); free(gpu_state);
+    return result;
 }
+
+#ifndef RL_RECURRENT_BLOCK_NO_MAIN
+int main(int argc, char **argv) {
+    if (argc < 5 || strcmp(argv[1], "parity") != 0 || strcmp(argv[3], "--layer") != 0) {
+        fprintf(stderr, "usage: redlite-recurrent-block parity MODEL --layer N [--top-k 10] [--cache-mib 256]\n");
+        return 2;
+    }
+    uint32_t layer = 0, topk = 10;
+    uint64_t cache_mib = 256;
+    if (!parse_u32(argv[4], &layer)) return 2;
+    for (int i = 5; i < argc; ++i) {
+        if (i + 1 >= argc) return 2;
+        if (strcmp(argv[i], "--top-k") == 0) {
+            if (!parse_u32(argv[++i], &topk)) return 2;
+        } else if (strcmp(argv[i], "--cache-mib") == 0) {
+            char *end = NULL;
+            cache_mib = strtoull(argv[++i], &end, 10);
+            if (!end || *end) return 2;
+        } else return 2;
+    }
+    if (!topk || topk > RB_MAX_TOPK || !cache_mib) return 2;
+    const uint32_t hidden = 2048u;
+    float *input = calloc(hidden, sizeof(float));
+    float *cpu_output = calloc(hidden, sizeof(float));
+    float *gpu_output = calloc(hidden, sizeof(float));
+    if (!input || !cpu_output || !gpu_output) return 1;
+    make_input(input, hidden);
+    char error[512] = {0};
+    rl_decoder_block_stats stats;
+    if (!rl_recurrent_block_parity_execute(argv[2], layer, topk, cache_mib,
+            input, input, hidden, cpu_output, gpu_output, hidden, &stats, error, sizeof(error))) {
+        fprintf(stderr, "recurrent block failed: %s\n", error);
+        free(input); free(cpu_output); free(gpu_output);
+        return 1;
+    }
+    printf("runtime              : complete native Qwen3-Next recurrent transformer block parity\n");
+    printf("layer / top-k        : %u / %u\n", layer, topk);
+    printf("hidden               : %u\n", hidden);
+    printf("attention abs/rel    : %.6g / %.6g parity=%s\n", stats.branch_max_abs, stats.branch_max_rel, stats.branch_ok ? "YES" : "NO");
+    printf("state abs/rel        : %.6g / %.6g parity=%s\n", stats.cache_max_abs, stats.cache_max_rel, stats.cache_ok ? "YES" : "NO");
+    printf("attention residual   : %.6g / %.6g parity=%s\n", stats.residual_max_abs, stats.residual_max_rel, stats.residual_ok ? "YES" : "NO");
+    printf("post-attn RMSNorm    : %.6g / %.6g parity=%s\n", stats.norm_max_abs, stats.norm_max_rel, stats.norm_ok ? "YES" : "NO");
+    printf("full FFN abs/rel     : %.6g / %.6g parity=%s\n", stats.ffn_max_abs, stats.ffn_max_rel, stats.ffn_ok ? "YES" : "NO");
+    printf("FINAL block abs/rel  : %.6g / %.6g parity=%s\n", stats.output_max_abs, stats.output_max_rel, stats.output_ok ? "YES" : "NO");
+    printf("resnorm/final Metal  : %.3f / %.3f ms\n", stats.residual_norm_gpu_ms, stats.final_residual_gpu_ms);
+    printf("COMPLETE BLOCK       : %s\n", stats.all_ok ? "YES" : "NO");
+    for (uint32_t i = 0; i < 4u; ++i)
+        printf("row %-3u             : gpu=%+.7f cpu=%+.7f delta=%+.3e\n", i, gpu_output[i], cpu_output[i],
+            (double)gpu_output[i] - cpu_output[i]);
+    free(input); free(cpu_output); free(gpu_output);
+    return stats.all_ok ? 0 : 3;
+}
+#endif

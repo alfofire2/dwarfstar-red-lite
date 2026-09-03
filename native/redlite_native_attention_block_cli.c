@@ -3,6 +3,7 @@
 #undef main
 
 #include "redlite_native_block_ops.h"
+#include "redlite_native_decoder_block.h"
 #include "redlite_native_gguf.h"
 #include "redlite_native_metal.h"
 #include "redlite_native_reference.h"
@@ -82,7 +83,8 @@ static int ab_find_tensor(const char *model, const char *wanted, ab_tensor *out,
 }
 
 static int ab_attention(const char *model, uint32_t layer, uint32_t position,
-        const float *input, uint32_t hidden, float *cpu_output, float *gpu_output,
+        const float *cpu_input, const float *gpu_input, uint32_t hidden,
+        float *cpu_output, float *gpu_output,
         error_stats *cache_error, double *cpu_ms, rl_attn_proj_telemetry *gpu_telemetry,
         char *error, size_t cap) {
     model_meta meta;
@@ -143,7 +145,7 @@ static int ab_attention(const char *model, uint32_t layer, uint32_t position,
     memcpy(gpu_vcache, cpu_vcache, cache_count * sizeof(float));
 
     const double start = now_ms();
-    rmsnorm_f32(input, (const float *)weights[0], hidden, meta.rms_eps, cpu_norm);
+    rmsnorm_f32(cpu_input, (const float *)weights[0], hidden, meta.rms_eps, cpu_norm);
     for (uint32_t row = 0; row < qgate_count; ++row) {
         double dot = 0.0;
         if (!rl_native_shared_quant_row_dot(weights[1] + (size_t)row * iq2_rb, iq2_rb, 16u,
@@ -185,7 +187,7 @@ static int ab_attention(const char *model, uint32_t layer, uint32_t position,
     if (cpu_ms) *cpu_ms = now_ms() - start;
 
 #ifdef __APPLE__
-    if (!rl_attention_gpu_execute(model, tensors, input, hidden, meta.rms_eps,
+    if (!rl_attention_gpu_execute(model, tensors, gpu_input, hidden, meta.rms_eps,
             position, meta.rope_dims, meta.rope_freq_base,
             gpu_kcache, gpu_vcache, (uint32_t)cache_count,
             gpu_norm, hidden, gpu_query, query_count, gpu_gate, query_count,
@@ -196,18 +198,33 @@ static int ab_attention(const char *model, uint32_t layer, uint32_t position,
 #endif
 
     if (cache_error) *cache_error = compare_arrays(gpu_kcache, cpu_kcache, cache_count);
-    const int stages_ok =
-        within(gpu_norm, cpu_norm, hidden, 3.0e-6f, 3.0e-5f) &&
-        within(gpu_query, cpu_query, query_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_gate, cpu_gate, query_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_key, cpu_key, kv_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_value, cpu_value, kv_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_kcache, cpu_kcache, cache_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_vcache, cpu_vcache, cache_count, 2.0e-4f, 2.0e-4f) &&
-        within(gpu_attn, cpu_attn, query_count, 4.0e-4f, 4.0e-4f) &&
-        within(gpu_gated, cpu_gated, query_count, 4.0e-4f, 4.0e-4f) &&
-        within(gpu_output, cpu_output, hidden, 2.0e-3f, 4.0e-4f);
-    if (!stages_ok) { snprintf(error, cap, "full-attention substage parity failed"); goto done; }
+    const void *failed_gpu = NULL, *failed_cpu = NULL;
+    const char *failed_name = NULL;
+    size_t failed_count = 0;
+    const int isolated_parity = memcmp(cpu_input, gpu_input,
+        (size_t)hidden * sizeof(float)) == 0;
+#define AB_CHECK_STAGE(label, gpu, cpu, count, abs_tol, rel_tol) \
+    do { if (isolated_parity && !failed_name && !within((gpu), (cpu), (count), (abs_tol), (rel_tol))) { \
+        failed_name = (label); failed_gpu = (gpu); failed_cpu = (cpu); failed_count = (count); \
+    } } while (0)
+    AB_CHECK_STAGE("input_norm", gpu_norm, cpu_norm, hidden, 3.0e-6f, 3.0e-5f);
+    AB_CHECK_STAGE("query_rope", gpu_query, cpu_query, query_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("query_gate", gpu_gate, cpu_gate, query_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("key_rope", gpu_key, cpu_key, kv_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("value", gpu_value, cpu_value, kv_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("key_cache", gpu_kcache, cpu_kcache, cache_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("value_cache", gpu_vcache, cpu_vcache, cache_count, 2.0e-4f, 2.0e-4f);
+    AB_CHECK_STAGE("gqa", gpu_attn, cpu_attn, query_count, 4.0e-4f, 4.0e-4f);
+    AB_CHECK_STAGE("sigmoid_gate", gpu_gated, cpu_gated, query_count, 4.0e-4f, 4.0e-4f);
+    AB_CHECK_STAGE("output", gpu_output, cpu_output, hidden, 2.0e-3f, 4.0e-4f);
+#undef AB_CHECK_STAGE
+    if (failed_name) {
+        const error_stats failed = compare_arrays((const float *)failed_gpu,
+            (const float *)failed_cpu, failed_count);
+        snprintf(error, cap, "full-attention %s parity failed: max_abs=%.7g max_rel=%.7g index=%zu",
+            failed_name, failed.max_abs, failed.max_rel, failed.index);
+        goto done;
+    }
     ok = 1;
 
 done:
@@ -322,13 +339,125 @@ static void ab_cpu_resnorm(const float *residual, const float *branch, const flo
     for (uint32_t i = 0; i < n; ++i) norm[i] = (float)((double)sum[i] * inv * weight[i]);
 }
 
+#ifndef RL_FULL_ATTENTION_BLOCK_NO_MAIN
 static void ab_usage(FILE *out) {
     fprintf(out,
         "redlite-attention-block 0.3.0.dev16g\n\n"
         "Usage:\n"
         "  redlite-attention-block parity MODEL --layer N [--position N] [--top-k N] [--cache-mib N]\n");
 }
+#endif
 
+int rl_full_attention_block_parity_execute(
+        const char *model, uint32_t layer, uint32_t position, uint32_t topk, uint64_t cache_mib,
+        const float *cpu_input, const float *gpu_input, uint32_t input_count,
+        float *cpu_output, float *gpu_output, uint32_t output_count,
+        rl_decoder_block_stats *stats, char *error, size_t error_cap) {
+    if (!model || !cpu_input || !gpu_input || !cpu_output || !gpu_output || !stats ||
+        position >= RL_ATTN_MAX_CONTEXT || !topk || topk > AB_MAX_TOPK || !cache_mib) {
+        if (error && error_cap) snprintf(error, error_cap, "invalid full-attention block arguments");
+        return 0;
+    }
+    memset(stats, 0, sizeof(*stats));
+    model_meta meta;
+    rl_attn_proj_tensor_info attention_tensors[RL_ATTN_PROJ_TENSOR_COUNT];
+    size_t attention_bytes[RL_ATTN_PROJ_TENSOR_COUNT] = {0};
+    if (!audit_layer(model, layer, &meta, attention_tensors, error, error_cap) ||
+        !validate_layout(&meta, attention_tensors, attention_bytes, error, error_cap)) return 0;
+    const uint32_t hidden = meta.hidden;
+    if (input_count != hidden || output_count < hidden) {
+        if (error && error_cap) snprintf(error, error_cap, "full-attention block hidden width mismatch");
+        return 0;
+    }
+    char post_name[96];
+    snprintf(post_name, sizeof(post_name), "blk.%u.post_attention_norm.weight", layer);
+    ab_tensor post;
+    if (!ab_find_tensor(model, post_name, &post, error, error_cap) || post.type != 0u ||
+        post.dims != 1u || post.shape[0] != hidden || post.span < (uint64_t)hidden * sizeof(float)) {
+        if (error && error_cap && !error[0]) snprintf(error, error_cap, "full-attention post-norm mismatch");
+        return 0;
+    }
+
+    float *post_weight = (float *)malloc((size_t)hidden * sizeof(float));
+    float *cpu_attention = (float *)calloc(hidden, sizeof(float));
+    float *gpu_attention = (float *)calloc(hidden, sizeof(float));
+    float *cpu_residual = (float *)calloc(hidden, sizeof(float));
+    float *gpu_residual = (float *)calloc(hidden, sizeof(float));
+    float *cpu_norm = (float *)calloc(hidden, sizeof(float));
+    float *gpu_norm = (float *)calloc(hidden, sizeof(float));
+    float *cpu_ffn = (float *)calloc(hidden, sizeof(float));
+    float *gpu_ffn = (float *)calloc(hidden, sizeof(float));
+    int result = 0;
+    if (!post_weight || !cpu_attention || !gpu_attention || !cpu_residual || !gpu_residual ||
+        !cpu_norm || !gpu_norm || !cpu_ffn || !gpu_ffn) {
+        if (error && error_cap) snprintf(error, error_cap, "full-attention block allocation failed");
+        goto cleanup;
+    }
+    int fd = open(model, O_RDONLY);
+    uint64_t calls = 0;
+    if (fd < 0 || !pread_full(fd, post_weight, (size_t)hidden * sizeof(float), post.offset, &calls)) {
+        if (fd >= 0) close(fd);
+        if (error && error_cap) snprintf(error, error_cap, "post-attention norm read failed");
+        goto cleanup;
+    }
+    close(fd);
+
+    error_stats cache_e = {0};
+    double attention_cpu_ms = 0.0;
+    rl_attn_proj_telemetry attention_gpu_tel = {0};
+    if (!ab_attention(model, layer, position, cpu_input, gpu_input, hidden,
+            cpu_attention, gpu_attention, &cache_e, &attention_cpu_ms,
+            &attention_gpu_tel, error, error_cap)) goto cleanup;
+    ab_cpu_resnorm(cpu_input, cpu_attention, post_weight, hidden, meta.rms_eps, cpu_residual, cpu_norm);
+    rl_block_ops_telemetry resnorm_tel = {0}, final_tel = {0};
+#ifdef __APPLE__
+    if (!rl_block_residual_rmsnorm_gpu(gpu_input, gpu_attention, post_weight, hidden, meta.rms_eps,
+            gpu_residual, gpu_norm, &resnorm_tel, error, error_cap)) goto cleanup;
+#else
+    if (error && error_cap) snprintf(error, error_cap, "full-attention block requires macOS Metal");
+    goto cleanup;
+#endif
+    if (!ab_ffn(model, layer, topk, cache_mib, cpu_norm, gpu_norm, hidden,
+            cpu_ffn, gpu_ffn, error, error_cap)) goto cleanup;
+    for (uint32_t i = 0; i < hidden; ++i) cpu_output[i] = cpu_residual[i] + cpu_ffn[i];
+#ifdef __APPLE__
+    if (!rl_block_residual_gpu(gpu_residual, gpu_ffn, hidden, gpu_output,
+            &final_tel, error, error_cap)) goto cleanup;
+#endif
+
+    const error_stats attention_e = compare_arrays(gpu_attention, cpu_attention, hidden);
+    const error_stats residual_e = compare_arrays(gpu_residual, cpu_residual, hidden);
+    const error_stats norm_e = compare_arrays(gpu_norm, cpu_norm, hidden);
+    const error_stats ffn_e = compare_arrays(gpu_ffn, cpu_ffn, hidden);
+    const error_stats output_e = compare_arrays(gpu_output, cpu_output, hidden);
+    stats->branch_max_abs = attention_e.max_abs; stats->branch_max_rel = attention_e.max_rel;
+    stats->cache_max_abs = cache_e.max_abs; stats->cache_max_rel = cache_e.max_rel;
+    stats->residual_max_abs = residual_e.max_abs; stats->residual_max_rel = residual_e.max_rel;
+    stats->norm_max_abs = norm_e.max_abs; stats->norm_max_rel = norm_e.max_rel;
+    stats->ffn_max_abs = ffn_e.max_abs; stats->ffn_max_rel = ffn_e.max_rel;
+    stats->output_max_abs = output_e.max_abs; stats->output_max_rel = output_e.max_rel;
+    stats->branch_ok = within(gpu_attention, cpu_attention, hidden, 2.0e-3f, 4.0e-4f);
+    stats->cache_ok = 1;
+    stats->residual_ok = within(gpu_residual, cpu_residual, hidden, 2.1e-3f, 5.0e-4f);
+    stats->norm_ok = within(gpu_norm, cpu_norm, hidden, 2.1e-3f, 1.5e-3f);
+    stats->ffn_ok = within(gpu_ffn, cpu_ffn, hidden, 3.0e-3f, 2.0e-3f);
+    stats->output_ok = within(gpu_output, cpu_output, hidden, 4.0e-3f, 2.0e-3f);
+    stats->branch_cpu_ms = attention_cpu_ms;
+    stats->branch_gpu_ms = attention_gpu_tel.compute_ms;
+    stats->residual_norm_gpu_ms = resnorm_tel.compute_ms;
+    stats->final_residual_gpu_ms = final_tel.compute_ms;
+    stats->all_ok = stats->branch_ok && stats->cache_ok && stats->residual_ok &&
+        stats->norm_ok && stats->ffn_ok && stats->output_ok;
+    result = 1;
+
+cleanup:
+    free(post_weight); free(cpu_attention); free(gpu_attention);
+    free(cpu_residual); free(gpu_residual); free(cpu_norm); free(gpu_norm);
+    free(cpu_ffn); free(gpu_ffn);
+    return result;
+}
+
+#ifndef RL_FULL_ATTENTION_BLOCK_NO_MAIN
 int main(int argc, char **argv) {
     if (argc < 5 || strcmp(argv[1], "parity") != 0) { ab_usage(argc > 1 ? stderr : stdout); return 2; }
     const char *model = argv[2];
@@ -348,111 +477,38 @@ int main(int argc, char **argv) {
             if (!end || *end) return 2;
         } else return 2;
     }
-    if (layer == UINT32_MAX || position >= RL_ATTN_MAX_CONTEXT || !topk || topk > AB_MAX_TOPK || !cache_mib) {
-        fprintf(stderr, "full-attention block arguments out of range\n"); return 2;
-    }
-
-    char error[512] = {0};
-    model_meta meta;
-    rl_attn_proj_tensor_info attention_tensors[RL_ATTN_PROJ_TENSOR_COUNT];
-    size_t attention_bytes[RL_ATTN_PROJ_TENSOR_COUNT] = {0};
-    if (!audit_layer(model, layer, &meta, attention_tensors, error, sizeof(error)) ||
-        !validate_layout(&meta, attention_tensors, attention_bytes, error, sizeof(error))) {
-        fprintf(stderr, "full-attention block audit failed: %s\n", error); return 1;
-    }
-    const uint32_t hidden = meta.hidden;
-    char post_name[96];
-    snprintf(post_name, sizeof(post_name), "blk.%u.post_attention_norm.weight", layer);
-    ab_tensor post;
-    if (!ab_find_tensor(model, post_name, &post, error, sizeof(error)) || post.type != 0u ||
-        post.dims != 1u || post.shape[0] != hidden || post.span < (uint64_t)hidden * sizeof(float)) {
-        fprintf(stderr, "post-attention norm audit failed: %s\n", error); return 1;
-    }
-
-    float *post_weight = (float *)malloc((size_t)hidden * sizeof(float));
+    if (layer == UINT32_MAX || position >= RL_ATTN_MAX_CONTEXT ||
+        !topk || topk > AB_MAX_TOPK || !cache_mib) return 2;
+    const uint32_t hidden = 2048u;
     float *input = (float *)calloc(hidden, sizeof(float));
-    float *cpu_attention = (float *)calloc(hidden, sizeof(float));
-    float *gpu_attention = (float *)calloc(hidden, sizeof(float));
-    float *cpu_residual = (float *)calloc(hidden, sizeof(float));
-    float *gpu_residual = (float *)calloc(hidden, sizeof(float));
-    float *cpu_norm = (float *)calloc(hidden, sizeof(float));
-    float *gpu_norm = (float *)calloc(hidden, sizeof(float));
-    float *cpu_ffn = (float *)calloc(hidden, sizeof(float));
-    float *gpu_ffn = (float *)calloc(hidden, sizeof(float));
     float *cpu_output = (float *)calloc(hidden, sizeof(float));
     float *gpu_output = (float *)calloc(hidden, sizeof(float));
-    if (!post_weight || !input || !cpu_attention || !gpu_attention || !cpu_residual || !gpu_residual ||
-        !cpu_norm || !gpu_norm || !cpu_ffn || !gpu_ffn || !cpu_output || !gpu_output) {
-        fprintf(stderr, "full-attention block allocation failed\n"); return 1;
-    }
+    if (!input || !cpu_output || !gpu_output) return 1;
     make_input(input, hidden);
-    int fd = open(model, O_RDONLY);
-    uint64_t calls = 0;
-    if (fd < 0 || !pread_full(fd, post_weight, (size_t)hidden * sizeof(float), post.offset, &calls)) {
-        if (fd >= 0) close(fd);
-        fprintf(stderr, "post-attention norm read failed\n"); return 1;
+    char error[512] = {0};
+    rl_decoder_block_stats stats;
+    if (!rl_full_attention_block_parity_execute(model, layer, position, topk, cache_mib,
+            input, input, hidden, cpu_output, gpu_output, hidden, &stats, error, sizeof(error))) {
+        fprintf(stderr, "full-attention block failed: %s\n", error);
+        free(input); free(cpu_output); free(gpu_output);
+        return 1;
     }
-    close(fd);
-
-    error_stats cache_e = {0};
-    double attention_cpu_ms = 0.0;
-    rl_attn_proj_telemetry attention_gpu_tel = {0};
-    if (!ab_attention(model, layer, position, input, hidden, cpu_attention, gpu_attention,
-            &cache_e, &attention_cpu_ms, &attention_gpu_tel, error, sizeof(error))) {
-        fprintf(stderr, "composed full attention failed: %s\n", error); return 1;
-    }
-    ab_cpu_resnorm(input, cpu_attention, post_weight, hidden, meta.rms_eps, cpu_residual, cpu_norm);
-    rl_block_ops_telemetry resnorm_tel = {0}, final_tel = {0};
-#ifdef __APPLE__
-    if (!rl_block_residual_rmsnorm_gpu(input, gpu_attention, post_weight, hidden, meta.rms_eps,
-            gpu_residual, gpu_norm, &resnorm_tel, error, sizeof(error))) {
-        fprintf(stderr, "Metal post-attention residual/norm failed: %s\n", error); return 1;
-    }
-#else
-    fprintf(stderr, "full-attention block requires macOS Metal\n"); return 1;
-#endif
-    if (!ab_ffn(model, layer, topk, cache_mib, cpu_norm, gpu_norm, hidden,
-            cpu_ffn, gpu_ffn, error, sizeof(error))) {
-        fprintf(stderr, "composed FFN failed: %s\n", error); return 1;
-    }
-    for (uint32_t i = 0; i < hidden; ++i) cpu_output[i] = cpu_residual[i] + cpu_ffn[i];
-#ifdef __APPLE__
-    if (!rl_block_residual_gpu(gpu_residual, gpu_ffn, hidden, gpu_output,
-            &final_tel, error, sizeof(error))) {
-        fprintf(stderr, "Metal final residual failed: %s\n", error); return 1;
-    }
-#endif
-
-    const error_stats attention_e = compare_arrays(gpu_attention, cpu_attention, hidden);
-    const error_stats residual_e = compare_arrays(gpu_residual, cpu_residual, hidden);
-    const error_stats norm_e = compare_arrays(gpu_norm, cpu_norm, hidden);
-    const error_stats ffn_e = compare_arrays(gpu_ffn, cpu_ffn, hidden);
-    const error_stats output_e = compare_arrays(gpu_output, cpu_output, hidden);
-    const int attention_ok = within(gpu_attention, cpu_attention, hidden, 2.0e-3f, 4.0e-4f);
-    const int residual_ok = within(gpu_residual, cpu_residual, hidden, 2.1e-3f, 5.0e-4f);
-    const int norm_ok = within(gpu_norm, cpu_norm, hidden, 2.1e-3f, 1.5e-3f);
-    const int ffn_ok = within(gpu_ffn, cpu_ffn, hidden, 3.0e-3f, 2.0e-3f);
-    const int output_ok = within(gpu_output, cpu_output, hidden, 4.0e-3f, 2.0e-3f);
-    const int all_ok = attention_ok && residual_ok && norm_ok && ffn_ok && output_ok;
-
     printf("runtime              : complete native Qwen3-Next full-attention transformer block parity\n");
     printf("layer / position     : %u / %u (context=%u)\n", layer, position, position + 1u);
     printf("hidden / top-k       : %u / %u\n", hidden, topk);
-    printf("attention abs/rel    : %.6g / %.6g parity=%s\n", attention_e.max_abs, attention_e.max_rel, attention_ok ? "YES" : "NO");
-    printf("KV cache abs/rel     : %.6g / %.6g parity=YES\n", cache_e.max_abs, cache_e.max_rel);
-    printf("attention residual   : %.6g / %.6g parity=%s\n", residual_e.max_abs, residual_e.max_rel, residual_ok ? "YES" : "NO");
-    printf("post-attn RMSNorm    : %.6g / %.6g parity=%s\n", norm_e.max_abs, norm_e.max_rel, norm_ok ? "YES" : "NO");
-    printf("full FFN abs/rel     : %.6g / %.6g parity=%s\n", ffn_e.max_abs, ffn_e.max_rel, ffn_ok ? "YES" : "NO");
-    printf("FINAL block abs/rel  : %.6g / %.6g parity=%s\n", output_e.max_abs, output_e.max_rel, output_ok ? "YES" : "NO");
-    printf("attention CPU/Metal  : %.3f / %.3f ms\n", attention_cpu_ms, attention_gpu_tel.compute_ms);
-    printf("resnorm/final Metal  : %.3f / %.3f ms\n", resnorm_tel.compute_ms, final_tel.compute_ms);
-    printf("COMPLETE FULL ATTENTION BLOCK: %s\n", all_ok ? "YES" : "NO");
+    printf("attention abs/rel    : %.6g / %.6g parity=%s\n", stats.branch_max_abs, stats.branch_max_rel, stats.branch_ok ? "YES" : "NO");
+    printf("KV cache abs/rel     : %.6g / %.6g parity=%s\n", stats.cache_max_abs, stats.cache_max_rel, stats.cache_ok ? "YES" : "NO");
+    printf("attention residual   : %.6g / %.6g parity=%s\n", stats.residual_max_abs, stats.residual_max_rel, stats.residual_ok ? "YES" : "NO");
+    printf("post-attn RMSNorm    : %.6g / %.6g parity=%s\n", stats.norm_max_abs, stats.norm_max_rel, stats.norm_ok ? "YES" : "NO");
+    printf("full FFN abs/rel     : %.6g / %.6g parity=%s\n", stats.ffn_max_abs, stats.ffn_max_rel, stats.ffn_ok ? "YES" : "NO");
+    printf("FINAL block abs/rel  : %.6g / %.6g parity=%s\n", stats.output_max_abs, stats.output_max_rel, stats.output_ok ? "YES" : "NO");
+    printf("attention CPU/Metal  : %.3f / %.3f ms\n", stats.branch_cpu_ms, stats.branch_gpu_ms);
+    printf("resnorm/final Metal  : %.3f / %.3f ms\n", stats.residual_norm_gpu_ms, stats.final_residual_gpu_ms);
+    printf("COMPLETE FULL ATTENTION BLOCK: %s\n", stats.all_ok ? "YES" : "NO");
     for (uint32_t i = 0; i < 4u; ++i)
         printf("row %-3u             : gpu=%+.7f cpu=%+.7f delta=%+.3e\n", i, gpu_output[i], cpu_output[i],
             (double)gpu_output[i] - cpu_output[i]);
-
-    free(post_weight); free(input); free(cpu_attention); free(gpu_attention);
-    free(cpu_residual); free(gpu_residual); free(cpu_norm); free(gpu_norm);
-    free(cpu_ffn); free(gpu_ffn); free(cpu_output); free(gpu_output);
-    return all_ok ? 0 : 3;
+    free(input); free(cpu_output); free(gpu_output);
+    return stats.all_ok ? 0 : 3;
 }
+#endif
