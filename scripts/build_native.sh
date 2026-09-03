@@ -35,6 +35,11 @@ ROUTER_OFFLINE=(
   "$ROOT/native/redlite_native_router_offline_test.c"
   "$ROOT/native/redlite_native_router_exec.c"
 )
+SHARED_EXEC_OFFLINE=(
+  "$ROOT/native/redlite_native_shared_exec_offline_test.c"
+  "$ROOT/native/redlite_native_shared_exec.c"
+  "$ROOT/native/redlite_native_iq2_xxs.c"
+)
 ROUTER_PARITY_COMMON=(
   "$ROOT/native/redlite_native_routed_cli.c"
   "$ROOT/native/redlite_native_router.c"
@@ -44,6 +49,12 @@ ROUTER_PARITY_COMMON=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
+)
+SHARED_PARITY_COMMON=(
+  "$ROOT/native/redlite_native_shared_parity_cli.c"
+  "$ROOT/native/redlite_native_shared.c"
+  "$ROOT/native/redlite_native_shared_exec.c"
+  "$ROOT/native/redlite_native_iq2_xxs.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -91,6 +102,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -o "$OUT/redlite-router-offline-test"
 
   xcrun --sdk macosx clang \
+    -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    "${SHARED_EXEC_OFFLINE[@]}" -lm \
+    -o "$OUT/redlite-shared-exec-offline-test"
+
+  xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
     -mcpu=native -fobjc-arc -I"$ROOT/native" \
@@ -100,6 +117,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_router.m" \
     -framework Foundation -framework Metal -lm \
     -o "$OUT/redlite-router"
+
+  xcrun --sdk macosx clang \
+    -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
+    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    "${SHARED_PARITY_COMMON[@]}" \
+    "$ROOT/native/redmetal_shared.m" \
+    -framework Foundation -framework Metal -lm \
+    -o "$OUT/redlite-shared"
 else
   "$CC_BIN" \
     -O3 \
@@ -136,6 +162,12 @@ else
     -Wall -Wextra -Wpedantic -march=native -I"$ROOT/native" \
     "${ROUTER_OFFLINE[@]}" -lm \
     -o "$OUT/redlite-router-offline-test"
+
+  "$CC_BIN" \
+    -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+    -Wall -Wextra -Wpedantic -march=native -I"$ROOT/native" \
+    "${SHARED_EXEC_OFFLINE[@]}" -lm \
+    -o "$OUT/redlite-shared-exec-offline-test"
 fi
 
 "$OUT/redlite-native" selftest
@@ -143,8 +175,10 @@ fi
 "$OUT/redlite-router-audit" --help >/dev/null
 "$OUT/redlite-shared-audit" --help >/dev/null
 "$OUT/redlite-router-offline-test"
+"$OUT/redlite-shared-exec-offline-test"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   "$OUT/redlite-router" --help >/dev/null
+  "$OUT/redlite-shared" --help >/dev/null
 fi
 
 echo "Built $OUT/redlite-native"
@@ -152,4 +186,5 @@ echo "Built $OUT/redlite-router-audit"
 echo "Built $OUT/redlite-shared-audit"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "Built $OUT/redlite-router"
+  echo "Built $OUT/redlite-shared"
 fi
