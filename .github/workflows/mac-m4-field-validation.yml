@@ -16,7 +16,7 @@ concurrency:
 jobs:
   m4-field-validation:
     name: M4 Pro 24GB field validation
-    runs-on: self-hosted
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 45
     env:
       REDLITE_MODEL_PATH: ${{ vars.REDLITE_MODEL_PATH }}
