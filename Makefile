@@ -22,3 +22,4 @@ native:
 	bash ./scripts/build_deltanet_prestate.sh
 	bash ./scripts/build_deltanet_state.sh
 	bash ./scripts/build_deltanet_tail.sh
+	bash ./scripts/build_deltanet_layer.sh
