@@ -1,0 +1,107 @@
+#pragma once
+
+/*
+ * Persistent native Qwen3-Next inference engine.
+ *
+ * One rl_engine owns the mmap'd GGUF, the audited per-layer tensor table, the
+ * routed-expert map and up to two independent stateful backends:
+ *   - CPU: the scalar double-precision oracle (correctness reference)
+ *   - GPU: the persistent Metal runtime (production path)
+ * Both backends keep their own DeltaNet conv/recurrent states and full-attention
+ * KV caches so a token sequence can be replayed through each and compared.
+ */
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct rl_engine rl_engine;
+
+typedef enum {
+    RL_BACKEND_CPU = 0,
+    RL_BACKEND_GPU = 1,
+} rl_engine_backend;
+
+typedef struct {
+    uint32_t context;      /* KV-cache capacity in positions (default 4096) */
+    uint64_t cache_mib;    /* routed-expert cache budget for the Metal path (default 4096) */
+    uint32_t top_k;        /* 0 -> model expert_used_count */
+    int enable_cpu;        /* keep a CPU oracle backend */
+    int enable_gpu;        /* create the Metal backend */
+    int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
+} rl_engine_config;
+
+typedef struct {
+    uint32_t n_layer;
+    uint32_t n_recurrent;
+    uint32_t n_attention;
+    uint32_t hidden;
+    uint32_t vocab;
+    uint32_t n_expert;
+    uint32_t top_k;
+    uint32_t context;
+    /* DeltaNet */
+    uint32_t d_conv, d_inner, d_state, n_group, dt_rank, channels, head_v;
+    /* attention */
+    uint32_t n_head, n_head_kv, head_dim, rope_dims;
+    float rope_freq_base;
+    float rms_eps;
+    /* memory */
+    uint64_t dense_bytes;       /* resident dense weight bytes */
+    uint64_t state_bytes;       /* per-backend recurrent + conv + KV bytes */
+} rl_engine_info;
+
+typedef struct {
+    double embed_ms;
+    double layers_ms;
+    double recurrent_ms;
+    double attention_ms;
+    double router_ms;
+    double routed_ms;
+    double shared_ms;
+    double output_ms;
+    double total_ms;
+    uint64_t expert_loads;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t ssd_bytes;
+    uint64_t ssd_reads;
+    uint32_t resident_slots;
+    uint32_t slot_capacity;
+} rl_engine_step_stats;
+
+void rl_engine_config_default(rl_engine_config *cfg);
+
+rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg, char *error, size_t error_cap);
+void rl_engine_close(rl_engine *engine);
+
+const rl_engine_info *rl_engine_info_get(const rl_engine *engine);
+
+/* Reset states and position of one backend. */
+int rl_engine_reset(rl_engine *engine, rl_engine_backend backend, char *error, size_t error_cap);
+
+uint32_t rl_engine_position(const rl_engine *engine, rl_engine_backend backend);
+
+/*
+ * Run one token through a backend at its current position, write vocab logits
+ * (may be NULL to skip the LM head) and advance the position.
+ */
+int rl_engine_step(rl_engine *engine, rl_engine_backend backend, uint32_t token,
+                   float *logits, rl_engine_step_stats *stats, char *error, size_t error_cap);
+
+/* Host views of the last step's intermediate vectors (hidden floats each). */
+const float *rl_engine_last_embedding(const rl_engine *engine, rl_engine_backend backend);
+const float *rl_engine_last_layer_output(const rl_engine *engine, rl_engine_backend backend, uint32_t layer);
+const float *rl_engine_last_final_norm(const rl_engine *engine, rl_engine_backend backend);
+/* Router selection of the last step for a layer (top_k ids); NULL if unavailable. */
+const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_backend backend, uint32_t layer);
+
+/* Dequantized token embedding row (hidden floats) into out. */
+int rl_engine_embed_token(const rl_engine *engine, uint32_t token, float *out, char *error, size_t error_cap);
+
+#ifdef __cplusplus
+}
+#endif
