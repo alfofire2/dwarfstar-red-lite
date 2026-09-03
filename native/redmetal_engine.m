@@ -50,142 +50,133 @@ static NSString * const kEngineSource = @
 "}\n"
 /* ---- norms / residuals (validated block ops) ---- */
 "kernel void rl_rms(device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
-"    constant uint &n [[buffer(3)]], constant float &eps [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
-"    if (gid != 0u) return; float ss = 0.0f;\n"
-"    for (uint i = 0; i < n; ++i) ss = fma(x[i], x[i], ss);\n"
-"    const float inv = rsqrt(ss / float(n) + eps);\n"
-"    for (uint i = 0; i < n; ++i) y[i] = x[i] * inv * w[i];\n"
+"    constant uint &n [[buffer(3)]], constant float &eps [[buffer(4)]], uint tid [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float partial[8]; float ss = 0.0f;\n"
+"    for (uint i = tid; i < n; i += 256u) ss = fma(x[i], x[i], ss);\n"
+"    ss = simd_sum(ss); if (simd_lane == 0) partial[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint k = 0; k < 8u; ++k) total += partial[k];\n"
+"    const float inv = rsqrt(total / float(n) + eps);\n"
+"    for (uint i = tid; i < n; i += 256u) y[i] = x[i] * inv * w[i];\n"
 "}\n"
 "kernel void rl_resid_rms(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *sum [[buffer(3)]], device float *norm [[buffer(4)]], constant uint &n [[buffer(5)]], constant float &eps [[buffer(6)]],\n"
-"    uint gid [[thread_position_in_grid]]) {\n"
-"    if (gid != 0u) return; float ss = 0.0f;\n"
-"    for (uint i = 0; i < n; ++i) { float v = a[i] + b[i]; sum[i] = v; ss = fma(v, v, ss); }\n"
-"    float inv = rsqrt(ss / float(n) + eps); for (uint i = 0; i < n; ++i) norm[i] = sum[i] * inv * w[i];\n"
+"    uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float partial[8]; float ss = 0.0f;\n"
+"    for (uint i = tid; i < n; i += 256u) { const float v = a[i] + b[i]; sum[i] = v; ss = fma(v, v, ss); }\n"
+"    ss = simd_sum(ss); if (simd_lane == 0) partial[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint k = 0; k < 8u; ++k) total += partial[k];\n"
+"    const float inv = rsqrt(total / float(n) + eps);\n"
+"    for (uint i = tid; i < n; i += 256u) norm[i] = sum[i] * inv * w[i];\n"
 "}\n"
 "kernel void rl_scale_add(device const float *resid [[buffer(0)]], device const float *routed [[buffer(1)]], device const float *shared [[buffer(2)]],\n"
 "    device const float *scalar [[buffer(3)]], device float *out [[buffer(4)]], constant uint &n [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
 "    if (gid < n) out[gid] = resid[gid] + (routed[gid] + shared[gid] * scalar[0]);\n"
 "}\n"
-/* ---- quantized row dot products ---- */
+/* ---- quantized row dot products: lanes_per_row SIMD lanes per row, one block per lane per step ---- */
+"inline float rl_q8_block(device const uchar *bp, device const float *x) {\n"
+"    const float d = fp16(bp); device const int8_t *q = (device const int8_t *)(bp + 2ul); float acc = 0.0f;\n"
+"    for (uint j = 0; j < 32u; ++j) acc += x[j] * (d * float(q[j]));\n"
+"    return acc;\n"
+"}\n"
+"inline float rl_q4k_block(device const uchar *bp, device const float *x) {\n"
+"    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
+"    device const uchar *scales = bp + 4u; device const uchar *qs = bp + 16u; float acc = 0.0f;\n"
+"    for (uint g = 0; g < 8u; ++g) {\n"
+"        const uchar2 sm = scale_min(g, scales);\n"
+"        const float ds = d * float(sm.x); const float dm = dmin * float(sm.y);\n"
+"        device const uchar *q = qs + (g >> 1) * 32u; const uint xb = g * 32u;\n"
+"        for (uint l = 0; l < 32u; ++l) { const uchar quant = (g & 1u) ? (q[l] >> 4) : (q[l] & 15u); acc = fma(x[xb + l], ds * float(quant) - dm, acc); }\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
+"inline float rl_q5k_block(device const uchar *bp, device const float *x) {\n"
+"    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
+"    device const uchar *scales = bp + 4u; device const uchar *qh = bp + 16u; device const uchar *ql = bp + 48u;\n"
+"    uint is = 0u; uchar u1 = 1u; uchar u2 = 2u; float acc = 0.0f;\n"
+"    for (uint j = 0; j < 256u; j += 64u) {\n"
+"        const uchar2 sm1 = scale_min(is, scales); const uchar2 sm2 = scale_min(is + 1u, scales);\n"
+"        const float d1 = d * float(sm1.x); const float m1 = dmin * float(sm1.y);\n"
+"        const float d2 = d * float(sm2.x); const float m2 = dmin * float(sm2.y);\n"
+"        for (uint l = 0; l < 32u; ++l) {\n"
+"            acc = fma(x[j + l], d1 * float((ql[l] & 15u) + ((qh[l] & u1) ? 16u : 0u)) - m1, acc);\n"
+"            acc = fma(x[j + 32u + l], d2 * float((ql[l] >> 4) + ((qh[l] & u2) ? 16u : 0u)) - m2, acc);\n"
+"        }\n"
+"        ql += 32u; is += 2u; u1 <<= 2; u2 <<= 2;\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
+"inline float rl_q6k_block(device const uchar *bp, device const float *x) {\n"
+"    device const ushort *ql0 = (device const ushort *)(bp + 0ul);\n"
+"    device const ushort *qh0 = (device const ushort *)(bp + 128ul);\n"
+"    device const int8_t *scales = (device const int8_t *)(bp + 192ul);\n"
+"    const float d_all = float(as_type<half>(*(device const ushort *)(bp + 208ul))); float acc = 0.0f;\n"
+"    for (short il0 = 0; il0 < 16; ++il0) {\n"
+"        short il = il0;\n"
+"        device const ushort *ql = ql0 + 32 * (il / 8) + 16 * ((il / 2) & 1) + 8 * (il & 1);\n"
+"        device const ushort *qh = qh0 + 16 * (il / 8) + 8 * (il & 1);\n"
+"        const float sc = float(scales[(il % 2) + 2 * (il / 2)]);\n"
+"        il = (il / 2) & 3;\n"
+"        const uint kmask1 = il > 1 ? (il > 2 ? 0xC0C0C0C0u : 0x30303030u) : (il > 0 ? 0x0C0C0C0Cu : 0x03030303u);\n"
+"        const uint kmask2 = il > 1 ? 0xF0F0F0F0u : 0x0F0F0F0Fu;\n"
+"        const float ml = d_all * sc * 32.0f; const float dl0 = d_all * sc; const float dl1 = dl0 / 256.0f;\n"
+"        const float dl2 = dl1 / 256.0f; const float dl3 = dl2 / 256.0f;\n"
+"        const uchar shr_h = il > 2 ? 2 : 0; const uchar shl_h = il > 1 ? 0 : (il > 0 ? 2 : 4); const uchar shr_l = il > 1 ? 4 : 0;\n"
+"        for (uint i = 0; i < 4u; ++i) {\n"
+"            const uint low = (uint(ql[2u*i]) | (uint(ql[2u*i + 1u]) << 16)) & kmask2;\n"
+"            const uint high = (uint(qh[2u*i]) | (uint(qh[2u*i + 1u]) << 16)) & kmask1;\n"
+"            const uint q = ((high << shl_h) >> shr_h) | (low >> shr_l);\n"
+"            const uint xb = uint(il0) * 16u + i * 4u;\n"
+"            acc += x[xb + 0u] * (dl0 * float(q & 0xFFu) - ml);\n"
+"            acc += x[xb + 1u] * (dl1 * float(q & 0xFF00u) - ml);\n"
+"            acc += x[xb + 2u] * (dl2 * float(q & 0xFF0000u) - ml);\n"
+"            acc += x[xb + 3u] * (dl3 * float(q & 0xFF000000u) - ml);\n"
+"        }\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
+"inline float rl_iq2xxs_block(device const uchar *bp, device const float *x, device const uchar *grid) {\n"
+"    const float d = fp16(bp); device const ushort *q = (device const ushort *)(bp + 2ul); float acc = 0.0f;\n"
+"    for (uint g = 0; g < 8u; ++g) {\n"
+"        const uint qi = 4u * g;\n"
+"        const uint auxg = uint(q[qi]) | (uint(q[qi + 1u]) << 16);\n"
+"        const uint auxs = uint(q[qi + 2u]) | (uint(q[qi + 3u]) << 16);\n"
+"        const float db = d * (0.5f + float(auxs >> 28)) * 0.25f;\n"
+"        for (uint l = 0; l < 4u; ++l) {\n"
+"            const uint grid_index = (auxg >> (8u * l)) & 255u;\n"
+"            const uint sign7 = (auxs >> (7u * l)) & 127u;\n"
+"            const uint sign8 = sign7 | ((popcount(sign7) & 1u) << 7);\n"
+"            device const uchar *gv = grid + grid_index * 8u;\n"
+"            const uint xb = g * 32u + l * 8u;\n"
+"            for (uint j = 0; j < 8u; ++j) { const float s = (sign8 & (1u << j)) ? -1.0f : 1.0f; acc += x[xb + j] * (db * float(gv[j]) * s); }\n"
+"        }\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
+/* generic lane-parallel row kernel body: BLOCK values per block, BYTES bytes per block, DOT(bp, xchunk) */
+#define RL_ROWS_KERNEL(NAME, BLOCK, BYTES, DOTEXPR, EXTRA_PARAM) \
+"kernel void " NAME "(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n" \
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]]" EXTRA_PARAM ",\n" \
+"    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n" \
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n" \
+"    const uint blocks = ncols / " BLOCK "u; const ulong row_bytes = ulong(blocks) * " BYTES "ul; float acc = 0.0f;\n" \
+"    if (active) { device const uchar *rp = weights + ulong(row) * row_bytes;\n" \
+"        for (uint b = lane; b < blocks; b += lanes) { device const uchar *bp = rp + ulong(b) * " BYTES "ul; device const float *xc = x + b * " BLOCK "u; acc += " DOTEXPR "; } }\n" \
+"    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n" \
+"    if (active && lane == 0u) out[row] = acc;\n" \
+"}\n"
+RL_ROWS_KERNEL("rl_rows_q8", "32", "34", "rl_q8_block(bp, xc)", "")
+RL_ROWS_KERNEL("rl_rows_q4k", "256", "144", "rl_q4k_block(bp, xc)", "")
+RL_ROWS_KERNEL("rl_rows_q5k", "256", "176", "rl_q5k_block(bp, xc)", "")
+RL_ROWS_KERNEL("rl_rows_q6k", "256", "210", "rl_q6k_block(bp, xc)", "")
+RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
 "kernel void rl_rows_f32(device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const ulong base = ulong(row) * ulong(ncols); float sum = 0.0f;\n"
-"    for (uint i = 0; i < ncols; ++i) sum = fma(weights[base + i], x[i], sum);\n"
-"    out[row] = sum;\n"
-"}\n"
-"kernel void rl_rows_q8(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const uint blocks = ncols / 32u; const ulong row_bytes = ulong(blocks) * 34ul;\n"
-"    device const uchar *rowp = weights + ulong(row) * row_bytes; float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rowp + ulong(ib) * 34ul; const float d = fp16(bp);\n"
-"        device const int8_t *q = (device const int8_t *)(bp + 2ul); const uint xb = ib * 32u;\n"
-"        for (uint j = 0; j < 32u; ++j) acc += x[xb + j] * (d * float(q[j]));\n"
-"    }\n"
-"    out[row] = acc;\n"
-"}\n"
-"kernel void rl_rows_q4k(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * 144ul;\n"
-"    device const uchar *rp = weights + ulong(row) * row_bytes; float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rp + ulong(ib) * 144ul;\n"
-"        const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
-"        device const uchar *scales = bp + 4u; device const uchar *qs = bp + 16u;\n"
-"        for (uint g = 0; g < 8u; ++g) {\n"
-"            const uchar2 sm = scale_min(g, scales);\n"
-"            const float ds = d * float(sm.x); const float dm = dmin * float(sm.y);\n"
-"            device const uchar *q = qs + (g >> 1) * 32u; const uint xb = ib * 256u + g * 32u;\n"
-"            for (uint l = 0; l < 32u; ++l) {\n"
-"                const uchar quant = (g & 1u) ? (q[l] >> 4) : (q[l] & 15u);\n"
-"                acc = fma(x[xb + l], ds * float(quant) - dm, acc);\n"
-"            }\n"
-"        }\n"
-"    }\n"
-"    out[row] = acc;\n"
-"}\n"
-"kernel void rl_rows_q5k(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * 176ul;\n"
-"    device const uchar *rp = weights + ulong(row) * row_bytes; float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rp + ulong(ib) * 176ul;\n"
-"        const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
-"        device const uchar *scales = bp + 4u; device const uchar *qh = bp + 16u; device const uchar *ql = bp + 48u;\n"
-"        uint is = 0u; uchar u1 = 1u; uchar u2 = 2u;\n"
-"        for (uint j = 0; j < 256u; j += 64u) {\n"
-"            const uchar2 sm1 = scale_min(is, scales); const uchar2 sm2 = scale_min(is + 1u, scales);\n"
-"            const float d1 = d * float(sm1.x); const float m1 = dmin * float(sm1.y);\n"
-"            const float d2 = d * float(sm2.x); const float m2 = dmin * float(sm2.y);\n"
-"            const uint xb = ib * 256u + j;\n"
-"            for (uint l = 0; l < 32u; ++l) {\n"
-"                acc = fma(x[xb + l], d1 * float((ql[l] & 15u) + ((qh[l] & u1) ? 16u : 0u)) - m1, acc);\n"
-"                acc = fma(x[xb + 32u + l], d2 * float((ql[l] >> 4) + ((qh[l] & u2) ? 16u : 0u)) - m2, acc);\n"
-"            }\n"
-"            ql += 32u; is += 2u; u1 <<= 2; u2 <<= 2;\n"
-"        }\n"
-"    }\n"
-"    out[row] = acc;\n"
-"}\n"
-"kernel void rl_rows_q6k(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * 210ul;\n"
-"    device const uchar *rowp = weights + ulong(row) * row_bytes; float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rowp + ulong(ib) * 210ul;\n"
-"        device const ushort *ql0 = (device const ushort *)(bp + 0ul);\n"
-"        device const ushort *qh0 = (device const ushort *)(bp + 128ul);\n"
-"        device const int8_t *scales = (device const int8_t *)(bp + 192ul);\n"
-"        const float d_all = float(as_type<half>(*(device const ushort *)(bp + 208ul)));\n"
-"        for (short il0 = 0; il0 < 16; ++il0) {\n"
-"            short il = il0;\n"
-"            device const ushort *ql = ql0 + 32 * (il / 8) + 16 * ((il / 2) & 1) + 8 * (il & 1);\n"
-"            device const ushort *qh = qh0 + 16 * (il / 8) + 8 * (il & 1);\n"
-"            const float sc = float(scales[(il % 2) + 2 * (il / 2)]);\n"
-"            il = (il / 2) & 3;\n"
-"            const uint kmask1 = il > 1 ? (il > 2 ? 0xC0C0C0C0u : 0x30303030u) : (il > 0 ? 0x0C0C0C0Cu : 0x03030303u);\n"
-"            const uint kmask2 = il > 1 ? 0xF0F0F0F0u : 0x0F0F0F0Fu;\n"
-"            const float ml = d_all * sc * 32.0f; const float dl0 = d_all * sc; const float dl1 = dl0 / 256.0f;\n"
-"            const float dl2 = dl1 / 256.0f; const float dl3 = dl2 / 256.0f;\n"
-"            const uchar shr_h = il > 2 ? 2 : 0; const uchar shl_h = il > 1 ? 0 : (il > 0 ? 2 : 4); const uchar shr_l = il > 1 ? 4 : 0;\n"
-"            for (uint i = 0; i < 4u; ++i) {\n"
-"                const uint low = (uint(ql[2u*i]) | (uint(ql[2u*i + 1u]) << 16)) & kmask2;\n"
-"                const uint high = (uint(qh[2u*i]) | (uint(qh[2u*i + 1u]) << 16)) & kmask1;\n"
-"                const uint q = ((high << shl_h) >> shr_h) | (low >> shr_l);\n"
-"                const uint xb = ib * 256u + uint(il0) * 16u + i * 4u;\n"
-"                acc += x[xb + 0u] * (dl0 * float(q & 0xFFu) - ml);\n"
-"                acc += x[xb + 1u] * (dl1 * float(q & 0xFF00u) - ml);\n"
-"                acc += x[xb + 2u] * (dl2 * float(q & 0xFF0000u) - ml);\n"
-"                acc += x[xb + 3u] * (dl3 * float(q & 0xFF000000u) - ml);\n"
-"            }\n"
-"        }\n"
-"    }\n"
-"    out[row] = acc;\n"
-"}\n"
-"kernel void rl_rows_iq2xxs(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
-"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], device const uchar *grid [[buffer(5)]], uint row [[thread_position_in_grid]]) {\n"
-"    if (row >= nrows) return; const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * 66ul;\n"
-"    device const uchar *rowp = weights + ulong(row) * row_bytes; float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rowp + ulong(ib) * 66ul;\n"
-"        const float d = fp16(bp); device const ushort *q = (device const ushort *)(bp + 2ul);\n"
-"        for (uint g = 0; g < 8u; ++g) {\n"
-"            const uint qi = 4u * g;\n"
-"            const uint auxg = uint(q[qi]) | (uint(q[qi + 1u]) << 16);\n"
-"            const uint auxs = uint(q[qi + 2u]) | (uint(q[qi + 3u]) << 16);\n"
-"            const float db = d * (0.5f + float(auxs >> 28)) * 0.25f;\n"
-"            for (uint l = 0; l < 4u; ++l) {\n"
-"                const uint grid_index = (auxg >> (8u * l)) & 255u;\n"
-"                const uint sign7 = (auxs >> (7u * l)) & 127u;\n"
-"                const uint sign8 = sign7 | ((popcount(sign7) & 1u) << 7);\n"
-"                device const uchar *gv = grid + grid_index * 8u;\n"
-"                const uint xb = ib * 256u + g * 32u + l * 8u;\n"
-"                for (uint j = 0; j < 8u; ++j) { const float s = (sign8 & (1u << j)) ? -1.0f : 1.0f; acc += x[xb + j] * (db * float(gv[j]) * s); }\n"
-"            }\n"
-"        }\n"
-"    }\n"
-"    out[row] = acc;\n"
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]],\n"
+"    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows; float acc = 0.0f;\n"
+"    if (active) { device const float *rp = weights + ulong(row) * ulong(ncols); for (uint i = lane; i < ncols; i += lanes) acc = fma(rp[i], x[i], acc); }\n"
+"    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
+"    if (active && lane == 0u) out[row] = acc;\n"
 "}\n"
 /* ---- Gated DeltaNet (validated dev15 kernels, kv_ratio pairing) ---- */
 "kernel void dn_ba_params(device const float *ba [[buffer(0)]], device const float *dt [[buffer(1)]], device const float *avec [[buffer(2)]],\n"
@@ -317,8 +308,12 @@ static NSString * const kEngineSource = @
 "}\n"
 /* ---- shared expert (validated dev14 kernels) ---- */
 "kernel void sh_scalar_gate(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
-"    constant uint &hidden [[buffer(3)]], uint gid [[thread_position_in_grid]]) {\n"
-"    if (gid != 0u) return; float acc = 0.0f; for (uint i = 0; i < hidden; ++i) acc = fma(w[i], x[i], acc); scalar[0] = 1.0f / (1.0f + exp(-acc));\n"
+"    constant uint &hidden [[buffer(3)]], uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]],\n"
+"    ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float partial[8]; float acc = 0.0f;\n"
+"    for (uint i = tid; i < hidden; i += 256u) acc = fma(w[i], x[i], acc);\n"
+"    acc = simd_sum(acc); if (simd_lane == 0) partial[simd_id] = acc; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (tid == 0u) { float total = 0.0f; for (uint k = 0; k < 8u; ++k) total += partial[k]; scalar[0] = 1.0f / (1.0f + exp(-total)); }\n"
 "}\n"
 "kernel void sh_silu_mul(device const float *gate [[buffer(0)]], device const float *up [[buffer(1)]], device float *act [[buffer(2)]],\n"
 "    constant uint &count [[buffer(3)]], uint gid [[thread_position_in_grid]]) {\n"
@@ -428,9 +423,20 @@ static void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState>
     [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg ? tg : 1, 1, 1)];
 }
 
+static uint32_t lanes_for(uint32_t type, uint32_t ncols) {
+    uint32_t blocks;
+    if (type == 0u) blocks = ncols / 64u;          /* F32: strided lanes */
+    else if (type == 8u) blocks = ncols / 32u;
+    else blocks = ncols / 256u;
+    uint32_t lanes = 1u;
+    while (lanes < blocks && lanes < 32u) lanes <<= 1;
+    return lanes;
+}
+
 /* out[row] = W[row] . x for all rows of the weight */
 static void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out) {
     id<MTLComputePipelineState> p = rows_pipe(m, w->type);
+    const uint32_t lanes = lanes_for(w->type, w->cols);
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:p];
     [enc setBuffer:w->buf offset:w->off atIndex:0];
@@ -438,8 +444,10 @@ static void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight 
     [enc setBuffer:x offset:0 atIndex:2];
     [enc setBuffer:out offset:0 atIndex:3];
     [enc setBytes:&w->rows length:sizeof(w->rows) atIndex:4];
-    if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:5];
-    enc_1d(enc, p, w->rows, 64u);
+    [enc setBytes:&lanes length:sizeof(lanes) atIndex:5];
+    if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:6];
+    const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
+    [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
 }
 
@@ -451,7 +459,7 @@ static void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x
     [enc setBuffer:y offset:0 atIndex:2];
     [enc setBytes:&n length:sizeof(n) atIndex:3];
     [enc setBytes:&eps length:sizeof(eps) atIndex:4];
-    [enc dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     [enc endEncoding];
 }
 
@@ -772,7 +780,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setBuffer:w->post_norm.buf offset:w->post_norm.off atIndex:2];
                 [enc setBuffer:m->resid offset:0 atIndex:3]; [enc setBuffer:m->ffn_in offset:0 atIndex:4];
                 [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
-                [enc dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; [enc endEncoding];
+                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
             enc_rows(m, cb, &w->router, m->ffn_in, m->router_logits);
             if (!commit_wait(cb, "layer attention/router", &stats->gpu_ms, error, cap)) goto done;
@@ -804,7 +812,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc setComputePipelineState:m->p_sh_scalar];
                 [enc setBuffer:w->sh_gate_inp.buf offset:w->sh_gate_inp.off atIndex:0]; [enc setBuffer:m->ffn_in offset:0 atIndex:1];
                 [enc setBuffer:m->scalar offset:0 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
-                [enc dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; [enc endEncoding];
+                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
             enc_rows(m, cb, &w->sh_gate, m->ffn_in, m->sh_gate);
             enc_rows(m, cb, &w->sh_up, m->ffn_in, m->sh_up);
