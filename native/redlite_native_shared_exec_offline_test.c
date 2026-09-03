@@ -29,6 +29,20 @@ int main(void) {
         return 1;
     }
 
+    /* Real Q6_K blocks can use FP16 subnormal d values. The smallest positive
+     * half subnormal is 2^-24, so 256 unit quants must sum to 2^-16. This
+     * catches exponent-normalization mistakes that the f16=1.0 case cannot. */
+    q6[208] = 0x01; q6[209] = 0x00; /* f16 smallest positive subnormal = 2^-24 */
+    double q6_subnormal_dot = 0.0;
+    const double q6_subnormal_expected = ldexp(1.0, -16);
+    if (!rl_native_shared_quant_row_dot(q6, sizeof(q6), 14u, x, 256u, grid, sizeof(grid),
+            &q6_subnormal_dot, error, sizeof(error)) ||
+        fabs(q6_subnormal_dot - q6_subnormal_expected) > 1e-12) {
+        fprintf(stderr, "Q6_K FP16-subnormal decoder failed: dot=%.12g expected=%.12g error=%s\n",
+            q6_subnormal_dot, q6_subnormal_expected, error);
+        return 1;
+    }
+
     uint8_t iq2[66];
     memset(iq2, 0, sizeof(iq2));
     iq2[0] = 0x00; iq2[1] = 0x3c; /* f16 d=1, grid 0 magnitude 8, scale 0 -> value +1 */
@@ -41,6 +55,7 @@ int main(void) {
     }
 
     printf("shared Q6_K decoder : OK\n");
+    printf("shared Q6_K subnorm.: OK\n");
     printf("shared IQ2_XXS dec. : OK\n");
     printf("shared row sizes    : Q6_K=210 IQ2_XXS=66 / 256 values\n");
     return 0;
