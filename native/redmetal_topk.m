@@ -13,6 +13,23 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+/*
+ * Resident top-k routed-expert pool.
+ *
+ * dev18 execution model: every selected expert of a layer is executed by three
+ * batched dispatches (gate+up+SiLU, down, weighted sum) instead of ten
+ * sequential per-expert encoders. Each matrix row is reduced by a group of
+ * SIMD lanes (one 256-value quant block per lane, simd_shuffle_xor tree). The
+ * per-block IQ2_XS / IQ1_M decode arithmetic is unchanged from the
+ * field-validated dev10/dev11 kernels; only the parallel decomposition and the
+ * float summation order differ (validated by routed/FFN parity and the
+ * engine's CPU-oracle and pinned-llama.cpp comparisons).
+ *
+ * Slot pointers are passed through a Metal 3 argument buffer filled with GPU
+ * virtual addresses (buffer.gpuAddress + slot offset); the referenced slabs
+ * are made resident with useResource.
+ */
+
 #define REDMETAL_TOPK_ABI_VERSION 1u
 #define GGML_TYPE_IQ2_XS 17u
 #define GGML_TYPE_IQ1_M 29u
@@ -82,116 +99,163 @@ static NSString * const kTopKSource = @
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "\n"
+"struct redmetal_topk_slots { device const uchar *slot[64]; };\n"
+"\n"
 "inline uint redlite_sign8(uint sign7) {\n"
 "    sign7 &= 127u;\n"
 "    return sign7 | ((popcount(sign7) & 1u) << 7);\n"
 "}\n"
 "\n"
-"kernel void redmetal_topk_iq2_xs_rows(\n"
-"    device const uchar *slot [[buffer(0)]],\n"
-"    constant ulong &matrix_offset [[buffer(1)]],\n"
-"    constant uint &ncols [[buffer(2)]],\n"
-"    constant uint &row_start [[buffer(3)]],\n"
-"    device const float *x [[buffer(4)]],\n"
-"    device float *out [[buffer(5)]],\n"
-"    device const char *grid [[buffer(6)]],\n"
-"    uint gid [[thread_position_in_grid]]) {\n"
-"    const uint row = row_start + gid;\n"
-"    const uint blocks = ncols / 256u;\n"
-"    const ulong row_bytes = ulong(blocks) * 74ul;\n"
-"    device const uchar *rowp = slot + matrix_offset + ulong(row) * row_bytes;\n"
+/* one IQ2_XS 256-value block dot (validated dev10 arithmetic) */
+"inline float redmetal_topk_iq2_xs_block(device const uchar *bp, device const float *x, device const char *grid) {\n"
+"    const ushort dbits = *(device const ushort *)bp;\n"
+"    const float d = float(as_type<half>(dbits));\n"
+"    device const ushort *qs = (device const ushort *)(bp + 2);\n"
+"    device const uchar *scales = bp + 66;\n"
 "    float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rowp + ulong(ib) * 74ul;\n"
-"        const ushort dbits = *(device const ushort *)bp;\n"
-"        const float d = float(as_type<half>(dbits));\n"
-"        device const ushort *qs = (device const ushort *)(bp + 2);\n"
-"        device const uchar *scales = bp + 66;\n"
-"        for (uint g = 0; g < 16u; ++g) {\n"
-"            const uint scale = (uint(scales[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
-"            const float db = d * (0.5f + float(scale)) * 0.25f;\n"
-"            for (uint part = 0; part < 2u; ++part) {\n"
-"                const uint q = uint(qs[2u * g + part]);\n"
-"                const uint grid_index = q & 511u;\n"
-"                const uint signs = redlite_sign8(q >> 9);\n"
-"                device const char *gv = grid + grid_index * 8u;\n"
-"                const uint xbase = ib * 256u + g * 16u + part * 8u;\n"
-"                for (uint j = 0; j < 8u; ++j) {\n"
-"                    const float sign = (signs & (1u << j)) ? -1.0f : 1.0f;\n"
-"                    acc += x[xbase + j] * (db * float(gv[j]) * sign);\n"
-"                }\n"
-"            }\n"
-"        }\n"
-"    }\n"
-"    out[gid] = acc;\n"
-"}\n"
-"\n"
-"kernel void redmetal_topk_iq1_m_rows(\n"
-"    device const uchar *slot [[buffer(0)]],\n"
-"    constant ulong &matrix_offset [[buffer(1)]],\n"
-"    constant uint &ncols [[buffer(2)]],\n"
-"    constant uint &row_start [[buffer(3)]],\n"
-"    device const float *x [[buffer(4)]],\n"
-"    device float *out [[buffer(5)]],\n"
-"    device const char *grid [[buffer(6)]],\n"
-"    uint gid [[thread_position_in_grid]]) {\n"
-"    const uint row = row_start + gid;\n"
-"    const uint blocks = ncols / 256u;\n"
-"    const ulong row_bytes = ulong(blocks) * 56ul;\n"
-"    device const uchar *rowp = slot + matrix_offset + ulong(row) * row_bytes;\n"
-"    float acc = 0.0f;\n"
-"    for (uint ib = 0; ib < blocks; ++ib) {\n"
-"        device const uchar *bp = rowp + ulong(ib) * 56ul;\n"
-"        device const uchar *qs = bp;\n"
-"        device const uchar *qh = bp + 32;\n"
-"        device const ushort *sc = (device const ushort *)(bp + 48);\n"
-"        const ushort dbits = ushort(sc[0] >> 12) | ushort((sc[1] >> 8) & 0x00f0u) |\n"
-"                             ushort((sc[2] >> 4) & 0x0f00u) | ushort(sc[3] & 0xf000u);\n"
-"        const float d = float(as_type<half>(dbits));\n"
-"        for (uint g = 0; g < 32u; ++g) {\n"
-"            const uint nibble = (uint(qh[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
-"            const uint grid_index = uint(qs[g]) | ((nibble & 7u) << 8);\n"
-"            const float delta = (nibble & 8u) ? -0.125f : 0.125f;\n"
-"            const uint scale_index = g >> 1;\n"
-"            const uint scale = (uint(sc[scale_index >> 2]) >> (3u * (scale_index & 3u))) & 7u;\n"
-"            const float dl = d * float(2u * scale + 1u);\n"
+"    for (uint g = 0; g < 16u; ++g) {\n"
+"        const uint scale = (uint(scales[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
+"        const float db = d * (0.5f + float(scale)) * 0.25f;\n"
+"        for (uint part = 0; part < 2u; ++part) {\n"
+"            const uint q = uint(qs[2u * g + part]);\n"
+"            const uint grid_index = q & 511u;\n"
+"            const uint signs = redlite_sign8(q >> 9);\n"
 "            device const char *gv = grid + grid_index * 8u;\n"
-"            const uint xbase = ib * 256u + g * 8u;\n"
+"            const uint xbase = g * 16u + part * 8u;\n"
 "            for (uint j = 0; j < 8u; ++j) {\n"
-"                acc += x[xbase + j] * (dl * (float(gv[j]) + delta));\n"
+"                const float sign = (signs & (1u << j)) ? -1.0f : 1.0f;\n"
+"                acc += x[xbase + j] * (db * float(gv[j]) * sign);\n"
 "            }\n"
 "        }\n"
 "    }\n"
-"    out[gid] = acc;\n"
+"    return acc;\n"
 "}\n"
 "\n"
-"kernel void redmetal_topk_silu_mul(\n"
-"    device const float *gate [[buffer(0)]],\n"
-"    device const float *up [[buffer(1)]],\n"
+/* one IQ1_M 256-value block dot (validated dev10 arithmetic) */
+"inline float redmetal_topk_iq1_m_block(device const uchar *bp, device const float *x, device const char *grid) {\n"
+"    device const uchar *qs = bp;\n"
+"    device const uchar *qh = bp + 32;\n"
+"    device const ushort *sc = (device const ushort *)(bp + 48);\n"
+"    const ushort dbits = ushort(sc[0] >> 12) | ushort((sc[1] >> 8) & 0x00f0u) |\n"
+"                         ushort((sc[2] >> 4) & 0x0f00u) | ushort(sc[3] & 0xf000u);\n"
+"    const float d = float(as_type<half>(dbits));\n"
+"    float acc = 0.0f;\n"
+"    for (uint g = 0; g < 32u; ++g) {\n"
+"        const uint nibble = (uint(qh[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
+"        const uint grid_index = uint(qs[g]) | ((nibble & 7u) << 8);\n"
+"        const float delta = (nibble & 8u) ? -0.125f : 0.125f;\n"
+"        const uint scale_index = g >> 1;\n"
+"        const uint scale = (uint(sc[scale_index >> 2]) >> (3u * (scale_index & 3u))) & 7u;\n"
+"        const float dl = d * float(2u * scale + 1u);\n"
+"        device const char *gv = grid + grid_index * 8u;\n"
+"        const uint xbase = g * 8u;\n"
+"        for (uint j = 0; j < 8u; ++j) {\n"
+"            acc += x[xbase + j] * (dl * (float(gv[j]) + delta));\n"
+"        }\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
+"\n"
+"inline float redmetal_topk_block(uint type, device const uchar *bp, device const float *x, device const char *grid) {\n"
+"    return type == 17u ? redmetal_topk_iq2_xs_block(bp, x, grid) : redmetal_topk_iq1_m_block(bp, x, grid);\n"
+"}\n"
+"\n"
+/* act[e][row] = SiLU(gate_e[row].x) * up_e[row].x for every selected expert; lanes_per_row lanes per row */
+"kernel void redmetal_topk_gateup_lanes(\n"
+"    device const redmetal_topk_slots &slots [[buffer(0)]],\n"
+"    constant uint &ncols [[buffer(1)]],\n"
+"    constant uint &rows [[buffer(2)]],\n"
+"    constant ulong &up_offset [[buffer(3)]],\n"
+"    device const float *x [[buffer(4)]],\n"
+"    device float *act [[buffer(5)]],\n"
+"    device const char *grid [[buffer(6)]],\n"
+"    constant uint &top_k [[buffer(7)]],\n"
+"    constant uint &type [[buffer(8)]],\n"
+"    constant uint &lanes_per_row [[buffer(9)]],\n"
+"    uint2 tid [[thread_position_in_grid]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint expert = tid.y;\n"
+"    const uint row = tid.x / lanes_per_row;\n"
+"    const uint lane = uint(simd_lane) % lanes_per_row;\n"
+"    const bool active = expert < top_k && row < rows;\n"
+"    const uint blocks = ncols / 256u;\n"
+"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    float g = 0.0f, u = 0.0f;\n"
+"    if (active) {\n"
+"        device const uchar *slot = slots.slot[expert];\n"
+"        device const uchar *grow = slot + ulong(row) * row_bytes;\n"
+"        device const uchar *urow = slot + up_offset + ulong(row) * row_bytes;\n"
+"        for (uint b = lane; b < blocks; b += lanes_per_row) {\n"
+"            g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, x + b * 256u, grid);\n"
+"            u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, x + b * 256u, grid);\n"
+"        }\n"
+"    }\n"
+"    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
+"    if (active && lane == 0u) act[expert * rows + row] = (g / (1.0f + exp(-g))) * u;\n"
+"}\n"
+"\n"
+/* tmp[e][r] = down_e[row_start + r] . act[e] */
+"kernel void redmetal_topk_down_lanes(\n"
+"    device const redmetal_topk_slots &slots [[buffer(0)]],\n"
+"    constant uint &ncols [[buffer(1)]],\n"
+"    constant uint &row_start [[buffer(2)]],\n"
+"    constant uint &row_count [[buffer(3)]],\n"
+"    constant ulong &down_offset [[buffer(4)]],\n"
+"    device const float *act [[buffer(5)]],\n"
+"    device float *tmp [[buffer(6)]],\n"
+"    device const char *grid [[buffer(7)]],\n"
+"    constant uint &top_k [[buffer(8)]],\n"
+"    constant uint &type [[buffer(9)]],\n"
+"    constant uint &lanes_per_row [[buffer(10)]],\n"
+"    uint2 tid [[thread_position_in_grid]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint expert = tid.y;\n"
+"    const uint r = tid.x / lanes_per_row;\n"
+"    const uint lane = uint(simd_lane) % lanes_per_row;\n"
+"    const bool active = expert < top_k && r < row_count;\n"
+"    const uint blocks = ncols / 256u;\n"
+"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    float acc = 0.0f;\n"
+"    if (active) {\n"
+"        device const uchar *drow = slots.slot[expert] + down_offset + ulong(row_start + r) * row_bytes;\n"
+"        device const float *xe = act + expert * ncols;\n"
+"        for (uint b = lane; b < blocks; b += lanes_per_row) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid);\n"
+"    }\n"
+"    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
+"    if (active && lane == 0u) tmp[expert * row_count + r] = acc;\n"
+"}\n"
+"\n"
+/* out[r] = sum_e weight[e] * tmp[e][r], experts accumulated in selection order */
+"kernel void redmetal_topk_weighted_sum(\n"
+"    device const float *tmp [[buffer(0)]],\n"
+"    device const float *weights [[buffer(1)]],\n"
 "    device float *out [[buffer(2)]],\n"
+"    constant uint &row_count [[buffer(3)]],\n"
+"    constant uint &top_k [[buffer(4)]],\n"
 "    uint gid [[thread_position_in_grid]]) {\n"
-"    const float g = gate[gid];\n"
-"    out[gid] = (g / (1.0f + exp(-g))) * up[gid];\n"
-"}\n"
-"\n"
-"kernel void redmetal_topk_weighted_add(\n"
-"    device const float *src [[buffer(0)]],\n"
-"    device float *dst [[buffer(1)]],\n"
-"    constant float &weight [[buffer(2)]],\n"
-"    uint gid [[thread_position_in_grid]]) {\n"
-"    dst[gid] += weight * src[gid];\n"
+"    if (gid >= row_count) return;\n"
+"    float acc = 0.0f;\n"
+"    for (uint e = 0; e < top_k; ++e) acc += weights[e] * tmp[e * row_count + gid];\n"
+"    out[gid] = acc;\n"
 "}\n";
 
 @interface RMTopKPool : NSObject {
 @public
     id<MTLDevice> _device;
     id<MTLCommandQueue> _queue;
-    id<MTLComputePipelineState> _iq2Pipeline;
-    id<MTLComputePipelineState> _iq1Pipeline;
-    id<MTLComputePipelineState> _siluPipeline;
-    id<MTLComputePipelineState> _weightedPipeline;
+    id<MTLComputePipelineState> _gateupPipeline;
+    id<MTLComputePipelineState> _downPipeline;
+    id<MTLComputePipelineState> _sumPipeline;
     id<MTLBuffer> _iq2Grid;
     id<MTLBuffer> _iq1Grid;
+    id<MTLBuffer> _slotTable;
+    id<MTLBuffer> _weightBuffer;
+    id<MTLBuffer> _inBuffer;
+    id<MTLBuffer> _actBuffer;
+    id<MTLBuffer> _tmpBuffer;
+    id<MTLBuffer> _outBuffer;
     NSMutableArray<id<MTLBuffer>> *_slabs;
     int _fd;
     uint64_t _fileSize;
@@ -215,6 +279,7 @@ static NSString * const kTopKSource = @
                       iq1GridCount:(uint32_t)iq1GridCount;
 - (id<MTLBuffer>)bufferForSlot:(uint32_t)slot offset:(NSUInteger *)offset;
 - (void)markSlot:(uint32_t)slot delta:(int)delta;
+- (int)ensureScratchHidden:(uint32_t)hidden ffn:(uint32_t)ffn;
 @end
 
 @implementation RMTopKPool
@@ -264,46 +329,37 @@ static NSString * const kTopKSource = @
             libraryError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
-    id<MTLFunction> iq2 = [library newFunctionWithName:@"redmetal_topk_iq2_xs_rows"];
-    id<MTLFunction> iq1 = [library newFunctionWithName:@"redmetal_topk_iq1_m_rows"];
-    id<MTLFunction> silu = [library newFunctionWithName:@"redmetal_topk_silu_mul"];
-    id<MTLFunction> weighted = [library newFunctionWithName:@"redmetal_topk_weighted_add"];
-    if (!iq2 || !iq1 || !silu || !weighted) {
+    id<MTLFunction> gateup = [library newFunctionWithName:@"redmetal_topk_gateup_lanes"];
+    id<MTLFunction> down = [library newFunctionWithName:@"redmetal_topk_down_lanes"];
+    id<MTLFunction> sum = [library newFunctionWithName:@"redmetal_topk_weighted_sum"];
+    if (!gateup || !down || !sum) {
         topk_set_error("one or more top-k Metal functions were not found");
         return nil;
     }
     NSError *pipelineError = nil;
-    _iq2Pipeline = [_device newComputePipelineStateWithFunction:iq2 error:&pipelineError];
-    if (!_iq2Pipeline) {
-        topk_set_error("failed to create IQ2_XS top-k pipeline: %s",
-            pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
+    _gateupPipeline = [_device newComputePipelineStateWithFunction:gateup error:&pipelineError];
+    if (!_gateupPipeline) {
+        topk_set_error("failed to create top-k gate/up pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
     pipelineError = nil;
-    _iq1Pipeline = [_device newComputePipelineStateWithFunction:iq1 error:&pipelineError];
-    if (!_iq1Pipeline) {
-        topk_set_error("failed to create IQ1_M top-k pipeline: %s",
-            pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
+    _downPipeline = [_device newComputePipelineStateWithFunction:down error:&pipelineError];
+    if (!_downPipeline) {
+        topk_set_error("failed to create top-k down pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
     pipelineError = nil;
-    _siluPipeline = [_device newComputePipelineStateWithFunction:silu error:&pipelineError];
-    if (!_siluPipeline) {
-        topk_set_error("failed to create top-k SiLU pipeline: %s",
-            pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
-        return nil;
-    }
-    pipelineError = nil;
-    _weightedPipeline = [_device newComputePipelineStateWithFunction:weighted error:&pipelineError];
-    if (!_weightedPipeline) {
-        topk_set_error("failed to create top-k weighted accumulation pipeline: %s",
-            pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
+    _sumPipeline = [_device newComputePipelineStateWithFunction:sum error:&pipelineError];
+    if (!_sumPipeline) {
+        topk_set_error("failed to create top-k weighted sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
     _iq2Grid = [_device newBufferWithBytes:iq2Grid length:iq2GridCount options:MTLResourceStorageModeShared];
     _iq1Grid = [_device newBufferWithBytes:iq1Grid length:iq1GridCount options:MTLResourceStorageModeShared];
-    if (!_iq2Grid || !_iq1Grid) {
-        topk_set_error("failed to allocate top-k quant grid buffers");
+    _slotTable = [_device newBufferWithLength:REDMETAL_TOPK_MAX * sizeof(uint64_t) options:MTLResourceStorageModeShared];
+    _weightBuffer = [_device newBufferWithLength:REDMETAL_TOPK_MAX * sizeof(float) options:MTLResourceStorageModeShared];
+    if (!_iq2Grid || !_iq1Grid || !_slotTable || !_weightBuffer) {
+        topk_set_error("failed to allocate top-k quant grid / table buffers");
         return nil;
     }
 
@@ -335,6 +391,21 @@ static NSString * const kTopKSource = @
     if (_fd >= 0) close(_fd);
     free(_slotInflight);
     _slotInflight = NULL;
+}
+
+- (int)ensureScratchHidden:(uint32_t)hidden ffn:(uint32_t)ffn {
+    const NSUInteger inBytes = (NSUInteger)hidden * sizeof(float);
+    const NSUInteger actBytes = (NSUInteger)REDMETAL_TOPK_MAX * ffn * sizeof(float);
+    const NSUInteger tmpBytes = (NSUInteger)REDMETAL_TOPK_MAX * hidden * sizeof(float);
+    if (!_inBuffer || _inBuffer.length < inBytes) _inBuffer = [_device newBufferWithLength:inBytes options:MTLResourceStorageModeShared];
+    if (!_actBuffer || _actBuffer.length < actBytes) _actBuffer = [_device newBufferWithLength:actBytes options:MTLResourceStorageModeShared];
+    if (!_tmpBuffer || _tmpBuffer.length < tmpBytes) _tmpBuffer = [_device newBufferWithLength:tmpBytes options:MTLResourceStorageModeShared];
+    if (!_outBuffer || _outBuffer.length < inBytes) _outBuffer = [_device newBufferWithLength:inBytes options:MTLResourceStorageModeShared];
+    if (!_inBuffer || !_actBuffer || !_tmpBuffer || !_outBuffer) {
+        topk_set_error("failed to allocate top-k activation buffers");
+        return 0;
+    }
+    return 1;
 }
 
 - (id<MTLBuffer>)bufferForSlot:(uint32_t)slot offset:(NSUInteger *)offset {
@@ -400,48 +471,22 @@ static RMTopKPool *topk_obj(redmetal_topk_pool_t handle) {
     return (__bridge RMTopKPool *)handle;
 }
 
-static id<MTLComputePipelineState> topk_pipeline_for_type(RMTopKPool *p, uint32_t type) {
-    if (type == GGML_TYPE_IQ2_XS) return p->_iq2Pipeline;
-    if (type == GGML_TYPE_IQ1_M) return p->_iq1Pipeline;
+static id<MTLBuffer> topk_grid_for_type(RMTopKPool *p, uint32_t type) {
+    if (type == GGML_TYPE_IQ2_XS) return p->_iq2Grid;
+    if (type == GGML_TYPE_IQ1_M) return p->_iq1Grid;
     topk_set_error("unsupported top-k GGML type %u", type);
     return nil;
 }
 
-static id<MTLBuffer> topk_grid_for_type(RMTopKPool *p, uint32_t type) {
-    if (type == GGML_TYPE_IQ2_XS) return p->_iq2Grid;
-    if (type == GGML_TYPE_IQ1_M) return p->_iq1Grid;
-    return nil;
-}
-
-static int encode_quant_rows(
-        id<MTLComputeCommandEncoder> enc,
-        id<MTLComputePipelineState> pipeline,
-        id<MTLBuffer> slab,
-        NSUInteger slotBase,
-        uint64_t matrixOffset,
-        uint32_t ncols,
-        uint32_t rowStart,
-        uint32_t rowCount,
-        id<MTLBuffer> input,
-        id<MTLBuffer> output,
-        id<MTLBuffer> grid) {
-    if (!enc || !pipeline || !slab || !input || !output || !grid || !rowCount) return 0;
-    [enc setComputePipelineState:pipeline];
-    [enc setBuffer:slab offset:slotBase atIndex:0];
-    [enc setBytes:&matrixOffset length:sizeof(matrixOffset) atIndex:1];
-    [enc setBytes:&ncols length:sizeof(ncols) atIndex:2];
-    [enc setBytes:&rowStart length:sizeof(rowStart) atIndex:3];
-    [enc setBuffer:input offset:0 atIndex:4];
-    [enc setBuffer:output offset:0 atIndex:5];
-    [enc setBuffer:grid offset:0 atIndex:6];
-    const NSUInteger tg = MIN((NSUInteger)rowCount, (NSUInteger)64u);
-    [enc dispatchThreads:MTLSizeMake(rowCount, 1, 1)
-      threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
-    return 1;
-}
-
 static void mark_slots(RMTopKPool *p, const uint32_t *slot_ids, uint32_t top_k, int delta) {
     for (uint32_t i = 0; i < top_k; ++i) [p markSlot:slot_ids[i] delta:delta];
+}
+
+/* lanes per row: as many SIMD lanes as 256-value blocks, capped at 32 (power of two) */
+static uint32_t lanes_for_blocks(uint32_t blocks) {
+    uint32_t lanes = 1u;
+    while (lanes < blocks && lanes < 32u) lanes <<= 1;
+    return lanes;
 }
 
 uint32_t redmetal_topk_abi_version(void) { return REDMETAL_TOPK_ABI_VERSION; }
@@ -617,9 +662,8 @@ int redmetal_topk_pool_execute(
             topk_set_error("top_k=%u must be in [1,%u]", top_k, REDMETAL_TOPK_MAX);
             return 0;
         }
-        id<MTLComputePipelineState> quantPipeline = topk_pipeline_for_type(p, ggml_type);
         id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
-        if (!quantPipeline || !grid) return 0;
+        if (!grid) return 0;
         if (!hidden_size || hidden_size % QK_IQ || !ffn_size || ffn_size % QK_IQ ||
             input_count != hidden_size || !output_row_count || output_row_start >= hidden_size ||
             output_row_count > hidden_size - output_row_start || output_count < output_row_count) {
@@ -657,87 +701,88 @@ int redmetal_topk_pool_execute(
                 return 0;
             }
         }
+        if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
 
-        id<MTLBuffer> inBuffer = [p->_device newBufferWithBytes:input
-                                                        length:(NSUInteger)hidden_size * sizeof(float)
-                                                       options:MTLResourceStorageModeShared];
-        id<MTLBuffer> gateBuffer = [p->_device newBufferWithLength:(NSUInteger)ffn_size * sizeof(float)
-                                                            options:MTLResourceStorageModeShared];
-        id<MTLBuffer> upBuffer = [p->_device newBufferWithLength:(NSUInteger)ffn_size * sizeof(float)
-                                                          options:MTLResourceStorageModeShared];
-        id<MTLBuffer> actBuffer = [p->_device newBufferWithLength:(NSUInteger)ffn_size * sizeof(float)
-                                                           options:MTLResourceStorageModeShared];
-        id<MTLBuffer> tmpOut = [p->_device newBufferWithLength:(NSUInteger)output_row_count * sizeof(float)
-                                                        options:MTLResourceStorageModeShared];
-        id<MTLBuffer> accum = [p->_device newBufferWithLength:(NSUInteger)output_row_count * sizeof(float)
-                                                       options:MTLResourceStorageModeShared];
-        if (!inBuffer || !gateBuffer || !upBuffer || !actBuffer || !tmpOut || !accum) {
-            topk_set_error("failed to allocate top-k activation buffers");
-            return 0;
+        /* slot argument table (GPU virtual addresses) and residency set */
+        uint64_t *table = (uint64_t *)[p->_slotTable contents];
+        float *weights = (float *)[p->_weightBuffer contents];
+        NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithCapacity:top_k];
+        for (uint32_t i = 0; i < top_k; ++i) {
+            NSUInteger slotBase = 0;
+            id<MTLBuffer> slab = [p bufferForSlot:slot_ids[i] offset:&slotBase];
+            if (!slab) return 0;
+            uint64_t base = 0;
+            if (@available(macOS 13.0, *)) base = (uint64_t)[slab gpuAddress];
+            if (!base) { topk_set_error("top-k slab did not expose a GPU virtual address"); return 0; }
+            table[i] = base + (uint64_t)slotBase;
+            weights[i] = router_weights[i];
+            if (![resident containsObject:slab]) [resident addObject:slab];
         }
-        memset([accum contents], 0, (size_t)output_row_count * sizeof(float));
+        memcpy([p->_inBuffer contents], input, (size_t)hidden_size * sizeof(float));
 
         id<MTLCommandBuffer> cb = [p->_queue commandBuffer];
         if (!cb) {
             topk_set_error("failed to create top-k command buffer");
             return 0;
         }
-
         mark_slots(p, slot_ids, top_k, +1);
-        int encoded = 1;
-        for (uint32_t i = 0; i < top_k && encoded; ++i) {
-            NSUInteger slotBase = 0;
-            id<MTLBuffer> slab = [p bufferForSlot:slot_ids[i] offset:&slotBase];
-            if (!slab) { encoded = 0; break; }
 
-            id<MTLComputeCommandEncoder> qenc = [cb computeCommandEncoder];
-            if (!qenc) { encoded = 0; break; }
-            encoded =
-                encode_quant_rows(qenc, quantPipeline, slab, slotBase, 0u,
-                                  hidden_size, 0u, ffn_size, inBuffer, gateBuffer, grid) &&
-                encode_quant_rows(qenc, quantPipeline, slab, slotBase, gate_bytes[i],
-                                  hidden_size, 0u, ffn_size, inBuffer, upBuffer, grid);
-            [qenc endEncoding];
-            if (!encoded) break;
+        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+        const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
+        const uint64_t up_offset = gate_bytes[0];
+        const uint64_t down_offset = gate_bytes[0] + up_bytes[0];
 
-            id<MTLComputeCommandEncoder> aenc = [cb computeCommandEncoder];
-            if (!aenc) { encoded = 0; break; }
-            [aenc setComputePipelineState:p->_siluPipeline];
-            [aenc setBuffer:gateBuffer offset:0 atIndex:0];
-            [aenc setBuffer:upBuffer offset:0 atIndex:1];
-            [aenc setBuffer:actBuffer offset:0 atIndex:2];
-            const NSUInteger atg = MIN((NSUInteger)ffn_size, (NSUInteger)64u);
-            [aenc dispatchThreads:MTLSizeMake(ffn_size, 1, 1)
-              threadsPerThreadgroup:MTLSizeMake(atg, 1, 1)];
-            [aenc endEncoding];
-
-            id<MTLComputeCommandEncoder> denc = [cb computeCommandEncoder];
-            if (!denc) { encoded = 0; break; }
-            const uint64_t downOffset = gate_bytes[i] + up_bytes[i];
-            encoded = encode_quant_rows(denc, quantPipeline, slab, slotBase, downOffset,
-                                        ffn_size, output_row_start, output_row_count,
-                                        actBuffer, tmpOut, grid);
-            [denc endEncoding];
-            if (!encoded) break;
-
-            id<MTLComputeCommandEncoder> wenc = [cb computeCommandEncoder];
-            if (!wenc) { encoded = 0; break; }
-            const float weight = router_weights[i];
-            [wenc setComputePipelineState:p->_weightedPipeline];
-            [wenc setBuffer:tmpOut offset:0 atIndex:0];
-            [wenc setBuffer:accum offset:0 atIndex:1];
-            [wenc setBytes:&weight length:sizeof(weight) atIndex:2];
-            const NSUInteger wtg = MIN((NSUInteger)output_row_count, (NSUInteger)64u);
-            [wenc dispatchThreads:MTLSizeMake(output_row_count, 1, 1)
-              threadsPerThreadgroup:MTLSizeMake(wtg, 1, 1)];
-            [wenc endEncoding];
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
+        [enc setComputePipelineState:p->_gateupPipeline];
+        [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
+        [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
+        [enc setBuffer:p->_inBuffer offset:0 atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:grid offset:0 atIndex:6];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+        [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
+        {
+            const NSUInteger threads_x = (NSUInteger)ffn_size * gate_lanes;
+            [enc dispatchThreads:MTLSizeMake(threads_x, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
         }
+        [enc endEncoding];
 
-        if (!encoded) {
-            mark_slots(p, slot_ids, top_k, -1);
-            topk_set_error("failed to encode top-k expert execution");
-            return 0;
+        enc = [cb computeCommandEncoder];
+        for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
+        [enc setComputePipelineState:p->_downPipeline];
+        [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+        [enc setBytes:&output_row_start length:sizeof(output_row_start) atIndex:2];
+        [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
+        [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:6];
+        [enc setBuffer:grid offset:0 atIndex:7];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
+        [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
+        {
+            const NSUInteger threads_x = (NSUInteger)output_row_count * down_lanes;
+            [enc dispatchThreads:MTLSizeMake(threads_x, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
         }
+        [enc endEncoding];
+
+        enc = [cb computeCommandEncoder];
+        [enc setComputePipelineState:p->_sumPipeline];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
+        [enc setBuffer:p->_weightBuffer offset:0 atIndex:1];
+        [enc setBuffer:p->_outBuffer offset:0 atIndex:2];
+        [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
+        {
+            const NSUInteger tg = MIN((NSUInteger)output_row_count, (NSUInteger)64u);
+            [enc dispatchThreads:MTLSizeMake(output_row_count, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+        }
+        [enc endEncoding];
 
         const double t0 = topk_now_ms();
         [cb commit];
@@ -749,7 +794,7 @@ int redmetal_topk_pool_execute(
                 cb.error.localizedDescription.UTF8String ?: "unknown Metal error");
             return 0;
         }
-        memcpy(output, [accum contents], (size_t)output_row_count * sizeof(float));
+        memcpy(output, [p->_outBuffer contents], (size_t)output_row_count * sizeof(float));
         if (elapsed_ms) *elapsed_ms = ms;
         return 1;
     }
