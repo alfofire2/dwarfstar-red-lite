@@ -287,24 +287,36 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "kernel void attn_gqa(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
-"    uint head [[thread_position_in_grid]]) {\n"
-"    if (head >= query_heads || seq_len == 0u || head_dim > 256u) return;\n"
+"    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float scores[1024]; threadgroup float red_max[8]; threadgroup float red_sum[8];\n"
+"    if (head >= query_heads || seq_len == 0u) return;\n"
 "    const uint qbase = head * head_dim; const uint kv_head = head / (query_heads / kv_heads); const float scale = rsqrt(float(head_dim));\n"
-"    float max_score = -INFINITY;\n"
-"    for (uint pos = 0; pos < seq_len; ++pos) {\n"
-"        const uint kbase = (pos * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"        for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
-"        max_score = max(max_score, dot * scale);\n"
+"    float acc = 0.0f; float m = -INFINITY; float l = 0.0f;\n"
+"    for (uint chunk_start = 0; chunk_start < seq_len; chunk_start += 1024u) {\n"
+"        const uint chunk = min(1024u, seq_len - chunk_start);\n"
+"        for (uint pos = tid; pos < chunk; pos += 256u) {\n"
+"            const uint kbase = ((chunk_start + pos) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
+"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
+"            scores[pos] = dot * scale;\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        float cm = -INFINITY; for (uint pos = tid; pos < chunk; pos += 256u) cm = max(cm, scores[pos]);\n"
+"        cm = simd_max(cm); if (simd_lane == 0) red_max[simd_id] = cm; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        cm = red_max[0]; for (uint k = 1; k < 8u; ++k) cm = max(cm, red_max[k]);\n"
+"        const float new_m = max(m, cm); const float alpha = (m == -INFINITY) ? 0.0f : exp(m - new_m);\n"
+"        float cs = 0.0f; for (uint pos = tid; pos < chunk; pos += 256u) { const float p = exp(scores[pos] - new_m); scores[pos] = p; cs += p; }\n"
+"        cs = simd_sum(cs); if (simd_lane == 0) red_sum[simd_id] = cs; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        float total = 0.0f; for (uint k = 0; k < 8u; ++k) total += red_sum[k];\n"
+"        l = l * alpha + total;\n"
+"        if (tid < head_dim) {\n"
+"            acc *= alpha;\n"
+"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid], acc);\n"
+"        }\n"
+"        m = new_m;\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    }\n"
-"    float acc[256]; for (uint i = 0; i < head_dim; ++i) acc[i] = 0.0f; float denom = 0.0f;\n"
-"    for (uint pos = 0; pos < seq_len; ++pos) {\n"
-"        const uint kbase = (pos * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"        for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
-"        const float p = exp(dot * scale - max_score); denom += p;\n"
-"        for (uint i = 0; i < head_dim; ++i) acc[i] = fma(p, value_cache[kbase + i], acc[i]);\n"
-"    }\n"
-"    const float inv = 1.0f / denom;\n"
-"    for (uint i = 0; i < head_dim; ++i) gated[qbase + i] = (acc[i] * inv) / (1.0f + exp(-gate[qbase + i]));\n"
+"    if (tid < head_dim) gated[qbase + tid] = (acc / l) / (1.0f + exp(-gate[qbase + tid]));\n"
 "}\n"
 /* ---- shared expert (validated dev14 kernels) ---- */
 "kernel void sh_scalar_gate(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
@@ -742,7 +754,7 @@ static void enc_attention(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer>
     [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
     [enc setBuffer:m->agate offset:0 atIndex:3]; [enc setBuffer:m->gated offset:0 atIndex:4];
     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
-    enc_1d(enc, m->p_attn_gqa, qheads, 32u); [enc endEncoding];
+    [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
 
     enc_rows(m, cb, &w->o, m->gated, m->branch);
 }
@@ -783,6 +795,23 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
                 [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
             enc_rows(m, cb, &w->router, m->ffn_in, m->router_logits);
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_sh_scalar];
+                [enc setBuffer:w->sh_gate_inp.buf offset:w->sh_gate_inp.off atIndex:0]; [enc setBuffer:m->ffn_in offset:0 atIndex:1];
+                [enc setBuffer:m->scalar offset:0 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
+                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+            }
+            enc_rows(m, cb, &w->sh_gate, m->ffn_in, m->sh_gate);
+            enc_rows(m, cb, &w->sh_up, m->ffn_in, m->sh_up);
+            {
+                const uint32_t ffn = w->sh_gate.rows;
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_sh_silu];
+                [enc setBuffer:m->sh_gate offset:0 atIndex:0]; [enc setBuffer:m->sh_up offset:0 atIndex:1]; [enc setBuffer:m->sh_act offset:0 atIndex:2];
+                [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u); [enc endEncoding];
+            }
+            enc_rows(m, cb, &w->sh_down, m->sh_act, m->sh_out);
             if (!commit_wait(cb, "layer attention/router", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
@@ -807,23 +836,6 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             stats->routed_ms += l3 - l2;
 
             cb = [m->queue commandBuffer];
-            {
-                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-                [enc setComputePipelineState:m->p_sh_scalar];
-                [enc setBuffer:w->sh_gate_inp.buf offset:w->sh_gate_inp.off atIndex:0]; [enc setBuffer:m->ffn_in offset:0 atIndex:1];
-                [enc setBuffer:m->scalar offset:0 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
-                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
-            }
-            enc_rows(m, cb, &w->sh_gate, m->ffn_in, m->sh_gate);
-            enc_rows(m, cb, &w->sh_up, m->ffn_in, m->sh_up);
-            {
-                const uint32_t ffn = w->sh_gate.rows;
-                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-                [enc setComputePipelineState:m->p_sh_silu];
-                [enc setBuffer:m->sh_gate offset:0 atIndex:0]; [enc setBuffer:m->sh_up offset:0 atIndex:1]; [enc setBuffer:m->sh_act offset:0 atIndex:2];
-                [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u); [enc endEncoding];
-            }
-            enc_rows(m, cb, &w->sh_down, m->sh_act, m->sh_out);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:m->p_scale_add];
