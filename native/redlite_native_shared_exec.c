@@ -43,7 +43,7 @@ static float f16_to_f32(uint16_t h) {
             int shift = 0;
             while ((mant & 0x0400u) == 0) { mant <<= 1; ++shift; }
             mant &= 0x03ffu;
-            const uint32_t exp32 = (uint32_t)(127 - 15 - shift);
+            const uint32_t exp32 = (uint32_t)(127 - 14 - shift);
             bits = sign | (exp32 << 23) | (mant << 13);
         }
     } else if (exp == 31) {
