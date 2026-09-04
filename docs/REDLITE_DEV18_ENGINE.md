@@ -128,6 +128,29 @@ The sky appears blue because molecules in the Earth's atmosphere scatter shorter
 
 See "Final field run" below for the exact numbers of the clean-build run.
 
+### Interactive terminal chat
+
+`redlite-generate --interactive` keeps the same `rl_engine` alive across user
+turns instead of reopening the GGUF for every prompt:
+
+```bash
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --interactive --context 4096 --cache-mib 4096 --max-tokens 256 --stats
+```
+
+The first message uses the complete Qwen ChatML generation template. Later
+messages append the previous assistant EOG token followed by the next
+`user`/`assistant` turn, and continue from the engine's current position. If a
+response reaches `--max-tokens`, the CLI closes that assistant turn with
+`<|im_end|>` before accepting the next user message. `/reset` clears both the
+native recurrent/KV state and the seeded sampler; `/quit` exits.
+
+A real-GGUF smoke test entered two successive turns in one process and observed
+the native engine position advance from 0 to 11 and then 26 before a clean
+`/quit`. This verifies the interactive control/state path; it is not a quality
+or throughput benchmark because each response was deliberately limited to one
+token.
+
 A longer run (70 template tokens of prompt, 96 generated tokens, 166 positions)
 about cooking pasta at altitude is also token-identical to llama.cpp's greedy
 decode; with a warm 8 GiB expert cache it reached a 95 % hit rate, 17 MiB of

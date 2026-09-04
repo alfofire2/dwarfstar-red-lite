@@ -446,3 +446,10 @@ int rl_tokenizer_chat_prompt(const char *system_prompt, const char *user_prompt,
         n = snprintf(out, out_cap, "<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", user_prompt);
     return n > 0 && (size_t)n < out_cap;
 }
+
+int rl_tokenizer_chat_continuation(const char *user_prompt, char *out, size_t out_cap) {
+    if (!user_prompt || !out) return 0;
+    const int n = snprintf(out, out_cap,
+        "\n<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", user_prompt);
+    return n > 0 && (size_t)n < out_cap;
+}

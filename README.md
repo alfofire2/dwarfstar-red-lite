@@ -86,10 +86,19 @@ DeltaNet / full-attention / MoE stack on Metal.
 ```bash
 make native
 .deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
-  --prompt "Explain in one sentence why the sky is blue." --max-tokens 64 --cache-mib 8192 --stats
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 64 --cache-mib 4096 --stats
 ```
 
-Options: `--system`, `--raw`, `--max-tokens`, `--temperature`, `--top-k`,
+For a persistent terminal chat (the model is loaded once and its recurrent/KV
+state is retained across turns):
+
+```bash
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --interactive --context 4096 --cache-mib 4096 --max-tokens 256 --stats
+```
+
+Inside the chat use `/reset` to clear the conversation, `/help` for commands and
+`/quit` to exit. Options: `--interactive`, `--system`, `--raw`, `--max-tokens`, `--temperature`, `--top-k`,
 `--top-p`, `--seed`, `--context`, `--cache-mib`, `--no-stream`, `--stats`,
 `--tokens-out`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s

@@ -7,6 +7,7 @@
  *   redlite-generate MODEL --prompt "..." [--system "..."] [--raw] [--max-tokens N]
  *                    [--temperature T] [--top-k K] [--top-p P] [--seed S]
  *                    [--context N] [--cache-mib N] [--no-stream] [--stats] [--tokens-out FILE]
+ *   redlite-generate MODEL --interactive [--system "..."] [generation options]
  *
  * prompt -> chat template -> native BPE -> prefill (per token) -> logits ->
  * sampler -> next token -> decode -> repeat until EOS / max-tokens.
@@ -58,8 +59,10 @@ static void usage(FILE *out) {
     fprintf(out,
         "redlite-generate 0.3.0.dev18 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
-        "  redlite-generate MODEL --prompt \"...\" [options]\n\n"
+        "  redlite-generate MODEL --prompt \"...\" [options]\n"
+        "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"
         "Options:\n"
+        "  -i, --interactive   keep the model loaded and open a terminal chat\n"
         "  --system TEXT       optional system prompt (chat template)\n"
         "  --raw               tokenize the prompt verbatim (no chat template)\n"
         "  --max-tokens N      maximum generated tokens (default 256)\n"
@@ -93,11 +96,166 @@ static int parse_f32(const char *s, float *out) {
     return 1;
 }
 
+static int interactive_chat(
+        rl_engine *engine,
+        const rl_engine_info *info,
+        rl_tokenizer *tokenizer,
+        rl_sampler *sampler,
+        const rl_sampler_params *sampler_params,
+        const char *initial_prompt,
+        const char *system_prompt,
+        uint32_t max_tokens,
+        int stream,
+        int show_stats,
+        char *error,
+        size_t error_cap) {
+    char *line = NULL;
+    size_t line_cap = 0;
+    const char *message = initial_prompt;
+    uint32_t close_token = UINT32_MAX;
+    int first_turn = 1;
+    const int32_t im_end = rl_tokenizer_lookup(tokenizer, "<|im_end|>");
+    if (im_end < 0) {
+        snprintf(error, error_cap, "tokenizer is missing <|im_end|>");
+        return 0;
+    }
+
+    printf("Red Lite chat pronta. Comandi: /reset, /help, /quit\n");
+    printf("Il modello resta caricato e lo stato conversazionale viene mantenuto.\n\n");
+    for (;;) {
+        if (!message) {
+            printf("tu> ");
+            fflush(stdout);
+            const ssize_t got = getline(&line, &line_cap, stdin);
+            if (got < 0) { printf("\n"); break; }
+            size_t len = (size_t)got;
+            while (len && (line[len - 1u] == '\n' || line[len - 1u] == '\r')) line[--len] = '\0';
+            if (!len) continue;
+            if (strcmp(line, "/quit") == 0 || strcmp(line, "/exit") == 0) break;
+            if (strcmp(line, "/help") == 0) {
+                printf("/reset  azzera contesto e stato del modello\n/quit   chiude la chat\n\n");
+                continue;
+            }
+            if (strcmp(line, "/reset") == 0) {
+                if (!rl_engine_reset(engine, RL_BACKEND_GPU, error, error_cap)) { free(line); return 0; }
+                rl_sampler_free(sampler);
+                if (!rl_sampler_init(sampler, sampler_params, info->vocab)) {
+                    snprintf(error, error_cap, "sampler reset failed"); free(line); return 0;
+                }
+                first_turn = 1;
+                close_token = UINT32_MAX;
+                printf("Contesto azzerato.\n\n");
+                continue;
+            }
+            message = line;
+        } else {
+            printf("tu> %s\n", message);
+        }
+
+        const size_t template_cap = strlen(message) + (system_prompt ? strlen(system_prompt) : 0u) + 256u;
+        char *templated = (char *)malloc(template_cap);
+        if (!templated) { snprintf(error, error_cap, "chat template allocation failed"); free(line); return 0; }
+        const int template_ok = first_turn
+            ? rl_tokenizer_chat_prompt(system_prompt, message, templated, template_cap)
+            : rl_tokenizer_chat_continuation(message, templated, template_cap);
+        if (!template_ok) {
+            snprintf(error, error_cap, "chat prompt is too long"); free(templated); free(line); return 0;
+        }
+        const int32_t encoded = rl_tokenizer_encode(tokenizer, templated, strlen(templated), 1,
+            NULL, 0, error, error_cap);
+        if (encoded < 0) { free(templated); free(line); return 0; }
+        const uint32_t prefix = first_turn ? 0u : 1u;
+        const uint32_t prompt_tokens = (uint32_t)encoded + prefix;
+        const uint32_t position = rl_engine_position(engine, RL_BACKEND_GPU);
+        if (position > info->context || prompt_tokens > info->context - position ||
+            max_tokens > info->context - position - prompt_tokens) {
+            fprintf(stderr, "Contesto esaurito (%u + %u + %u > %u). Usa /reset.\n",
+                position, prompt_tokens, max_tokens, info->context);
+            free(templated);
+            message = NULL;
+            continue;
+        }
+        uint32_t *ids = (uint32_t *)malloc((size_t)prompt_tokens * sizeof(uint32_t));
+        float *logits = (float *)malloc((size_t)info->vocab * sizeof(float));
+        char *answer = (char *)malloc((size_t)max_tokens * 512u + 1u);
+        if (!ids || !logits || !answer) {
+            snprintf(error, error_cap, "interactive turn allocation failed");
+            free(ids); free(logits); free(answer); free(templated); free(line); return 0;
+        }
+        if (prefix) ids[0] = close_token;
+        if (rl_tokenizer_encode(tokenizer, templated, strlen(templated), 1,
+                ids + prefix, (size_t)encoded, error, error_cap) != encoded) {
+            snprintf(error, error_cap, "interactive tokenization changed between passes");
+            free(ids); free(logits); free(answer); free(templated); free(line); return 0;
+        }
+        free(templated);
+
+        rl_engine_step_stats step = {0};
+        const double prefill_start = now_ms();
+        for (uint32_t i = 0; i < prompt_tokens; ++i) {
+            if (!rl_engine_step(engine, RL_BACKEND_GPU, ids[i],
+                    i + 1u == prompt_tokens ? logits : NULL, &step, error, error_cap)) {
+                free(ids); free(logits); free(answer); free(line); return 0;
+            }
+        }
+        const double prefill_ms = now_ms() - prefill_start;
+        printf("redlite> ");
+        fflush(stdout);
+        size_t answer_len = 0;
+        uint32_t generated = 0;
+        int stopped_on_eog = 0;
+        const double generation_start = now_ms();
+        while (generated < max_tokens) {
+            const uint32_t next = rl_sampler_sample(sampler, logits);
+            if (rl_tokenizer_is_eog(tokenizer, next)) {
+                close_token = next;
+                stopped_on_eog = 1;
+                break;
+            }
+            char piece[512];
+            const int32_t bytes = rl_tokenizer_decode(tokenizer, next, piece, sizeof(piece));
+            if (bytes < 0 || answer_len + (size_t)bytes > (size_t)max_tokens * 512u) {
+                snprintf(error, error_cap, "token decode failed");
+                free(ids); free(logits); free(answer); free(line); return 0;
+            }
+            memcpy(answer + answer_len, piece, (size_t)bytes);
+            answer_len += (size_t)bytes;
+            generated++;
+            if (stream && bytes) { fwrite(piece, 1, (size_t)bytes, stdout); fflush(stdout); }
+            if (generated == max_tokens) {
+                if (!rl_engine_step(engine, RL_BACKEND_GPU, next, NULL, &step, error, error_cap)) {
+                    free(ids); free(logits); free(answer); free(line); return 0;
+                }
+                close_token = (uint32_t)im_end;
+                break;
+            }
+            if (!rl_engine_step(engine, RL_BACKEND_GPU, next, logits, &step, error, error_cap)) {
+                free(ids); free(logits); free(answer); free(line); return 0;
+            }
+        }
+        const double generation_ms = now_ms() - generation_start;
+        answer[answer_len] = '\0';
+        if (!stream) fwrite(answer, 1, answer_len, stdout);
+        printf("\n\n");
+        if (show_stats) {
+            fprintf(stderr, "[turno: prompt=%u token %.2fs, risposta=%u token %.2fs, posizione=%u/%u%s]\n\n",
+                prompt_tokens, prefill_ms / 1000.0, generated, generation_ms / 1000.0,
+                rl_engine_position(engine, RL_BACKEND_GPU), info->context,
+                stopped_on_eog ? ", EOG" : ", limite");
+        }
+        free(ids); free(logits); free(answer);
+        first_turn = 0;
+        message = NULL;
+    }
+    free(line);
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) { usage(argc < 2 ? stderr : stdout); return argc < 2 ? 2 : 0; }
     const char *model = argv[1];
     const char *prompt = NULL, *system_prompt = NULL, *tokens_out = NULL;
-    int raw = 0, stream = 1, stats = 0;
+    int raw = 0, stream = 1, stats = 0, interactive = 0;
     uint32_t max_tokens = 256u;
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
@@ -105,6 +263,7 @@ int main(int argc, char **argv) {
     rl_sampler_params_default(&sp);
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--raw") == 0) { raw = 1; continue; }
+        if (strcmp(argv[i], "--interactive") == 0 || strcmp(argv[i], "-i") == 0) { interactive = 1; continue; }
         if (strcmp(argv[i], "--no-stream") == 0) { stream = 0; continue; }
         if (strcmp(argv[i], "--stats") == 0) { stats = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
@@ -120,7 +279,10 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); usage(stderr); return 2; }
     }
-    if (!prompt) { fprintf(stderr, "--prompt is required\n"); return 2; }
+    if (!prompt && !interactive) { fprintf(stderr, "--prompt is required (or use --interactive)\n"); return 2; }
+    if (interactive && raw) { fprintf(stderr, "--raw cannot be combined with --interactive\n"); return 2; }
+    if (interactive && tokens_out) { fprintf(stderr, "--tokens-out is not supported in interactive mode\n"); return 2; }
+    if (!max_tokens) { fprintf(stderr, "--max-tokens must be greater than zero\n"); return 2; }
 
     char error[512] = {0};
     const double t_open = now_ms();
@@ -133,6 +295,19 @@ int main(int argc, char **argv) {
     rl_tokenizer *tk = rl_tokenizer_create(&g, error, sizeof(error));
     if (!tk) { fprintf(stderr, "tokenizer failed: %s\n", error); return 1; }
     const double open_ms = now_ms() - t_open;
+
+    if (interactive) {
+        rl_sampler sampler;
+        if (!rl_sampler_init(&sampler, &sp, in->vocab)) { fprintf(stderr, "sampler allocation failed\n"); return 1; }
+        const int ok = interactive_chat(e, in, tk, &sampler, &sp, prompt, system_prompt,
+            max_tokens, stream, stats, error, sizeof(error));
+        if (!ok) fprintf(stderr, "chat failed: %s\n", error);
+        rl_sampler_free(&sampler);
+        rl_tokenizer_destroy(tk);
+        rl_gguf_model_close(&g);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
 
     char *templated = (char *)malloc(strlen(prompt) + (system_prompt ? strlen(system_prompt) : 0u) + 256u);
     if (!templated) return 1;
@@ -160,7 +335,7 @@ int main(int argc, char **argv) {
     const double prefill_ms = now_ms() - t_prefill;
 
     /* generation */
-    char *text = (char *)malloc((size_t)max_tokens * 16u + 16u);
+    char *text = (char *)malloc((size_t)max_tokens * 512u + 1u);
     size_t text_len = 0;
     uint32_t generated = 0;
     const double t_gen = now_ms();

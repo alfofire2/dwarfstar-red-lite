@@ -47,6 +47,9 @@ int32_t rl_tokenizer_lookup(const rl_tokenizer *t, const char *piece);
  */
 int rl_tokenizer_chat_prompt(const char *system_prompt, const char *user_prompt, char *out, size_t out_cap);
 
+/* Continue an existing ChatML conversation after the previous assistant EOG token. */
+int rl_tokenizer_chat_continuation(const char *user_prompt, char *out, size_t out_cap);
+
 #ifdef __cplusplus
 }
 #endif

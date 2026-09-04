@@ -23,6 +23,9 @@ Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
   `<|im_end|>` / `<|endoftext|>` / `--max-tokens`, with `--stats`
   (timings, expert-cache hit rate, SSD bytes per token, peak RSS, physical
   footprint).
+- Added `redlite-generate --interactive`: a persistent terminal chat that loads
+  the model once, appends ChatML user/assistant turns to the live native engine,
+  preserves DeltaNet/KV state, and supports `/reset`, `/help` and `/quit`.
 - Added `redlite-engine` diagnostics: `info`, multi-token CPU-vs-Metal `parity`,
   `logits` activation dumps, `tokenize`.
 - Fixed the DeltaNet key/value head pairing: value head `h` now uses key head
