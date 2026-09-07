@@ -93,14 +93,15 @@ For a persistent terminal chat (the model is loaded once and its recurrent/KV
 state is retained across turns):
 
 ```bash
-.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
-  --interactive --context 4096 --cache-mib 4096 --max-tokens 256 --stats
+redlite chat --stats
 ```
 
 Inside the chat use `/reset` to clear the conversation, `/help` for commands and
-`/quit` to exit. Options: `--interactive`, `--system`, `--raw`, `--max-tokens`, `--temperature`, `--top-k`,
-`--top-p`, `--seed`, `--context`, `--cache-mib`, `--no-stream`, `--stats`,
-`--tokens-out`. Greedy output is token-identical to the pinned llama.cpp on the
+`/quit` to exit. The friendly defaults are a 4096-position context, a 4096 MiB
+expert cache, 256 tokens per answer and temperature 0.7. Use `--temperature 0`
+for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`,
+`--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`,
+`--no-stream` and `--stats`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.5 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. Details, validation
@@ -222,6 +223,7 @@ redlite models
 redlite bootstrap
 redlite download [24gb|balanced|quality]
 redlite plan MODEL.gguf
+redlite chat [MODEL.gguf]
 redlite run MODEL.gguf
 redlite serve MODEL.gguf
 redlite bench MODEL.gguf

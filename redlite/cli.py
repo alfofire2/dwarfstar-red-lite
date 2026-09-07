@@ -12,9 +12,11 @@ from . import __version__
 from .hardware import detect
 from .model_catalog import VARIANTS, resolve_variant
 from .planner import plan_for
-from .runner import engine_status, run_completion, run_server, run_bench, ROOT
+from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
+
+DEFAULT_NATIVE_MODEL = ROOT / "models" / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -171,6 +173,22 @@ def cmd_run(args) -> int:
     return run_completion(args.model, plan, args.prompt, args.tokens, args.extra, args.dry_run, args.single_turn)
 
 
+def cmd_chat(args) -> int:
+    hw = detect(Path(args.model).parent)
+    _require_apple(hw)
+    model = Path(args.model).expanduser()
+    if not model.is_file():
+        _die(f"Model not found: {model}")
+    try:
+        return run_native_chat(
+            str(model), args.context, args.cache_mib, args.max_tokens,
+            args.temperature, args.top_k, args.top_p, args.seed,
+            args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
+        )
+    except FileNotFoundError:
+        _die("Native Red Lite runtime not built. Run: make native")
+
+
 def cmd_serve(args) -> int:
     _, plan = _make_plan(args)
     _print_plan(plan)
@@ -256,6 +274,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--engine-args", dest="extra", nargs=argparse.REMAINDER, default=[], help="Remaining arguments are passed to the selected backend")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("chat", help="Chat with the persistent native Red Lite runtime")
+    s.add_argument(
+        "model", nargs="?", default=str(DEFAULT_NATIVE_MODEL),
+        help=f"Path to the Qwen3-Next GGUF (default: {DEFAULT_NATIVE_MODEL})",
+    )
+    s.add_argument("-p", "--prompt", help="Optional first user message")
+    s.add_argument("--system", help="Optional system prompt")
+    s.add_argument("-c", "--context", type=int, default=4096, help="Context positions (default: 4096)")
+    s.add_argument("--cache-mib", type=int, default=4096, help="Routed-expert cache in MiB (default: 4096)")
+    s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")
+    s.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7; 0 = greedy)")
+    s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")
+    s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
+    s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
+    s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
+    s.add_argument("--no-stream", action="store_true", help="Print each answer only when complete")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_chat)
 
     s = sub.add_parser("serve", help="Start OpenAI-compatible HTTP server")
     _add_plan_args(s)

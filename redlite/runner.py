@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 LLAMA_BIN = DEPS / "llama.cpp" / "build" / "bin"
 OMR_BIN = DEPS / "oversized-moe-runtime" / "build" / "bin"
+REDMETAL_BIN = DEPS / "redmetal"
 
 
 def _first_existing(paths: Iterable[Path]) -> Path:
@@ -32,12 +33,56 @@ def oversized_cli() -> Path:
     return _first_existing([OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"])
 
 
+def native_generate() -> Path:
+    return _first_existing([REDMETAL_BIN / "redlite-generate"])
+
+
 def engine_status() -> dict[str, bool]:
     return {
+        "native_redlite_generate": (REDMETAL_BIN / "redlite-generate").exists(),
         "metal_llama_cli": any(p.exists() for p in [LLAMA_BIN / "llama-cli", LLAMA_BIN / "llama-completion"]),
         "metal_llama_server": (LLAMA_BIN / "llama-server").exists(),
         "oversized_moe": any(p.exists() for p in [OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"]),
     }
+
+
+def run_native_chat(
+    model: str,
+    context: int,
+    cache_mib: int,
+    max_tokens: int,
+    temperature: float,
+    top_k: int,
+    top_p: float,
+    seed: int,
+    system: str | None = None,
+    prompt: str | None = None,
+    stats: bool = False,
+    no_stream: bool = False,
+    dry_run: bool = False,
+) -> int:
+    cmd = [
+        str(native_generate()), model, "--interactive",
+        "--context", str(context),
+        "--cache-mib", str(cache_mib),
+        "--max-tokens", str(max_tokens),
+        "--temperature", str(temperature),
+        "--top-k", str(top_k),
+        "--top-p", str(top_p),
+        "--seed", str(seed),
+    ]
+    if system:
+        cmd.extend(["--system", system])
+    if prompt:
+        cmd.extend(["--prompt", prompt])
+    if stats:
+        cmd.append("--stats")
+    if no_stream:
+        cmd.append("--no-stream")
+    print("[redlite]", " ".join(_quote(x) for x in cmd))
+    if dry_run:
+        return 0
+    return subprocess.call(cmd)
 
 
 def metal_common(model: str, plan: Plan) -> list[str]:

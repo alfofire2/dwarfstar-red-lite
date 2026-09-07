@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0.dev19 — 2026-09-07
+
+Native chat integration on `v0.3-streaming`. See
+`docs/REDLITE_DEV19_CLI_CHAT.md`.
+
+- Added `redlite chat [MODEL.gguf]`, a user-facing entry point for the persistent
+  native Red Metal runtime introduced in dev18; when omitted, the model path
+  resolves to the repository's standard Qwen3-Next file in `models/`.
+- Exposed context, expert-cache size, per-answer token limit, system prompt,
+  temperature, top-k, top-p, seed, streaming and statistics through stable CLI
+  options with conversational defaults.
+- Added native runtime discovery to `redlite doctor` and a clear `make native`
+  recovery message when the generator has not been built.
+- Added parser and command-construction tests while keeping `redlite run` and
+  `redlite serve` backward-compatible with the pinned upstream engines.
+
 ## 0.3.0.dev18 — 2026-09-03
 
 Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
