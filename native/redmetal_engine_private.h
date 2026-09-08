@@ -1,0 +1,64 @@
+#pragma once
+/* Private layout of the persistent Metal engine, shared by redmetal_engine.m and redmetal_engine_prefill.m. */
+#import <Foundation/Foundation.h>
+#import <Metal/Metal.h>
+#include "redlite_native_engine_internal.h"
+#include "redlite_native_metal.h"
+
+typedef struct {
+    __unsafe_unretained id<MTLBuffer> buf;
+    NSUInteger off;
+    uint32_t type;
+    uint32_t rows;
+    uint32_t cols;
+} mweight;
+
+typedef struct {
+    mweight attn_norm, post_norm;
+    mweight qkv, z, ba, conv, dt, a, ssm_norm, ssm_out;
+    mweight q, k, v, q_norm, k_norm, o;
+    mweight router, sh_gate_inp, sh_gate, sh_up, sh_down;
+} mlayer;
+
+struct rl_metal_engine {
+    int profile;
+    double prof_ms[16];
+    id<MTLDevice> dev;
+    id<MTLCommandQueue> queue;
+    id<MTLLibrary> lib;
+    id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
+    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
+    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
+    id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;
+    id<MTLBuffer> grid;
+    mlayer *layers;
+    mweight output_norm, output;
+    __unsafe_unretained id<MTLBuffer> *conv_state, *rec_state, *kcache, *vcache;
+    NSMutableArray *keep;
+    uint32_t n_recurrent, n_attention;
+    id<MTLBuffer> x, normed, branch, resid, ffn_in;
+    id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, delta, core, ng, next_conv, rec_scratch;
+    id<MTLBuffer> qgate_raw, k_raw, value, query, agate, key, query_rope, gated;
+    id<MTLBuffer> router_logits, sh_gate, sh_up, sh_act, sh_out, scalar, routed, final_norm, logits;
+    rl_native_metal_runtime *experts;
+    float *routed_host;
+    uint64_t resident_bytes;
+    uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
+    double last_read_ms;
+    struct rl_metal_prefill *pf;   /* batched prefill state (dev20), created on first use */
+};
+
+
+/* helpers defined in redmetal_engine.m */
+id<MTLBuffer> new_buf(rl_metal_engine *m, size_t bytes);
+id<MTLComputePipelineState> rows_pipe(rl_metal_engine *m, uint32_t type);
+id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap);
+void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max);
+uint32_t lanes_for(uint32_t type, uint32_t ncols);
+void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out);
+void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps);
+int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap);
+
+/* defined in redmetal_engine_prefill.m */
+void rl_metal_prefill_destroy(struct rl_metal_prefill *pf);

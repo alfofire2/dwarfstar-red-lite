@@ -32,6 +32,7 @@ typedef struct {
     int enable_cpu;        /* keep a CPU oracle backend */
     int enable_gpu;        /* create the Metal backend */
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
+    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 32, 1 -> token-by-token) */
 } rl_engine_config;
 
 typedef struct {
@@ -95,12 +96,24 @@ uint32_t rl_engine_position(const rl_engine *engine, rl_engine_backend backend);
 int rl_engine_step(rl_engine *engine, rl_engine_backend backend, uint32_t token,
                    float *logits, rl_engine_step_stats *stats, char *error, size_t error_cap);
 
+/*
+ * Run a token sequence through a backend starting at its current position and
+ * advance the position by count. Logits (may be NULL) are those of the last
+ * token. The CPU oracle runs the tokens one by one; the Metal backend batches
+ * them in chunks of prefill_batch (dev20). Stats accumulate over the call.
+ */
+int rl_engine_prefill(rl_engine *engine, rl_engine_backend backend, const uint32_t *tokens, uint32_t count,
+                      float *logits, rl_engine_step_stats *stats, char *error, size_t error_cap);
+
 /* Host views of the last step's intermediate vectors (hidden floats each). */
 const float *rl_engine_last_embedding(const rl_engine *engine, rl_engine_backend backend);
 const float *rl_engine_last_layer_output(const rl_engine *engine, rl_engine_backend backend, uint32_t layer);
 const float *rl_engine_last_final_norm(const rl_engine *engine, rl_engine_backend backend);
 /* Router selection of the last step for a layer (top_k ids); NULL if unavailable. */
 const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_backend backend, uint32_t layer);
+
+/* Monotonic milliseconds (same clock as the step statistics). */
+double rl_engine_now_ms_public(void);
 
 /* Dequantized token embedding row (hidden floats) into out. */
 int rl_engine_embed_token(const rl_engine *engine, uint32_t token, float *out, char *error, size_t error_cap);

@@ -312,6 +312,51 @@ uint32_t rl_engine_position(const rl_engine *e, rl_engine_backend b) {
     return s ? s->position : 0u;
 }
 
+static void stats_accumulate(rl_engine_step_stats *acc, const rl_engine_step_stats *one) {
+    acc->embed_ms += one->embed_ms; acc->layers_ms += one->layers_ms; acc->recurrent_ms += one->recurrent_ms;
+    acc->attention_ms += one->attention_ms; acc->router_ms += one->router_ms; acc->routed_ms += one->routed_ms;
+    acc->shared_ms += one->shared_ms; acc->output_ms += one->output_ms; acc->total_ms += one->total_ms;
+    acc->routed_load_ms += one->routed_load_ms; acc->routed_gpu_ms += one->routed_gpu_ms; acc->gpu_ms += one->gpu_ms;
+    acc->expert_loads = one->expert_loads; acc->cache_hits = one->cache_hits; acc->cache_misses = one->cache_misses;
+    acc->ssd_bytes = one->ssd_bytes; acc->ssd_reads = one->ssd_reads; acc->resident_slots = one->resident_slots;
+    acc->slot_capacity = one->slot_capacity;
+}
+
+int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens, uint32_t count,
+                      float *logits, rl_engine_step_stats *stats, char *error, size_t cap) {
+    if (!e) { set_error(error, cap, "engine required"); return 0; }
+    rl_backend_state *s = state_for(e, b);
+    if (!s) { set_error(error, cap, "backend not enabled"); return 0; }
+    if (!tokens || !count) { set_error(error, cap, "prefill needs at least one token"); return 0; }
+    for (uint32_t i = 0; i < count; ++i) if (tokens[i] >= e->info.vocab) { set_error(error, cap, "token id out of range"); return 0; }
+    if (count > e->info.context - s->position) { set_error(error, cap, "context capacity exhausted"); return 0; }
+    rl_engine_step_stats local;
+    if (!stats) stats = &local;
+    memset(stats, 0, sizeof(*stats));
+    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 32u;
+    if (b == RL_BACKEND_CPU || batch == 1u) {
+        for (uint32_t i = 0; i < count; ++i) {
+            rl_engine_step_stats one;
+            memset(&one, 0, sizeof(one));
+            const int ok = b == RL_BACKEND_CPU
+                ? rl_engine_cpu_step(e, tokens[i], i + 1u == count ? logits : NULL, &one, error, cap)
+#ifdef __APPLE__
+                : rl_metal_engine_step(e, e->metal, tokens[i], i + 1u == count ? logits : NULL, &one, error, cap);
+#else
+                : 0;
+#endif
+            if (!ok) return 0;
+            stats_accumulate(stats, &one);
+        }
+        return 1;
+    }
+#ifdef __APPLE__
+    return rl_metal_engine_prefill(e, e->metal, tokens, count, logits, stats, error, cap);
+#else
+    set_error(error, cap, "Metal backend unavailable"); return 0;
+#endif
+}
+
 int rl_engine_step(rl_engine *e, rl_engine_backend b, uint32_t token, float *logits,
                    rl_engine_step_stats *stats, char *error, size_t cap) {
     if (!e) { set_error(error, cap, "engine required"); return 0; }
@@ -351,6 +396,8 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *e, rl_engine_backend 
     if (!s || layer >= e->info.n_layer) return NULL;
     return s->router_ids + (size_t)layer * RL_ENGINE_MAX_TOPK;
 }
+
+double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
 
 int rl_engine_embed_token(const rl_engine *e, uint32_t token, float *out, char *error, size_t cap) {
     if (!e || !out) { set_error(error, cap, "invalid embed arguments"); return 0; }

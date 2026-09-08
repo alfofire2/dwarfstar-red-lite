@@ -91,7 +91,10 @@ static void usage(FILE *out) {
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
         "  redlite-engine tokenize MODEL --file CORPUS [--no-special]   (one input per line, \\n \\t \\\\ escapes; one id list per line)\n"
         "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers]\n"
-        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--dump-last | --dump-from N] [--context N] [--cache-mib N]\n"
+        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--dump-last | --dump-from N] [--batch N] [--context N] [--cache-mib N]\n"
+        "      --batch N: ingest the tokens before --dump-from with the batched Metal prefill (chunks of N) instead of token by token\n"
+        "  redlite-engine prefill MODEL --tokens a,b,c [--batch N] [--cpu] [--context N] [--cache-mib N]\n"
+        "      batched Metal prefill vs token-by-token Metal steps (and the CPU oracle with --cpu): last-token layer outputs, router ids, logits\n"
         "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n");
 }
 
@@ -120,14 +123,15 @@ int main(int argc, char **argv) {
     const char *backend_name = "gpu";
     const char *out_path = NULL;
     const char *text = NULL, *corpus = NULL;
-    int report_layers = 0, no_special = 0, chat = 0, dump_last = 0;
-    uint32_t dump_from = 0;
+    int report_layers = 0, no_special = 0, chat = 0, dump_last = 0, with_cpu = 0;
+    uint32_t dump_from = 0, batch = 0;
     int router_layer = -1;
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--layers") == 0) { report_layers = 1; continue; }
         if (strcmp(argv[i], "--no-special") == 0) { no_special = 1; continue; }
         if (strcmp(argv[i], "--chat") == 0) { chat = 1; continue; }
         if (strcmp(argv[i], "--dump-last") == 0) { dump_last = 1; continue; }
+        if (strcmp(argv[i], "--cpu") == 0) { with_cpu = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--tokens") == 0) {
             token_count = parse_tokens(argv[++i], tokens, 4096u);
@@ -140,6 +144,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
         else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
         else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
+        else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &batch)) return 2; }
         else if (strcmp(argv[i], "--router-layer") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; router_layer = (int)v; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
@@ -203,13 +208,25 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "logits") == 0) {
         const int gpu = strcmp(backend_name, "gpu") == 0;
         cfg.enable_cpu = !gpu; cfg.enable_gpu = gpu;
+        cfg.prefill_batch = batch;
         rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
         if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
         const rl_engine_info *in = rl_engine_info_get(e);
         float *logits = (float *)malloc((size_t)in->vocab * sizeof(float));
         FILE *out = out_path ? fopen(out_path, "wb") : NULL;
         if (out_path && !out) { fprintf(stderr, "cannot open %s\n", out_path); rl_engine_close(e); return 1; }
-        for (uint32_t i = 0; i < token_count; ++i) {
+        uint32_t first = 0;
+        if (gpu && batch > 1u && dump_from > 0u) {
+            const uint32_t n = dump_from < token_count ? dump_from : token_count - 1u;
+            rl_engine_step_stats st;
+            const double t0 = rl_engine_now_ms_public();
+            if (!rl_engine_prefill(e, RL_BACKEND_GPU, tokens, n, NULL, &st, error, sizeof(error))) {
+                fprintf(stderr, "prefill failed: %s\n", error); rl_engine_close(e); return 1;
+            }
+            printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, batch, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
+            first = n;
+        }
+        for (uint32_t i = first; i < token_count; ++i) {
             rl_engine_step_stats st;
             if (!rl_engine_step(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU, tokens[i], logits, &st, error, sizeof(error))) {
                 fprintf(stderr, "step %u failed: %s\n", i, error); rl_engine_close(e); return 1;
@@ -235,6 +252,92 @@ int main(int argc, char **argv) {
         free(logits);
         rl_engine_close(e);
         return 0;
+    }
+
+    if (strcmp(cmd, "prefill") == 0) {
+        cfg.enable_cpu = with_cpu; cfg.enable_gpu = 1;
+        cfg.prefill_batch = batch ? batch : 32u;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const rl_engine_info *in = rl_engine_info_get(e);
+        const size_t hb = (size_t)in->hidden;
+        float *seq_logits = (float *)malloc((size_t)in->vocab * sizeof(float));
+        float *bat_logits = (float *)malloc((size_t)in->vocab * sizeof(float));
+        float *cpu_logits = with_cpu ? (float *)malloc((size_t)in->vocab * sizeof(float)) : NULL;
+        float *seq_layers = (float *)malloc((size_t)in->n_layer * hb * sizeof(float));
+        float *seq_final = (float *)malloc(hb * sizeof(float));
+        uint32_t *seq_ids = (uint32_t *)malloc((size_t)in->n_layer * in->top_k * sizeof(uint32_t));
+        if (!seq_logits || !bat_logits || !seq_layers || !seq_final || !seq_ids || (with_cpu && !cpu_logits)) { fprintf(stderr, "allocation failed\n"); return 1; }
+        printf("runtime              : native Qwen3-Next batched prefill parity (chunks of %u)\n", cfg.prefill_batch);
+        print_info(in);
+        printf("tokens               : %u\n", token_count);
+        /* 1. token-by-token Metal */
+        rl_engine_step_stats st;
+        double t0 = rl_engine_now_ms_public();
+        for (uint32_t i = 0; i < token_count; ++i) {
+            if (!rl_engine_step(e, RL_BACKEND_GPU, tokens[i], i + 1u == token_count ? seq_logits : NULL, &st, error, sizeof(error))) {
+                fprintf(stderr, "sequential step %u failed: %s\n", i, error); return 1;
+            }
+        }
+        const double seq_ms = rl_engine_now_ms_public() - t0;
+        for (uint32_t l = 0; l < in->n_layer; ++l) {
+            memcpy(seq_layers + (size_t)l * hb, rl_engine_last_layer_output(e, RL_BACKEND_GPU, l), hb * sizeof(float));
+            memcpy(seq_ids + (size_t)l * in->top_k, rl_engine_last_router_ids(e, RL_BACKEND_GPU, l), (size_t)in->top_k * sizeof(uint32_t));
+        }
+        memcpy(seq_final, rl_engine_last_final_norm(e, RL_BACKEND_GPU), hb * sizeof(float));
+        /* 2. batched Metal prefill after a reset */
+        if (!rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error))) { fprintf(stderr, "reset failed: %s\n", error); return 1; }
+        memset(&st, 0, sizeof(st));
+        t0 = rl_engine_now_ms_public();
+        if (!rl_engine_prefill(e, RL_BACKEND_GPU, tokens, token_count, bat_logits, &st, error, sizeof(error))) {
+            fprintf(stderr, "batched prefill failed: %s\n", error); return 1;
+        }
+        const double bat_ms = rl_engine_now_ms_public() - t0;
+        int ok = rl_engine_position(e, RL_BACKEND_GPU) == token_count;
+        double worst_layer = 0.0;
+        uint32_t id_mismatch = 0;
+        for (uint32_t l = 0; l < in->n_layer; ++l) {
+            const cmp c = compare(rl_engine_last_layer_output(e, RL_BACKEND_GPU, l), seq_layers + (size_t)l * hb, hb);
+            if (c.max_abs > worst_layer) worst_layer = c.max_abs;
+            const uint32_t *bid = rl_engine_last_router_ids(e, RL_BACKEND_GPU, l);
+            uint32_t mism = 0;
+            for (uint32_t k = 0; k < in->top_k; ++k) if (bid[k] != seq_ids[(size_t)l * in->top_k + k]) mism++;
+            id_mismatch += mism;
+            if (report_layers || mism) printf("layer %2u : max_abs=%.3e (rel %.3e) router_mismatch=%u\n", l, c.max_abs, c.max_rel, mism);
+        }
+        const cmp cf = compare(rl_engine_last_final_norm(e, RL_BACKEND_GPU), seq_final, hb);
+        const cmp cl = compare(bat_logits, seq_logits, in->vocab);
+        const uint32_t a_seq = argmax(seq_logits, in->vocab), a_bat = argmax(bat_logits, in->vocab);
+        printf("sequential Metal     : %.1f ms (%.1f tok/s)\n", seq_ms, token_count * 1000.0 / seq_ms);
+        printf("batched Metal        : %.1f ms (%.1f tok/s), dense GPU %.1f ms, experts GPU %.1f ms, expert loads %.1f ms\n",
+            bat_ms, token_count * 1000.0 / bat_ms, st.gpu_ms, st.routed_gpu_ms, st.routed_load_ms);
+        printf("worst layer abs      : %.6g\n", worst_layer);
+        printf("final norm abs       : %.6g\n", cf.max_abs);
+        printf("logits abs           : %.6g (argmax batched=%u sequential=%u)\n", cl.max_abs, a_bat, a_seq);
+        printf("router id mismatches : %u\n", id_mismatch);
+        ok = ok && id_mismatch == 0 && a_seq == a_bat && cl.max_abs <= 1e-2 && worst_layer <= 1e-2;
+        if (with_cpu) {
+            memset(&st, 0, sizeof(st));
+            t0 = rl_engine_now_ms_public();
+            if (!rl_engine_prefill(e, RL_BACKEND_CPU, tokens, token_count, cpu_logits, &st, error, sizeof(error))) {
+                fprintf(stderr, "CPU oracle failed: %s\n", error); return 1;
+            }
+            const cmp cc = compare(bat_logits, cpu_logits, in->vocab);
+            const uint32_t a_cpu = argmax(cpu_logits, in->vocab);
+            uint32_t cpu_mism = 0;
+            for (uint32_t l = 0; l < in->n_layer; ++l) {
+                const uint32_t *cid = rl_engine_last_router_ids(e, RL_BACKEND_CPU, l);
+                const uint32_t *bid = rl_engine_last_router_ids(e, RL_BACKEND_GPU, l);
+                for (uint32_t k = 0; k < in->top_k; ++k) if (cid[k] != bid[k]) cpu_mism++;
+            }
+            printf("CPU oracle           : %.1f ms; logits abs vs batched %.6g (argmax cpu=%u), router id mismatches %u\n",
+                rl_engine_now_ms_public() - t0, cc.max_abs, a_cpu, cpu_mism);
+            ok = ok && cpu_mism == 0 && a_cpu == a_bat && cc.max_abs <= 1e-2;
+        }
+        printf("BATCHED PREFILL PARITY: %s\n", ok ? "YES" : "NO");
+        free(seq_logits); free(bat_logits); free(cpu_logits); free(seq_layers); free(seq_final); free(seq_ids);
+        rl_engine_close(e);
+        return ok ? 0 : 3;
     }
 
     if (strcmp(cmd, "parity") != 0) { usage(stderr); return 2; }

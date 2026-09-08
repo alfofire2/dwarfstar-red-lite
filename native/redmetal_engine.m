@@ -24,7 +24,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
-#include "redlite_native_engine_internal.h"
+#include "redmetal_engine_private.h"
 #include "redlite_native_metal.h"
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_router_exec.h"
@@ -319,50 +319,7 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    if (gid >= count) return; const float g = gate[gid]; act[gid] = (g / (1.0f + exp(-g))) * up[gid];\n"
 "}\n";
 
-typedef struct {
-    __unsafe_unretained id<MTLBuffer> buf;
-    NSUInteger off;
-    uint32_t type;
-    uint32_t rows;
-    uint32_t cols;
-} mweight;
-
-typedef struct {
-    mweight attn_norm, post_norm;
-    mweight qkv, z, ba, conv, dt, a, ssm_norm, ssm_out;
-    mweight q, k, v, q_norm, k_norm, o;
-    mweight router, sh_gate_inp, sh_gate, sh_up, sh_down;
-} mlayer;
-
-struct rl_metal_engine {
-    int profile;
-    double prof_ms[16];
-    id<MTLDevice> dev;
-    id<MTLCommandQueue> queue;
-    id<MTLLibrary> lib;
-    id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
-    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
-    id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;
-    id<MTLBuffer> grid;
-    mlayer *layers;
-    mweight output_norm, output;
-    __unsafe_unretained id<MTLBuffer> *conv_state, *rec_state, *kcache, *vcache;
-    NSMutableArray *keep;
-    uint32_t n_recurrent, n_attention;
-    id<MTLBuffer> x, normed, branch, resid, ffn_in;
-    id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, delta, core, ng, next_conv, rec_scratch;
-    id<MTLBuffer> qgate_raw, k_raw, value, query, agate, key, query_rope, gated;
-    id<MTLBuffer> router_logits, sh_gate, sh_up, sh_act, sh_out, scalar, routed, final_norm, logits;
-    rl_native_metal_runtime *experts;
-    float *routed_host;
-    uint64_t resident_bytes;
-    uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
-    double last_read_ms;
-};
-
-static id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
+id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
     id<MTLFunction> fn = [lib newFunctionWithName:name];
     if (!fn) { snprintf(error, cap, "missing Metal function %s", name.UTF8String); return nil; }
     NSError *e = nil;
@@ -371,7 +328,7 @@ static id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> l
     return p;
 }
 
-static id<MTLBuffer> new_buf(rl_metal_engine *m, size_t bytes) {
+id<MTLBuffer> new_buf(rl_metal_engine *m, size_t bytes) {
     id<MTLBuffer> b = [m->dev newBufferWithLength:bytes ? bytes : 16u options:MTLResourceStorageModeShared];
     if (b) { m->resident_bytes += bytes; [m->keep addObject:b]; }
     return b;
@@ -407,7 +364,7 @@ static int wrap_tensor(rl_metal_engine *m, const rl_gguf_model *g, const rl_gguf
     return 1;
 }
 
-static id<MTLComputePipelineState> rows_pipe(rl_metal_engine *m, uint32_t type) {
+id<MTLComputePipelineState> rows_pipe(rl_metal_engine *m, uint32_t type) {
     switch (type) {
         case 0: return m->p_rows_f32;
         case 8: return m->p_rows_q8;
@@ -423,12 +380,12 @@ static double redmetal_topk_pool_read_ms_total(struct rl_metal_engine *m) {
     return rl_native_metal_read_ms(m->experts);
 }
 
-static void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max) {
+void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max) {
     const NSUInteger tg = MIN(tg_max, p.maxTotalThreadsPerThreadgroup);
     [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg ? tg : 1, 1, 1)];
 }
 
-static uint32_t lanes_for(uint32_t type, uint32_t ncols) {
+uint32_t lanes_for(uint32_t type, uint32_t ncols) {
     uint32_t blocks;
     if (type == 0u) blocks = ncols / 64u;          /* F32: strided lanes */
     else if (type == 8u) blocks = ncols / 32u;
@@ -439,7 +396,7 @@ static uint32_t lanes_for(uint32_t type, uint32_t ncols) {
 }
 
 /* out[row] = W[row] . x for all rows of the weight */
-static void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out) {
+void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out) {
     id<MTLComputePipelineState> p = rows_pipe(m, w->type);
     const uint32_t lanes = lanes_for(w->type, w->cols);
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
@@ -456,7 +413,7 @@ static void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight 
     [enc endEncoding];
 }
 
-static void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps) {
+void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps) {
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:m->p_rms];
     [enc setBuffer:x offset:0 atIndex:0];
@@ -490,7 +447,7 @@ void rl_metal_engine_profile_report(rl_metal_engine *m) {
     for (int i = 0; i < 14; ++i) fprintf(stderr, "  %-16s %.2f ms\n", kStageNames[i], m->prof_ms[i]);
 }
 
-static int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap) {
+int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap) {
     [cb commit];
     [cb waitUntilCompleted];
     if (cb.status != MTLCommandBufferStatusCompleted || cb.error) {
@@ -617,6 +574,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     if (!m) return;
     rl_metal_engine_profile_report(m);
     if (m->experts) rl_native_metal_destroy(m->experts);
+    if (m->pf) rl_metal_prefill_destroy(m->pf);
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;

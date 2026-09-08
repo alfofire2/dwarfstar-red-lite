@@ -72,6 +72,7 @@ static void usage(FILE *out) {
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N       routed-expert cache budget in MiB (default 4096)\n"
+        "  --batch N           prompt tokens per batched Metal prefill chunk (default 32, 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
         "  --tokens-out FILE   write prompt+generated token ids (one per line)\n");
@@ -192,11 +193,8 @@ static int interactive_chat(
 
         rl_engine_step_stats step = {0};
         const double prefill_start = now_ms();
-        for (uint32_t i = 0; i < prompt_tokens; ++i) {
-            if (!rl_engine_step(engine, RL_BACKEND_GPU, ids[i],
-                    i + 1u == prompt_tokens ? logits : NULL, &step, error, error_cap)) {
-                free(ids); free(logits); free(answer); free(line); return 0;
-            }
+        if (!rl_engine_prefill(engine, RL_BACKEND_GPU, ids, prompt_tokens, logits, &step, error, error_cap)) {
+            free(ids); free(logits); free(answer); free(line); return 0;
         }
         const double prefill_ms = now_ms() - prefill_start;
         printf("redlite> ");
@@ -277,6 +275,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--seed") == 0) { char *end = NULL; sp.seed = strtoull(argv[++i], &end, 10); if (!end || *end) return 2; }
         else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
         else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }
+        else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &cfg.prefill_batch)) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); usage(stderr); return 2; }
     }
     if (!prompt && !interactive) { fprintf(stderr, "--prompt is required (or use --interactive)\n"); return 2; }
@@ -328,13 +327,11 @@ int main(int argc, char **argv) {
     rl_sampler sampler;
     if (!logits || !rl_sampler_init(&sampler, &sp, in->vocab)) { fprintf(stderr, "sampler allocation failed\n"); return 1; }
 
-    /* prefill: every prompt token, LM head only on the last */
+    /* prefill: batched Metal ingestion of the prompt (chunks of --batch), LM head on the last token */
     rl_engine_step_stats st;
     const double t_prefill = now_ms();
-    for (uint32_t i = 0; i < prompt_len; ++i) {
-        if (!rl_engine_step(e, RL_BACKEND_GPU, ids[i], i + 1u == prompt_len ? logits : NULL, &st, error, sizeof(error))) {
-            fprintf(stderr, "prefill failed at token %u: %s\n", i, error); return 1;
-        }
+    if (!rl_engine_prefill(e, RL_BACKEND_GPU, ids, prompt_len, logits, &st, error, sizeof(error))) {
+        fprintf(stderr, "prefill failed: %s\n", error); return 1;
     }
     const double prefill_ms = now_ms() - t_prefill;
 

@@ -45,6 +45,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_topk.m" \
     "$ROOT/native/redmetal_router.m" \
     "$ROOT/native/redmetal_engine.m" \
+    "$ROOT/native/redmetal_engine_prefill.m" \
     -framework Foundation -framework Metal -lm -lpthread \
     -o "$OUT/redlite-engine"
   "$OUT/redlite-engine" --help >/dev/null || true
@@ -59,6 +60,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_topk.m" \
     "$ROOT/native/redmetal_router.m" \
     "$ROOT/native/redmetal_engine.m" \
+    "$ROOT/native/redmetal_engine_prefill.m" \
     -framework Foundation -framework Metal -lm -lpthread \
     -o "$OUT/redlite-generate"
   "$OUT/redlite-generate" --help >/dev/null
