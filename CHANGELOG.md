@@ -50,10 +50,15 @@ Hardening round (2026-09-08), from the post-dev18 audit:
   2 GiB cache (1 GiB gives 56 %); the 25.9 tok/s progression rows were measured
   with an 8 GiB cache; the chat template is hard-coded, not interpreted from the
   GGUF; the CPU oracle accumulates row dots in double but carries float32 state.
-- Observation (not a benchmark): after these changes the same 19-token prompt
-  measured 39–40 generation tok/s at 1, 2 and 4 GiB cache sizes with the whole
-  GGUF warm in the macOS page cache from the preceding oracle runs; hit rates
-  and SSD bytes per token were unchanged from dev18.
+- Test machine: this round was validated on an **Apple M4 Max with 48 GiB**
+  (the M4 Pro 24 GiB of the dev18 record is no longer the local machine). On
+  the M4 Max the same 19-token prompt generates at 34–37 tok/s with the
+  default 4 GiB cache (29–31 ms step, ~13 ms of it expert miss loading from
+  the page cache), 33.6 tok/s with 8 GiB, 39–40 tok/s in fully warm 40-token
+  runs, and ~21 tok/s when misses come from the SSD; hit rates and SSD bytes
+  per token are prompt-determined and identical to the M4 Pro record.
+  Recorded in `benchmarks/m4max-48gb-native-dev19.json`. The 24 GiB
+  memory-pressure conclusions of dev18 are unaffected but were not re-measured.
 
 ## 0.3.0.dev18 — 2026-09-03
 

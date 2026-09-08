@@ -222,8 +222,10 @@ resident.
   1035 (experts 403 and 101, both 0.0077861) which the two implementations
   break differently; before the tie, and on a second 1200-token prompt without
   one, the drift at position 1199 is 1.5e-05 max abs / 1e-11 KL, after it the
-  logits differ by up to 1.1 (KL ≤ 6e-3) with identical argmax. Long-context
-  throughput has not been benchmarked.
+  logits differ by up to 1.1 (KL ≤ 6e-3) with identical argmax. This check
+  and the whole hardening round were run on an M4 Max / 48 GiB, where the
+  decode step at positions 1100–1199 is 28–31 ms; long-context throughput on
+  the 24 GiB M4 Pro has not been benchmarked.
 
 ## Final field run (clean build)
 

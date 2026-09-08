@@ -168,7 +168,12 @@ executables, so ABI-visible changes there affect both layers.
   activations/logits/greedy tokens for comparison; it must never be linked into a
   runtime binary, and Python stays development-only.
 - **Honesty about validation is a project rule.** Docs and CHANGELOG distinguish
-  "implemented", "synthetically tested", and "field-validated on the M4 Pro". Do not
+  "implemented", "synthetically tested", and "field-validated" **naming the machine**:
+  the dev18 record and the 24 GiB memory policy come from an Apple M4 Pro / 24 GiB;
+  since 2026-09-08 the local test machine is an Apple M4 Max / 48 GiB (`redlite doctor`
+  prints which one you are on). Never attribute a number to the M4 Pro unless it was
+  measured there, and prefer running `scripts/regress_m4.sh` locally over the GitHub
+  workflows. Do not
   describe a stage as validated, or claim GPU expert streaming / throughput, unless a
   real-model parity run on Apple Silicon has passed. Elapsed times from parity tools are
   not benchmarks.

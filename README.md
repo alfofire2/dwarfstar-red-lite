@@ -104,7 +104,8 @@ for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`
 `--no-stream` and `--stats`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
-`benchmarks/m4pro-24gb-native-dev18.json`. Details, validation
+`benchmarks/m4pro-24gb-native-dev18.json`. On an M4 Max / 48 GiB the same
+setting gives 34–37 tok/s (`benchmarks/m4max-48gb-native-dev19.json`). Details, validation
 numbers and limits: `docs/REDLITE_DEV18_ENGINE.md`; regression suite:
 `scripts/regress_m4.sh MODEL.gguf`.
 

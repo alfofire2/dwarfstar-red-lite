@@ -1,0 +1,29 @@
+{
+  "profile": "native-engine-dev19-hardening-m4max-48gb-2026-09-08",
+  "hardware": "Apple M4 Max, 48 GiB unified memory, 12 performance + 4 efficiency cores, macOS 26.7",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf (17.97 GiB, Bartowski)",
+  "runtime": "redlite-generate (native C/Objective-C/Metal, no llama.cpp, no Python), built with -mcpu=native on this machine",
+  "commit_of_run": "24df4c72db7f13eed59946df70e2b84ac07609e2",
+  "prompt": "Explain in one sentence why the sky is blue.",
+  "template_tokens": 19,
+  "generated_tokens": 28,
+  "generated_ids_identical_to_dev18_m4pro_record_and_pinned_llama_cpp_greedy": true,
+  "runs": [
+    {"label": "--cache-mib 4096, expert misses served from SSD (page cache churned by preceding oracle runs)",
+     "prompt_tps": 12.59, "generation_tps": 21.09, "decode_step_ms": 41.0, "miss_load_ms_per_step": 50.7,
+     "expert_cache_hit_rate": 0.792, "ssd_mib_per_token": 71.2, "peak_rss_mib": 3476.3, "phys_footprint_mib": 4577.2},
+    {"label": "--cache-mib 4096, back-to-back run 1 (page cache warm)", "prompt_tps": 27.61, "generation_tps": 35.55, "decode_step_ms": 29.8, "miss_load_ms_per_step": 13.1, "phys_footprint_mib": 4577.1},
+    {"label": "--cache-mib 4096, back-to-back run 2", "prompt_tps": 24.45, "generation_tps": 34.90, "decode_step_ms": 30.6, "miss_load_ms_per_step": 12.5, "phys_footprint_mib": 4577.4},
+    {"label": "--cache-mib 4096, back-to-back run 3", "prompt_tps": 25.19, "generation_tps": 36.74, "decode_step_ms": 29.2, "miss_load_ms_per_step": 13.0, "phys_footprint_mib": 4577.3},
+    {"label": "--cache-mib 8192, first run", "prompt_tps": 25.07, "generation_tps": 34.03, "decode_step_ms": 30.5, "miss_load_ms_per_step": 15.2,
+     "expert_cache_hit_rate": 0.805, "ssd_mib_per_token": 66.5, "peak_rss_mib": 4653.1, "phys_footprint_mib": 6032.3},
+    {"label": "--cache-mib 8192, back-to-back run 1", "prompt_tps": 25.99, "generation_tps": 33.63, "decode_step_ms": 32.6, "miss_load_ms_per_step": 14.9, "phys_footprint_mib": 6032.3},
+    {"label": "--cache-mib 8192, back-to-back run 2", "prompt_tps": 25.43, "generation_tps": 33.62, "decode_step_ms": 32.4, "miss_load_ms_per_step": 13.8, "phys_footprint_mib": 6032.1},
+    {"label": "earlier the same day, 40-token runs, page cache fully warm", "cache_mib": [1024, 2048, 4096], "generation_tps": [39.95, 40.46, 39.38],
+     "expert_cache_hit_rate": [0.562, 0.696, 0.792], "ssd_mib_per_token": [150.0, 104.7, 71.2], "phys_footprint_mib": [1502.8, 2527.4, 4576.6]}
+  ],
+  "long_context": {"prompt": "tests/fixtures/long_context_prompt.txt cut to 1200 tokens", "cache_mib": 2048, "context": 1536,
+    "decode_step_ms_at_positions_1197_1199": [31.3, 29.8, 28.4], "note": "token-by-token prefill; llama.cpp argmax identical at positions 1000-1199"},
+  "regression": "scripts/regress_m4.sh: 34/34 on this machine at this commit",
+  "caveat": "Single machine, single session. Throughput on this 48 GiB machine is bounded by expert miss loading (13-15 ms of the ~30 ms step) when the GGUF is warm in the page cache and drops to ~21 tok/s when misses come from the SSD; the hit rates and SSD bytes per token are prompt-determined and identical to the M4 Pro 24 GiB record. The dev18 figures in benchmarks/m4pro-24gb-native-dev18.json are from the M4 Pro 24 GiB and are not comparable."
+}
