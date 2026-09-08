@@ -59,6 +59,12 @@ Hardening round (2026-09-08), from the post-dev18 audit:
   per token are prompt-determined and identical to the M4 Pro record.
   Recorded in `benchmarks/m4max-48gb-native-dev19.json`. The 24 GiB
   memory-pressure conclusions of dev18 are unaffected but were not re-measured.
+- Resident ceiling on the M4 Max: with a 17 GiB expert cache and the experts
+  of the previous turn resident, the third identical chat turn decodes at
+  42.6 tok/s (24 ms step); the pinned llama.cpp fully resident measures
+  68.0 tok/s decode and 338.6 tok/s prompt processing (`llama-bench`, pp48 /
+  tg64). Expert prefetch therefore caps at ~20 % on decode here; the 8–13×
+  prompt-ingestion gap makes batched prefill the dev20 milestone.
 
 ## 0.3.0.dev18 — 2026-09-03
 

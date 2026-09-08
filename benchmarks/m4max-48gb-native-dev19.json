@@ -9,21 +9,142 @@
   "generated_tokens": 28,
   "generated_ids_identical_to_dev18_m4pro_record_and_pinned_llama_cpp_greedy": true,
   "runs": [
-    {"label": "--cache-mib 4096, expert misses served from SSD (page cache churned by preceding oracle runs)",
-     "prompt_tps": 12.59, "generation_tps": 21.09, "decode_step_ms": 41.0, "miss_load_ms_per_step": 50.7,
-     "expert_cache_hit_rate": 0.792, "ssd_mib_per_token": 71.2, "peak_rss_mib": 3476.3, "phys_footprint_mib": 4577.2},
-    {"label": "--cache-mib 4096, back-to-back run 1 (page cache warm)", "prompt_tps": 27.61, "generation_tps": 35.55, "decode_step_ms": 29.8, "miss_load_ms_per_step": 13.1, "phys_footprint_mib": 4577.1},
-    {"label": "--cache-mib 4096, back-to-back run 2", "prompt_tps": 24.45, "generation_tps": 34.90, "decode_step_ms": 30.6, "miss_load_ms_per_step": 12.5, "phys_footprint_mib": 4577.4},
-    {"label": "--cache-mib 4096, back-to-back run 3", "prompt_tps": 25.19, "generation_tps": 36.74, "decode_step_ms": 29.2, "miss_load_ms_per_step": 13.0, "phys_footprint_mib": 4577.3},
-    {"label": "--cache-mib 8192, first run", "prompt_tps": 25.07, "generation_tps": 34.03, "decode_step_ms": 30.5, "miss_load_ms_per_step": 15.2,
-     "expert_cache_hit_rate": 0.805, "ssd_mib_per_token": 66.5, "peak_rss_mib": 4653.1, "phys_footprint_mib": 6032.3},
-    {"label": "--cache-mib 8192, back-to-back run 1", "prompt_tps": 25.99, "generation_tps": 33.63, "decode_step_ms": 32.6, "miss_load_ms_per_step": 14.9, "phys_footprint_mib": 6032.3},
-    {"label": "--cache-mib 8192, back-to-back run 2", "prompt_tps": 25.43, "generation_tps": 33.62, "decode_step_ms": 32.4, "miss_load_ms_per_step": 13.8, "phys_footprint_mib": 6032.1},
-    {"label": "earlier the same day, 40-token runs, page cache fully warm", "cache_mib": [1024, 2048, 4096], "generation_tps": [39.95, 40.46, 39.38],
-     "expert_cache_hit_rate": [0.562, 0.696, 0.792], "ssd_mib_per_token": [150.0, 104.7, 71.2], "phys_footprint_mib": [1502.8, 2527.4, 4576.6]}
+    {
+      "label": "--cache-mib 4096, expert misses served from SSD (page cache churned by preceding oracle runs)",
+      "prompt_tps": 12.59,
+      "generation_tps": 21.09,
+      "decode_step_ms": 41.0,
+      "miss_load_ms_per_step": 50.7,
+      "expert_cache_hit_rate": 0.792,
+      "ssd_mib_per_token": 71.2,
+      "peak_rss_mib": 3476.3,
+      "phys_footprint_mib": 4577.2
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 1 (page cache warm)",
+      "prompt_tps": 27.61,
+      "generation_tps": 35.55,
+      "decode_step_ms": 29.8,
+      "miss_load_ms_per_step": 13.1,
+      "phys_footprint_mib": 4577.1
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 2",
+      "prompt_tps": 24.45,
+      "generation_tps": 34.9,
+      "decode_step_ms": 30.6,
+      "miss_load_ms_per_step": 12.5,
+      "phys_footprint_mib": 4577.4
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 3",
+      "prompt_tps": 25.19,
+      "generation_tps": 36.74,
+      "decode_step_ms": 29.2,
+      "miss_load_ms_per_step": 13.0,
+      "phys_footprint_mib": 4577.3
+    },
+    {
+      "label": "--cache-mib 8192, first run",
+      "prompt_tps": 25.07,
+      "generation_tps": 34.03,
+      "decode_step_ms": 30.5,
+      "miss_load_ms_per_step": 15.2,
+      "expert_cache_hit_rate": 0.805,
+      "ssd_mib_per_token": 66.5,
+      "peak_rss_mib": 4653.1,
+      "phys_footprint_mib": 6032.3
+    },
+    {
+      "label": "--cache-mib 8192, back-to-back run 1",
+      "prompt_tps": 25.99,
+      "generation_tps": 33.63,
+      "decode_step_ms": 32.6,
+      "miss_load_ms_per_step": 14.9,
+      "phys_footprint_mib": 6032.3
+    },
+    {
+      "label": "--cache-mib 8192, back-to-back run 2",
+      "prompt_tps": 25.43,
+      "generation_tps": 33.62,
+      "decode_step_ms": 32.4,
+      "miss_load_ms_per_step": 13.8,
+      "phys_footprint_mib": 6032.1
+    },
+    {
+      "label": "earlier the same day, 40-token runs, page cache fully warm",
+      "cache_mib": [
+        1024,
+        2048,
+        4096
+      ],
+      "generation_tps": [
+        39.95,
+        40.46,
+        39.38
+      ],
+      "expert_cache_hit_rate": [
+        0.562,
+        0.696,
+        0.792
+      ],
+      "ssd_mib_per_token": [
+        150.0,
+        104.7,
+        71.2
+      ],
+      "phys_footprint_mib": [
+        1502.8,
+        2527.4,
+        4576.6
+      ]
+    }
   ],
-  "long_context": {"prompt": "tests/fixtures/long_context_prompt.txt cut to 1200 tokens", "cache_mib": 2048, "context": 1536,
-    "decode_step_ms_at_positions_1197_1199": [31.3, 29.8, 28.4], "note": "token-by-token prefill; llama.cpp argmax identical at positions 1000-1199"},
+  "long_context": {
+    "prompt": "tests/fixtures/long_context_prompt.txt cut to 1200 tokens",
+    "cache_mib": 2048,
+    "context": 1536,
+    "decode_step_ms_at_positions_1197_1199": [
+      31.3,
+      29.8,
+      28.4
+    ],
+    "note": "token-by-token prefill; llama.cpp argmax identical at positions 1000-1199"
+  },
   "regression": "scripts/regress_m4.sh: 34/34 on this machine at this commit",
-  "caveat": "Single machine, single session. Throughput on this 48 GiB machine is bounded by expert miss loading (13-15 ms of the ~30 ms step) when the GGUF is warm in the page cache and drops to ~21 tok/s when misses come from the SSD; the hit rates and SSD bytes per token are prompt-determined and identical to the M4 Pro 24 GiB record. The dev18 figures in benchmarks/m4pro-24gb-native-dev18.json are from the M4 Pro 24 GiB and are not comparable."
+  "caveat": "Single machine, single session. Throughput on this 48 GiB machine is bounded by expert miss loading (13-15 ms of the ~30 ms step) when the GGUF is warm in the page cache and drops to ~21 tok/s when misses come from the SSD; the hit rates and SSD bytes per token are prompt-determined and identical to the M4 Pro 24 GiB record. The dev18 figures in benchmarks/m4pro-24gb-native-dev18.json are from the M4 Pro 24 GiB and are not comparable.",
+  "resident_ceiling": {
+    "method": "17408 MiB expert cache (20074 slots), three identical chat turns in one interactive session, temperature 0; third turn has its experts resident",
+    "turn_3": {
+      "prompt_tokens": 21,
+      "prompt_s": 0.47,
+      "prompt_tps": 44.7,
+      "generated_tokens": 26,
+      "generation_s": 0.61,
+      "generation_tps": 42.6,
+      "decode_step_ms_est": 24
+    },
+    "turn_2": {
+      "prompt_tokens": 21,
+      "prompt_s": 0.49,
+      "generated_tokens": 33,
+      "generation_s": 0.82,
+      "generation_tps": 40.2
+    },
+    "single_300_token_run_17408": {
+      "generation_tps": 23.93,
+      "hit_rate": 0.962,
+      "ssd_mib_per_token": 12.95,
+      "resident_slots": "11956/20074",
+      "phys_footprint_mib": 10864.0,
+      "note": "first-touch misses continue for the whole run; the cache never fills"
+    },
+    "llama_cpp_pinned_fully_resident_llama_bench": {
+      "pp48_tps": 338.6,
+      "tg64_tps": 68.0,
+      "threads": 12,
+      "runs": 2
+    },
+    "conclusion": "With zero misses the current native kernels reach ~43 tok/s (24 ms/step) vs 68 tok/s for llama.cpp fully resident; expert prefetch can recover at most ~20% of decode on this machine. Prompt ingestion (token-by-token, ~25-45 tok/s) is 8-13x behind llama.cpp's batched prefill (339 tok/s): batched prefill is the next milestone (dev20)."
+  }
 }
