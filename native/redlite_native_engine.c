@@ -319,7 +319,7 @@ static void stats_accumulate(rl_engine_step_stats *acc, const rl_engine_step_sta
     acc->routed_load_ms += one->routed_load_ms; acc->routed_gpu_ms += one->routed_gpu_ms; acc->gpu_ms += one->gpu_ms;
     acc->expert_loads = one->expert_loads; acc->cache_hits = one->cache_hits; acc->cache_misses = one->cache_misses;
     acc->ssd_bytes = one->ssd_bytes; acc->ssd_reads = one->ssd_reads; acc->resident_slots = one->resident_slots;
-    acc->slot_capacity = one->slot_capacity;
+    acc->slot_capacity = one->slot_capacity; acc->expert_plans += one->expert_plans;
 }
 
 int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens, uint32_t count,
@@ -333,7 +333,7 @@ int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens,
     rl_engine_step_stats local;
     if (!stats) stats = &local;
     memset(stats, 0, sizeof(*stats));
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 32u;
+    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
     if (b == RL_BACKEND_CPU || batch == 1u) {
         for (uint32_t i = 0; i < count; ++i) {
             rl_engine_step_stats one;

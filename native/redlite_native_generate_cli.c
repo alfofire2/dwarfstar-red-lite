@@ -57,7 +57,7 @@ static uint64_t phys_footprint_bytes(void) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-generate 0.3.0.dev19 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
+        "redlite-generate 0.3.0.dev20 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
         "  redlite-generate MODEL --prompt \"...\" [options]\n"
         "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"
@@ -72,7 +72,7 @@ static void usage(FILE *out) {
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N       routed-expert cache budget in MiB (default 4096)\n"
-        "  --batch N           prompt tokens per batched Metal prefill chunk (default 32, 1 = token by token)\n"
+        "  --batch N           prompt tokens per batched Metal prefill chunk (default 512, 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
         "  --tokens-out FILE   write prompt+generated token ids (one per line)\n");

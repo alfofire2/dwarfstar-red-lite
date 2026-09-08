@@ -146,5 +146,28 @@
       "runs": 2
     },
     "conclusion": "With zero misses the current native kernels reach ~43 tok/s (24 ms/step) vs 68 tok/s for llama.cpp fully resident; expert prefetch can recover at most ~20% of decode on this machine. Prompt ingestion (token-by-token, ~25-45 tok/s) is 8-13x behind llama.cpp's batched prefill (339 tok/s): batched prefill is the next milestone (dev20)."
+  },
+  "dev20_batched_prefill": {
+    "commit_of_run": "see git log dev20 (a7f5c45 and the dev20b commit)",
+    "prompt": "tests/fixtures/long_context_prompt.txt, first 1100 tokens, 4 GiB expert cache",
+    "token_by_token_tps": 22.6,
+    "chunk_tps": {
+      "32": 33.7,
+      "64": 33.7,
+      "128": 40.3,
+      "256": 49.7,
+      "512": 65.7,
+      "1100": 99.1
+    },
+    "llama_cpp_parity_positions_1100_1199": "argmax identical, ORACLE LOGITS PARITY YES at every chunk size",
+    "prompt_96_tokens_one_chunk": {
+      "cache_mib_4096_tps": 38.1,
+      "cache_mib_12288_experts_resident_tps": 189.2,
+      "dense_gpu_ms": 140.4,
+      "experts_gpu_ms": 313.8,
+      "router_select_ms": 17.0
+    },
+    "mapped_experts_experiment": "RL_PREFILL_MAPPED_EXPERTS=1: numerically identical, 1.9-10.8 tok/s (Metal residency of each layer's expert window per command buffer)",
+    "reference_llama_cpp_pp48_tps": 338.6
   }
 }

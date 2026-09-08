@@ -85,7 +85,7 @@ static uint32_t argmax(const float *v, uint32_t n) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-engine 0.3.0.dev19\n\n"
+        "redlite-engine 0.3.0.dev20\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
@@ -309,8 +309,10 @@ int main(int argc, char **argv) {
         const cmp cl = compare(bat_logits, seq_logits, in->vocab);
         const uint32_t a_seq = argmax(seq_logits, in->vocab), a_bat = argmax(bat_logits, in->vocab);
         printf("sequential Metal     : %.1f ms (%.1f tok/s)\n", seq_ms, token_count * 1000.0 / seq_ms);
-        printf("batched Metal        : %.1f ms (%.1f tok/s), dense GPU %.1f ms, experts GPU %.1f ms, expert loads %.1f ms\n",
-            bat_ms, token_count * 1000.0 / bat_ms, st.gpu_ms, st.routed_gpu_ms, st.routed_load_ms);
+        printf("batched Metal        : %.1f ms (%.1f tok/s), dense GPU %.1f ms, experts GPU %.1f ms, expert loads %.1f ms (summed over reads), expert plans %u\n",
+            bat_ms, token_count * 1000.0 / bat_ms, st.gpu_ms, st.routed_gpu_ms, st.routed_load_ms, st.expert_plans);
+        printf("batched wall split   : embed %.1f, dense recurrent %.1f + attention %.1f, router select %.1f, experts (prepare+GPU+wait) %.1f, output %.1f ms\n",
+            st.embed_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.output_ms);
         printf("worst layer abs      : %.6g\n", worst_layer);
         printf("final norm abs       : %.6g\n", cf.max_abs);
         printf("logits abs           : %.6g (argmax batched=%u sequential=%u)\n", cl.max_abs, a_bat, a_seq);

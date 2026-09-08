@@ -34,7 +34,7 @@
 #define GGML_TYPE_IQ2_XS 17u
 #define GGML_TYPE_IQ1_M 29u
 #define QK_IQ 256u
-#define REDMETAL_TOPK_MAX 64u
+#define REDMETAL_TOPK_MAX 512u   /* experts per encoded plan (a batched-prefill union of several tokens) */
 
 static __thread char g_topk_error[512];
 
@@ -99,7 +99,8 @@ static NSString * const kTopKSource = @
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "\n"
-"struct redmetal_topk_slots { device const uchar *slot[64]; };\n"
+"struct redmetal_topk_slots { device const uchar *slot[512]; };\n"
+"struct redmetal_topk_slots3 { device const uchar *gate[512]; device const uchar *up[512]; device const uchar *down[512]; };\n"
 "\n"
 "inline uint redlite_sign8(uint sign7) {\n"
 "    sign7 &= 127u;\n"
@@ -233,6 +234,101 @@ static NSString * const kTopKSource = @
 "    if (active && lane == 0u) tmp[expert * row_count + r] = acc;\n"
 "}\n"
 "\n"
+/* ---- batched prefill (dev20b): U unique experts serve P (expert, token) pairs sorted by expert ---- */
+/* act[p][row] = SiLU(gate_e[row].x_t) * up_e[row].x_t for every pair p of expert e */
+"kernel void redmetal_topk_gateup_b(\n"
+"    device const redmetal_topk_slots3 &slots [[buffer(0)]],\n"
+"    constant uint &ncols [[buffer(1)]],\n"
+"    constant uint &rows [[buffer(2)]],\n"
+"    constant uint &unused3 [[buffer(3)]],\n"
+"    device const float *x [[buffer(4)]],\n"
+"    device float *act [[buffer(5)]],\n"
+"    device const char *grid [[buffer(6)]],\n"
+"    constant uint &n_expert [[buffer(7)]],\n"
+"    constant uint &type [[buffer(8)]],\n"
+"    constant uint &lanes_per_row [[buffer(9)]],\n"
+"    device const uint *pair_token [[buffer(10)]],\n"
+"    device const uint *expert_start [[buffer(11)]],\n"
+"    uint2 tid [[thread_position_in_grid]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint expert = tid.y;\n"
+"    const uint row = tid.x / lanes_per_row;\n"
+"    const uint lane = uint(simd_lane) % lanes_per_row;\n"
+"    const bool active = expert < n_expert && row < rows;\n"
+"    const uint blocks = ncols / 256u;\n"
+"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
+"    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
+"    const uint p0 = expert < n_expert ? expert_start[expert] : 0u; const uint p1 = expert < n_expert ? expert_start[expert + 1u] : 0u;\n"
+"    const uint ex = expert < n_expert ? expert : 0u;\n"
+"    device const uchar *grow = slots.gate[ex] + ulong(active ? row : 0u) * row_bytes;\n"
+"    device const uchar *urow = slots.up[ex] + ulong(active ? row : 0u) * row_bytes;\n"
+"    for (uint p = p0; p < p1; ++p) {\n"
+"        device const float *xt = x + ulong(pair_token[p]) * ncols;\n"
+"        float g = 0.0f, u = 0.0f;\n"
+"        if (active) {\n"
+"            for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
+"                g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, xt + b * 256u, grid, part, nparts);\n"
+"                u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, xt + b * 256u, grid, part, nparts);\n"
+"            }\n"
+"        }\n"
+"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
+"        if (active && lane == 0u) act[p * rows + row] = (g / (1.0f + exp(-g))) * u;\n"
+"    }\n"
+"}\n"
+"\n"
+/* tmp[p][r] = down_e[r] . act[p] for every pair p of expert e */
+"kernel void redmetal_topk_down_b(\n"
+"    device const redmetal_topk_slots3 &slots [[buffer(0)]],\n"
+"    constant uint &ncols [[buffer(1)]],\n"
+"    constant uint &row_count [[buffer(2)]],\n"
+"    constant uint &unused3 [[buffer(3)]],\n"
+"    device const float *act [[buffer(4)]],\n"
+"    device float *tmp [[buffer(5)]],\n"
+"    device const char *grid [[buffer(6)]],\n"
+"    constant uint &n_expert [[buffer(7)]],\n"
+"    constant uint &type [[buffer(8)]],\n"
+"    constant uint &lanes_per_row [[buffer(9)]],\n"
+"    device const uint *expert_start [[buffer(10)]],\n"
+"    uint2 tid [[thread_position_in_grid]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint expert = tid.y;\n"
+"    const uint r = tid.x / lanes_per_row;\n"
+"    const uint lane = uint(simd_lane) % lanes_per_row;\n"
+"    const bool active = expert < n_expert && r < row_count;\n"
+"    const uint blocks = ncols / 256u;\n"
+"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
+"    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
+"    const uint p0 = expert < n_expert ? expert_start[expert] : 0u; const uint p1 = expert < n_expert ? expert_start[expert + 1u] : 0u;\n"
+"    device const uchar *drow = slots.down[expert < n_expert ? expert : 0u] + ulong(active ? r : 0u) * row_bytes;\n"
+"    for (uint p = p0; p < p1; ++p) {\n"
+"        device const float *xe = act + ulong(p) * ncols; float acc = 0.0f;\n"
+"        if (active) { for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts); }\n"
+"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
+"        if (active && lane == 0u) tmp[p * row_count + r] = acc;\n"
+"    }\n"
+"}\n"
+"\n"
+/* out[t][r] = sum_k weight[pair_k] * tmp[pair_k][r] over the token's top-k pairs in selection order */
+"kernel void redmetal_topk_sum_b(\n"
+"    device const float *tmp [[buffer(0)]],\n"
+"    device const float *pair_weight [[buffer(1)]],\n"
+"    device const uint *tok_pair [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]],\n"
+"    constant uint &row_count [[buffer(4)]],\n"
+"    constant uint &top_k [[buffer(5)]],\n"
+"    constant uint &tok_first [[buffer(6)]],\n"
+"    constant uint &ntok [[buffer(7)]],\n"
+"    uint2 gid [[thread_position_in_grid]]) {\n"
+"    if (gid.x >= row_count || gid.y >= ntok) return;\n"
+"    float acc = 0.0f;\n"
+"    for (uint k = 0; k < top_k; ++k) { const uint p = tok_pair[gid.y * top_k + k]; acc += pair_weight[p] * tmp[p * row_count + gid.x]; }\n"
+"    out[ulong(tok_first + gid.y) * row_count + gid.x] = acc;\n"
+"}\n"
+"\n"
 /* out[r] = sum_e weight[e] * tmp[e][r], experts accumulated in selection order */
 "kernel void redmetal_topk_weighted_sum(\n"
 "    device const float *tmp [[buffer(0)]],\n"
@@ -254,6 +350,16 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _gateupPipeline;
     id<MTLComputePipelineState> _downPipeline;
     id<MTLComputePipelineState> _sumPipeline;
+    id<MTLComputePipelineState> _gateupBPipeline;
+    id<MTLComputePipelineState> _downBPipeline;
+    id<MTLComputePipelineState> _sumBPipeline;
+    id<MTLBuffer> _slotTable3;
+    id<MTLBuffer> _pairTokenBuf;
+    id<MTLBuffer> _pairWeightBuf;
+    id<MTLBuffer> _expertStartBuf;
+    id<MTLBuffer> _tokPairBuf;
+    id<MTLBuffer> _actB;
+    id<MTLBuffer> _tmpB;
     id<MTLBuffer> _iq2Grid;
     id<MTLBuffer> _iq1Grid;
     id<MTLBuffer> _slotTable;
@@ -338,7 +444,10 @@ static NSString * const kTopKSource = @
     id<MTLFunction> gateup = [library newFunctionWithName:@"redmetal_topk_gateup_lanes"];
     id<MTLFunction> down = [library newFunctionWithName:@"redmetal_topk_down_lanes"];
     id<MTLFunction> sum = [library newFunctionWithName:@"redmetal_topk_weighted_sum"];
-    if (!gateup || !down || !sum) {
+    id<MTLFunction> gateupB = [library newFunctionWithName:@"redmetal_topk_gateup_b"];
+    id<MTLFunction> downB = [library newFunctionWithName:@"redmetal_topk_down_b"];
+    id<MTLFunction> sumB = [library newFunctionWithName:@"redmetal_topk_sum_b"];
+    if (!gateup || !down || !sum || !gateupB || !downB || !sumB) {
         topk_set_error("one or more top-k Metal functions were not found");
         return nil;
     }
@@ -360,11 +469,21 @@ static NSString * const kTopKSource = @
         topk_set_error("failed to create top-k weighted sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
+    pipelineError = nil;
+    _gateupBPipeline = [_device newComputePipelineStateWithFunction:gateupB error:&pipelineError];
+    if (!_gateupBPipeline) { topk_set_error("failed to create batched top-k gate/up pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
+    pipelineError = nil;
+    _downBPipeline = [_device newComputePipelineStateWithFunction:downB error:&pipelineError];
+    if (!_downBPipeline) { topk_set_error("failed to create batched top-k down pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
+    pipelineError = nil;
+    _sumBPipeline = [_device newComputePipelineStateWithFunction:sumB error:&pipelineError];
+    if (!_sumBPipeline) { topk_set_error("failed to create batched top-k sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
     _iq2Grid = [_device newBufferWithBytes:iq2Grid length:iq2GridCount options:MTLResourceStorageModeShared];
     _iq1Grid = [_device newBufferWithBytes:iq1Grid length:iq1GridCount options:MTLResourceStorageModeShared];
     _slotTable = [_device newBufferWithLength:REDMETAL_TOPK_MAX * sizeof(uint64_t) options:MTLResourceStorageModeShared];
+    _slotTable3 = [_device newBufferWithLength:3u * REDMETAL_TOPK_MAX * sizeof(uint64_t) options:MTLResourceStorageModeShared];
     _weightBuffer = [_device newBufferWithLength:REDMETAL_TOPK_MAX * sizeof(float) options:MTLResourceStorageModeShared];
-    if (!_iq2Grid || !_iq1Grid || !_slotTable || !_weightBuffer) {
+    if (!_iq2Grid || !_iq1Grid || !_slotTable || !_slotTable3 || !_weightBuffer) {
         topk_set_error("failed to allocate top-k quant grid / table buffers");
         return nil;
     }
@@ -397,6 +516,23 @@ static NSString * const kTopKSource = @
     if (_fd >= 0) close(_fd);
     free(_slotInflight);
     _slotInflight = NULL;
+}
+
+- (int)ensureBatchPairs:(uint32_t)pairs experts:(uint32_t)experts tokens:(uint32_t)ntok topk:(uint32_t)top_k hidden:(uint32_t)hidden ffn:(uint32_t)ffn {
+    const NSUInteger pt = (NSUInteger)pairs * sizeof(uint32_t), pw = (NSUInteger)pairs * sizeof(float);
+    const NSUInteger es = (NSUInteger)(experts + 1u) * sizeof(uint32_t), tp = (NSUInteger)ntok * top_k * sizeof(uint32_t);
+    const NSUInteger actBytes = (NSUInteger)pairs * ffn * sizeof(float), tmpBytes = (NSUInteger)pairs * hidden * sizeof(float);
+    if (!_pairTokenBuf || _pairTokenBuf.length < pt) _pairTokenBuf = [_device newBufferWithLength:pt options:MTLResourceStorageModeShared];
+    if (!_pairWeightBuf || _pairWeightBuf.length < pw) _pairWeightBuf = [_device newBufferWithLength:pw options:MTLResourceStorageModeShared];
+    if (!_expertStartBuf || _expertStartBuf.length < es) _expertStartBuf = [_device newBufferWithLength:es options:MTLResourceStorageModeShared];
+    if (!_tokPairBuf || _tokPairBuf.length < tp) _tokPairBuf = [_device newBufferWithLength:tp options:MTLResourceStorageModeShared];
+    if (!_actB || _actB.length < actBytes) _actB = [_device newBufferWithLength:actBytes options:MTLResourceStorageModeShared];
+    if (!_tmpB || _tmpB.length < tmpBytes) _tmpB = [_device newBufferWithLength:tmpBytes options:MTLResourceStorageModeShared];
+    if (!_pairTokenBuf || !_pairWeightBuf || !_expertStartBuf || !_tokPairBuf || !_actB || !_tmpB) {
+        topk_set_error("failed to allocate batched top-k buffers");
+        return 0;
+    }
+    return 1;
 }
 
 - (int)ensureScratchHidden:(uint32_t)hidden ffn:(uint32_t)ffn {
@@ -820,6 +956,212 @@ int redmetal_topk_pool_execute(
         }
         memcpy(output, [p->_outBuffer contents], (size_t)output_row_count * sizeof(float));
         if (elapsed_ms) *elapsed_ms = ms;
+        return 1;
+    }
+}
+
+/* Batched prefill: n_expert experts addressed by three GPU addresses each (gate/up/down rows) serving
+ * n_pairs (expert, token) pairs sorted by expert. `resident` lists the buffers the addresses live in. */
+static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, NSArray<id<MTLBuffer>> *resident,
+        uint32_t n_expert, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint32_t tok_first, uint32_t ntok, uint32_t top_k, uint32_t n_pairs,
+        const uint32_t *pair_token, const float *pair_weight, const uint32_t *expert_start, const uint32_t *tok_pair,
+        id<MTLBuffer> input, NSUInteger input_offset, id<MTLBuffer> output, NSUInteger output_offset) {
+    id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
+    if (!grid || !cb || !input || !output) { topk_set_error("invalid batched top-k encode buffers"); return 0; }
+    if (![p ensureBatchPairs:n_pairs experts:n_expert tokens:ntok topk:top_k hidden:hidden_size ffn:ffn_size]) return 0;
+    memcpy(p->_pairTokenBuf.contents, pair_token, (size_t)n_pairs * sizeof(uint32_t));
+    memcpy(p->_pairWeightBuf.contents, pair_weight, (size_t)n_pairs * sizeof(float));
+    memcpy(p->_expertStartBuf.contents, expert_start, (size_t)(n_expert + 1u) * sizeof(uint32_t));
+    memcpy(p->_tokPairBuf.contents, tok_pair, (size_t)ntok * top_k * sizeof(uint32_t));
+    const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+    const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
+    const uint32_t zero = 0u;
+
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    if (!enc) { topk_set_error("failed to create batched top-k compute encoder"); return 0; }
+    for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
+    [enc setComputePipelineState:p->_gateupBPipeline];
+    [enc setBuffer:p->_slotTable3 offset:0 atIndex:0];
+    [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
+    [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
+    [enc setBytes:&zero length:sizeof(zero) atIndex:3];
+    [enc setBuffer:input offset:input_offset atIndex:4];
+    [enc setBuffer:p->_actB offset:0 atIndex:5];
+    [enc setBuffer:grid offset:0 atIndex:6];
+    [enc setBytes:&n_expert length:sizeof(n_expert) atIndex:7];
+    [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+    [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
+    [enc setBuffer:p->_pairTokenBuf offset:0 atIndex:10];
+    [enc setBuffer:p->_expertStartBuf offset:0 atIndex:11];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, n_expert, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc endEncoding];
+
+    enc = [cb computeCommandEncoder];
+    for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
+    [enc setComputePipelineState:p->_downBPipeline];
+    [enc setBuffer:p->_slotTable3 offset:0 atIndex:0];
+    [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+    [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:2];
+    [enc setBytes:&zero length:sizeof(zero) atIndex:3];
+    [enc setBuffer:p->_actB offset:0 atIndex:4];
+    [enc setBuffer:p->_tmpB offset:0 atIndex:5];
+    [enc setBuffer:grid offset:0 atIndex:6];
+    [enc setBytes:&n_expert length:sizeof(n_expert) atIndex:7];
+    [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+    [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:9];
+    [enc setBuffer:p->_expertStartBuf offset:0 atIndex:10];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, n_expert, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc endEncoding];
+
+    enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:p->_sumBPipeline];
+    [enc setBuffer:p->_tmpB offset:0 atIndex:0];
+    [enc setBuffer:p->_pairWeightBuf offset:0 atIndex:1];
+    [enc setBuffer:p->_tokPairBuf offset:0 atIndex:2];
+    [enc setBuffer:output offset:output_offset atIndex:3];
+    [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:4];
+    [enc setBytes:&top_k length:sizeof(top_k) atIndex:5];
+    [enc setBytes:&tok_first length:sizeof(tok_first) atIndex:6];
+    [enc setBytes:&ntok length:sizeof(ntok) atIndex:7];
+    [enc dispatchThreads:MTLSizeMake(hidden_size, ntok, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    [enc endEncoding];
+    return 1;
+}
+
+/* slot-pool variant: gate/up/down of expert i live in slot slot_ids[i] at offsets 0 / gate_bytes / gate_bytes+up_bytes */
+static int topk_encode_batched_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32_t *slot_ids, const uint64_t *gate_bytes,
+        const uint64_t *up_bytes, uint32_t n_expert, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint32_t tok_first, uint32_t ntok, uint32_t top_k, uint32_t n_pairs,
+        const uint32_t *pair_token, const float *pair_weight, const uint32_t *expert_start, const uint32_t *tok_pair,
+        id<MTLBuffer> input, NSUInteger input_offset, id<MTLBuffer> output, NSUInteger output_offset) {
+    uint64_t *table = (uint64_t *)[p->_slotTable3 contents];
+    NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithCapacity:n_expert];
+    for (uint32_t i = 0; i < n_expert; ++i) {
+        NSUInteger slotBase = 0;
+        id<MTLBuffer> slab = [p bufferForSlot:slot_ids[i] offset:&slotBase];
+        if (!slab) return 0;
+        uint64_t base = 0;
+        if (@available(macOS 13.0, *)) base = (uint64_t)[slab gpuAddress];
+        if (!base) { topk_set_error("top-k slab did not expose a GPU virtual address"); return 0; }
+        const uint64_t slot = base + (uint64_t)slotBase;
+        table[i] = slot;
+        table[REDMETAL_TOPK_MAX + i] = slot + gate_bytes[0];
+        table[2u * REDMETAL_TOPK_MAX + i] = slot + gate_bytes[0] + up_bytes[0];
+        if (![resident containsObject:slab]) [resident addObject:slab];
+    }
+    if (!topk_encode_batched_dispatch(p, cb, resident, n_expert, ggml_type, hidden_size, ffn_size, tok_first, ntok, top_k, n_pairs,
+            pair_token, pair_weight, expert_start, tok_pair, input, input_offset, output, output_offset)) return 0;
+    mark_slots(p, slot_ids, n_expert, +1);
+    return 1;
+}
+
+int redmetal_topk_pool_encode_mapped(
+        redmetal_topk_pool_t handle,
+        void *mtl_command_buffer,
+        void *gate_buffer, uint64_t gate_addr0,
+        void *up_buffer, uint64_t up_addr0,
+        void *down_buffer, uint64_t down_addr0,
+        uint64_t gate_bytes, uint64_t up_bytes, uint64_t down_bytes,
+        const uint32_t *expert_ids,
+        uint32_t n_expert,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint32_t tok_first,
+        uint32_t ntok,
+        uint32_t top_k,
+        uint32_t n_pairs,
+        const uint32_t *pair_token,
+        const float *pair_weight,
+        const uint32_t *expert_start,
+        const uint32_t *tok_pair,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !mtl_command_buffer || !gate_buffer || !up_buffer || !down_buffer || !expert_ids || !pair_token || !pair_weight ||
+            !expert_start || !tok_pair || !mtl_input_buffer || !mtl_output_buffer) return 0;
+        if (!n_expert || n_expert > REDMETAL_TOPK_MAX || !ntok || !top_k || n_pairs != ntok * top_k) { topk_set_error("invalid mapped top-k request"); return 0; }
+        if ((ggml_type != 17u && ggml_type != 29u) || hidden_size % QK_IQ || ffn_size % QK_IQ) { topk_set_error("mapped top-k supports IQ2_XS/IQ1_M with 256-aligned sizes"); return 0; }
+        if (expert_start[0] != 0u || expert_start[n_expert] != n_pairs) { topk_set_error("mapped top-k expert_start is inconsistent"); return 0; }
+        for (uint32_t i = 0; i < n_pairs; ++i) if (pair_token[i] >= tok_first + ntok) { topk_set_error("mapped top-k pair token out of range"); return 0; }
+        for (uint32_t i = 0; i < ntok * top_k; ++i) if (tok_pair[i] >= n_pairs) { topk_set_error("mapped top-k tok_pair out of range"); return 0; }
+        id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)mtl_command_buffer;
+        id<MTLBuffer> gb = (__bridge id<MTLBuffer>)gate_buffer, ub = (__bridge id<MTLBuffer>)up_buffer, db = (__bridge id<MTLBuffer>)down_buffer;
+        id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
+        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        if (input.length < input_offset + (uint64_t)(tok_first + ntok) * hidden_size * sizeof(float) ||
+            output.length < output_offset + (uint64_t)(tok_first + ntok) * hidden_size * sizeof(float)) {
+            topk_set_error("mapped top-k external buffers are too small");
+            return 0;
+        }
+        uint64_t *table = (uint64_t *)[p->_slotTable3 contents];
+        for (uint32_t i = 0; i < n_expert; ++i) {
+            table[i] = gate_addr0 + (uint64_t)expert_ids[i] * gate_bytes;
+            table[REDMETAL_TOPK_MAX + i] = up_addr0 + (uint64_t)expert_ids[i] * up_bytes;
+            table[2u * REDMETAL_TOPK_MAX + i] = down_addr0 + (uint64_t)expert_ids[i] * down_bytes;
+        }
+        NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithObjects:gb, nil];
+        if (![resident containsObject:ub]) [resident addObject:ub];
+        if (![resident containsObject:db]) [resident addObject:db];
+        if (!topk_encode_batched_dispatch(p, cb, resident, n_expert, ggml_type, hidden_size, ffn_size, tok_first, ntok, top_k, n_pairs,
+                pair_token, pair_weight, expert_start, tok_pair, input, (NSUInteger)input_offset, output, (NSUInteger)output_offset)) {
+            topk_set_error("failed to encode mapped top-k expert execution");
+            return 0;
+        }
+        return 1;
+    }
+}
+
+int redmetal_topk_pool_encode_batched(
+        redmetal_topk_pool_t handle,
+        void *mtl_command_buffer,
+        const uint32_t *slot_ids,
+        const uint64_t *gate_bytes,
+        const uint64_t *up_bytes,
+        const uint64_t *down_bytes,
+        uint32_t n_expert,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint32_t tok_first,
+        uint32_t ntok,
+        uint32_t top_k,
+        uint32_t n_pairs,
+        const uint32_t *pair_token,
+        const float *pair_weight,
+        const uint32_t *expert_start,
+        const uint32_t *tok_pair,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !mtl_command_buffer || !mtl_input_buffer || !mtl_output_buffer || !pair_token || !pair_weight || !expert_start || !tok_pair) return 0;
+        if (!ntok || !top_k || !n_pairs || n_pairs != ntok * top_k || n_pairs > REDMETAL_TOPK_MAX * 64u) { topk_set_error("invalid batched top-k pair layout"); return 0; }
+        /* the per-expert validation of the plain encode covers slot ids, byte layouts and sizes */
+        if (!topk_validate(p, slot_ids, gate_bytes, up_bytes, down_bytes, n_expert, ggml_type, hidden_size, ffn_size, 0u, hidden_size)) return 0;
+        if (expert_start[0] != 0u || expert_start[n_expert] != n_pairs) { topk_set_error("batched top-k expert_start is inconsistent"); return 0; }
+        for (uint32_t i = 0; i < n_pairs; ++i) if (pair_token[i] >= tok_first + ntok) { topk_set_error("batched top-k pair token out of range"); return 0; }
+        for (uint32_t i = 0; i < ntok * top_k; ++i) if (tok_pair[i] >= n_pairs) { topk_set_error("batched top-k tok_pair out of range"); return 0; }
+        id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)mtl_command_buffer;
+        id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
+        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        if (input.length < input_offset + (uint64_t)(tok_first + ntok) * hidden_size * sizeof(float) ||
+            output.length < output_offset + (uint64_t)(tok_first + ntok) * hidden_size * sizeof(float)) {
+            topk_set_error("batched top-k external buffers are too small");
+            return 0;
+        }
+        if (!topk_encode_batched_into(p, cb, slot_ids, gate_bytes, up_bytes, n_expert, ggml_type, hidden_size, ffn_size,
+                tok_first, ntok, top_k, n_pairs, pair_token, pair_weight, expert_start, tok_pair,
+                input, (NSUInteger)input_offset, output, (NSUInteger)output_offset)) {
+            topk_set_error("failed to encode batched top-k expert execution");
+            return 0;
+        }
         return 1;
     }
 }

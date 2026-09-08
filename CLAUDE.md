@@ -33,7 +33,7 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (34 checks incl. pinned llama.cpp comparisons; --quick skips the 48-layer stack and the 1200-token long-context check)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (36 checks incl. pinned llama.cpp comparisons; --quick skips the 48-layer stack and the 1200-token long-context check)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
 make bootstrap                  # clone+build the pinned llama.cpp and oversized-moe-runtime into .deps/ (Apple Silicon only, slow)
 ```
@@ -49,6 +49,8 @@ Real-model parity tools all follow the same shape and only work on macOS with th
 .deps/redmetal/redlite-generate MODEL --prompt "..." --max-tokens 64 --cache-mib 4096 --stats   # native end-to-end generation (4 GiB cache is the recommended default on 24 GiB)
 .deps/redmetal/redlite-engine parity MODEL --tokens 9707,11,1879 --cache-mib 1024 --context 64  # 48-layer CPU-vs-Metal multi-token parity
 .deps/redmetal/redlite-engine tokenize MODEL --text "..." --chat
+.deps/redmetal/redlite-engine prefill MODEL --tokens 9707,11,1879 --batch 8 [--cpu]            # dev20 batched prefill vs token-by-token Metal (and CPU oracle)
+.deps/redmetal/redlite-generate MODEL --prompt "..." --batch 512   # prompt chunk size for the batched prefill (default 512; 1 = token by token)
 RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time profile
 .deps/redmetal/redlite-decoder-stack parity models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-attention-block parity MODEL --layer 3 --position 7 --top-k 10 --cache-mib 256
@@ -101,6 +103,7 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
    residency), and per-substage timings.
 
 4. **Persistent engine** (dev18: `redlite_native_engine*.{h,c}`, `redmetal_engine.m`,
+   dev20 batched prefill: `redmetal_engine_prefill.m` + `redmetal_engine_private.h`,
    `redlite_native_tokenizer.[ch]`, `redlite_native_sampler.[ch]`,
    `redlite_native_generate_cli.c`). `rl_engine` owns the mmap'd GGUF
    (`redlite_native_gguf_dir.[ch]`), the audited per-layer tensor table and two

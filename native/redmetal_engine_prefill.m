@@ -25,10 +25,12 @@
 #include "redmetal_engine_private.h"
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_router_exec.h"
+#include "redmetal_topk.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 static void set_error(char *dst, size_t cap, const char *msg) {
@@ -375,6 +377,12 @@ struct rl_metal_prefill {
     id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm;
     id<MTLBuffer> wdq;       /* dequantized f32 copy of the current dense matrix */
     size_t wdq_floats;
+    /* mapped experts: the routed gate/up/down tensors of every layer wrapped in place from the mmap (no copy) */
+    int mapped;
+    __unsafe_unretained id<MTLBuffer> *exp_gate, *exp_up, *exp_down;
+    uint64_t *exp_gate_addr0, *exp_up_addr0, *exp_down_addr0;   /* GPU address of expert 0 in each */
+    uint64_t *exp_gate_bytes, *exp_up_bytes, *exp_down_bytes;   /* per-expert stride */
+    uint32_t *exp_type;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_sh_scalar, p_sh_silu;
@@ -395,6 +403,9 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
     pf->router_logits = pf->sh_gate = pf->sh_up = pf->sh_act = pf->sh_out = pf->scalar = pf->routed = nil;
     pf->keep = nil; pf->lib = nil;
+    free(pf->exp_gate); free(pf->exp_up); free(pf->exp_down);
+    free(pf->exp_gate_addr0); free(pf->exp_up_addr0); free(pf->exp_down_addr0);
+    free(pf->exp_gate_bytes); free(pf->exp_up_bytes); free(pf->exp_down_bytes); free(pf->exp_type);
     free(pf);
 }
 
@@ -402,6 +413,61 @@ static id<MTLBuffer> pf_buf(rl_metal_engine *m, struct rl_metal_prefill *pf, siz
     id<MTLBuffer> b = [m->dev newBufferWithLength:bytes ? bytes : 16u options:MTLResourceStorageModeShared];
     if (b) [pf->keep addObject:b];
     return b;
+}
+
+/* No-copy MTLBuffer over the page-aligned window [off, off+len) of the mmap; *addr0 is the GPU address of `off`. */
+static id<MTLBuffer> wrap_window(rl_metal_engine *m, struct rl_metal_prefill *pf, const rl_gguf_model *g, uint64_t off, uint64_t len, uint64_t *addr0) {
+    if (!g->map || off + len > g->map_len) return nil;
+    const size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    const uintptr_t base = (uintptr_t)g->map + (uintptr_t)off;
+    const uintptr_t aligned = base & ~(uintptr_t)(page - 1u);
+    size_t wlen = (size_t)(base + len - aligned);
+    wlen = (wlen + page - 1u) & ~(page - 1u);
+    const uintptr_t map_end = ((uintptr_t)g->map + g->map_len + page - 1u) & ~(uintptr_t)(page - 1u);
+    if (aligned + wlen > map_end) wlen = (size_t)(map_end - aligned);
+    id<MTLBuffer> b = [m->dev newBufferWithBytesNoCopy:(void *)aligned length:wlen options:MTLResourceStorageModeShared deallocator:nil];
+    if (!b) return nil;
+    uint64_t gpu = 0;
+    if (@available(macOS 13.0, *)) gpu = (uint64_t)[b gpuAddress];
+    if (!gpu) return nil;
+    *addr0 = gpu + (uint64_t)(base - aligned);
+    [pf->keep addObject:b];   /* the per-layer tables are unretained; keep owns the buffer */
+    return b;
+}
+
+/* Wrap every layer's routed expert tensors; on any failure the slot-pool path stays in use. */
+static void prefill_map_experts(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf) {
+    const rl_engine_info *in = &e->info;
+    const uint32_t L = in->n_layer, E = in->n_expert;
+    pf->exp_gate = (__unsafe_unretained id<MTLBuffer> *)calloc(L, sizeof(id));
+    pf->exp_up = (__unsafe_unretained id<MTLBuffer> *)calloc(L, sizeof(id));
+    pf->exp_down = (__unsafe_unretained id<MTLBuffer> *)calloc(L, sizeof(id));
+    pf->exp_gate_addr0 = (uint64_t *)calloc(L, sizeof(uint64_t)); pf->exp_up_addr0 = (uint64_t *)calloc(L, sizeof(uint64_t)); pf->exp_down_addr0 = (uint64_t *)calloc(L, sizeof(uint64_t));
+    pf->exp_gate_bytes = (uint64_t *)calloc(L, sizeof(uint64_t)); pf->exp_up_bytes = (uint64_t *)calloc(L, sizeof(uint64_t)); pf->exp_down_bytes = (uint64_t *)calloc(L, sizeof(uint64_t));
+    pf->exp_type = (uint32_t *)calloc(L, sizeof(uint32_t));
+    if (!pf->exp_gate || !pf->exp_up || !pf->exp_down || !pf->exp_gate_addr0 || !pf->exp_up_addr0 || !pf->exp_down_addr0 ||
+        !pf->exp_gate_bytes || !pf->exp_up_bytes || !pf->exp_down_bytes || !pf->exp_type) return;
+    char err[256];
+    for (uint32_t l = 0; l < L; ++l) {
+        rl_expert_layout first, last;
+        if (!rl_native_expert_layout(&e->expert_map, l, 0u, &first, err, sizeof(err)) ||
+            !rl_native_expert_layout(&e->expert_map, l, E - 1u, &last, err, sizeof(err))) return;
+        if (first.ggml_type != 17u && first.ggml_type != 29u) return;
+        /* per-expert strides from consecutive experts; contiguous tensors give stride == bytes */
+        rl_expert_layout second;
+        if (E > 1u && !rl_native_expert_layout(&e->expert_map, l, 1u, &second, err, sizeof(err))) return;
+        const uint64_t gs = E > 1u ? second.gate_offset - first.gate_offset : first.gate_bytes;
+        const uint64_t us = E > 1u ? second.up_offset - first.up_offset : first.up_bytes;
+        const uint64_t ds = E > 1u ? second.down_offset - first.down_offset : first.down_bytes;
+        if (gs < first.gate_bytes || us < first.up_bytes || ds < first.down_bytes) return;
+        pf->exp_gate[l] = wrap_window(m, pf, &e->gguf, first.gate_offset, last.gate_offset + last.gate_bytes - first.gate_offset, &pf->exp_gate_addr0[l]);
+        pf->exp_up[l] = wrap_window(m, pf, &e->gguf, first.up_offset, last.up_offset + last.up_bytes - first.up_offset, &pf->exp_up_addr0[l]);
+        pf->exp_down[l] = wrap_window(m, pf, &e->gguf, first.down_offset, last.down_offset + last.down_bytes - first.down_offset, &pf->exp_down_addr0[l]);
+        if (!pf->exp_gate[l] || !pf->exp_up[l] || !pf->exp_down[l]) return;
+        pf->exp_gate_bytes[l] = gs; pf->exp_up_bytes[l] = us; pf->exp_down_bytes[l] = ds;
+        pf->exp_type[l] = first.ggml_type;
+    }
+    pf->mapped = 1;
 }
 
 static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m, uint32_t cap, char *error, size_t ecap) {
@@ -465,6 +531,10 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         !pf->agate || !pf->gated || !pf->router_logits || !pf->sh_gate || !pf->sh_up || !pf->sh_act || !pf->sh_out || !pf->scalar || !pf->routed) {
         set_error(error, ecap, "Metal prefill scratch allocation failed"); rl_metal_prefill_destroy(pf); return NULL;
     }
+    /* Opt-in only: reading the experts in place from the mmap is numerically identical but measured 4-10x
+     * slower than the slot pool on macOS 26 / M4 Max, because Metal re-establishes residency of each
+     * layer's whole expert window (~350 MB) for every command buffer (~3.3 s per 48-layer chunk). */
+    if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
     return pf;
 }
 
@@ -634,6 +704,14 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     enc_gemm(m, pf, cb, &w->o, pf->gated, pf->branch, ntok);
 }
 
+/* experts per plan: bounded by the plan table and by half the cache so a group never evicts its own experts */
+static uint32_t prefill_plan_limit(rl_metal_engine *m) {
+    const uint32_t capacity = rl_native_metal_slot_capacity(m->experts);
+    uint32_t limit = 512u;
+    if (capacity / 2u < limit) limit = capacity / 2u;
+    return limit < 10u ? 10u : limit;
+}
+
 static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, const uint32_t *tokens, uint32_t B,
                          int want_logits, float *logits, rl_engine_step_stats *stats, char *error, size_t cap) {
     rl_backend_state *s = &e->gpu;
@@ -646,7 +724,20 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
     float *probs = (float *)malloc((size_t)experts * sizeof(float));
     uint32_t *ids = (uint32_t *)malloc((size_t)B * RL_ENGINE_MAX_TOPK * sizeof(uint32_t));
     float *weights = (float *)malloc((size_t)B * RL_ENGINE_MAX_TOPK * sizeof(float));
-    if (!probs || !ids || !weights) { free(probs); free(ids); free(weights); set_error(error, cap, "prefill scratch allocation failed"); return 0; }
+    const size_t max_pairs = (size_t)B * topk;
+    uint16_t *umap = (uint16_t *)malloc((size_t)experts * sizeof(uint16_t));
+    uint32_t *uid = (uint32_t *)malloc((size_t)experts * sizeof(uint32_t));
+    uint32_t *expert_start = (uint32_t *)malloc(((size_t)experts + 1u) * sizeof(uint32_t));
+    uint32_t *fill = (uint32_t *)malloc((size_t)experts * sizeof(uint32_t));
+    float *dummy_w = (float *)malloc((size_t)experts * sizeof(float));
+    uint32_t *pair_token = (uint32_t *)malloc(max_pairs * sizeof(uint32_t));
+    float *pair_weight = (float *)malloc(max_pairs * sizeof(float));
+    uint32_t *tok_pair = (uint32_t *)malloc(max_pairs * sizeof(uint32_t));
+    if (!probs || !ids || !weights || !umap || !uid || !expert_start || !fill || !dummy_w || !pair_token || !pair_weight || !tok_pair) {
+        free(probs); free(ids); free(weights); free(umap); free(uid); free(expert_start); free(fill); free(dummy_w); free(pair_token); free(pair_weight); free(tok_pair);
+        set_error(error, cap, "prefill scratch allocation failed"); return 0;
+    }
+    for (uint32_t i = 0; i < experts; ++i) umap[i] = UINT16_MAX;
     rl_native_topk_plan plan;
     memset(&plan, 0, sizeof(plan));
     rl_native_metal_telemetry tel;
@@ -707,15 +798,59 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             const double l2 = rl_engine_now_ms();
             stats->router_ms += l2 - l1;
 
-            /* routed experts: one bounded-pool plan per token (dev20a), the residual add batched after the last one */
+            /* routed experts (dev20b): the chunk's tokens are split into consecutive groups whose union of
+             * selected experts fits one pool plan; each group runs three batched dispatches (gate/up, down,
+             * per-token weighted sum). The residual add of the whole chunk is encoded after the last group. */
             const double read_before = m->last_read_ms;
-            for (uint32_t tk = 0; tk < B; ++tk) {
-                if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, ids + (size_t)tk * RL_ENGINE_MAX_TOPK,
-                        weights + (size_t)tk * RL_ENGINE_MAX_TOPK, topk, &plan, error, cap)) goto done;
+            const uint32_t plan_limit = pf->mapped ? (experts < 512u ? experts : 512u) : prefill_plan_limit(m);
+            for (uint32_t g0 = 0; g0 < B;) {
+                uint32_t g1 = g0, U = 0;
+                /* grow the group while the union stays within the plan limit (always at least one token) */
+                while (g1 < B) {
+                    uint32_t added = 0;
+                    for (uint32_t k = 0; k < topk; ++k) {
+                        const uint32_t ex = ids[(size_t)g1 * RL_ENGINE_MAX_TOPK + k];
+                        if (umap[ex] == UINT16_MAX) { umap[ex] = (uint16_t)(U + added); uid[U + added] = ex; added++; }
+                    }
+                    if (U + added > plan_limit && g1 > g0) {
+                        for (uint32_t k = 0; k < added; ++k) umap[uid[U + k]] = UINT16_MAX;
+                        break;
+                    }
+                    U += added; g1++;
+                }
+                const uint32_t ntok_g = g1 - g0, P = ntok_g * topk;
+                /* pairs sorted by expert: counts -> prefix sums -> placement in token/selection order */
+                for (uint32_t u = 0; u <= U; ++u) expert_start[u] = 0;
+                for (uint32_t t = g0; t < g1; ++t) for (uint32_t k = 0; k < topk; ++k) expert_start[umap[ids[(size_t)t * RL_ENGINE_MAX_TOPK + k]] + 1u]++;
+                for (uint32_t u = 0; u < U; ++u) expert_start[u + 1u] += expert_start[u];
+                for (uint32_t u = 0; u < U; ++u) fill[u] = expert_start[u];
+                for (uint32_t t = g0; t < g1; ++t) {
+                    for (uint32_t k = 0; k < topk; ++k) {
+                        const uint32_t u = umap[ids[(size_t)t * RL_ENGINE_MAX_TOPK + k]];
+                        const uint32_t pidx = fill[u]++;
+                        pair_token[pidx] = t;
+                        pair_weight[pidx] = weights[(size_t)t * RL_ENGINE_MAX_TOPK + k];
+                        tok_pair[(size_t)(t - g0) * topk + k] = pidx;
+                    }
+                }
+                for (uint32_t u = 0; u < U; ++u) { umap[uid[u]] = UINT16_MAX; dummy_w[u] = 0.0f; }
                 cb = [m->queue commandBuffer];
-                if (!rl_native_metal_encode_topk(m->experts, &plan, (__bridge void *)cb, (__bridge void *)pf->ffn_in, (uint64_t)tk * hb,
-                        (__bridge void *)pf->routed, (uint64_t)tk * hb, error, cap)) goto done;
-                if (tk + 1u == B) {
+                if (pf->mapped) {
+                    if (!redmetal_topk_pool_encode_mapped(rl_native_metal_pool_handle(m->experts), (__bridge void *)cb,
+                            (__bridge void *)pf->exp_gate[l], pf->exp_gate_addr0[l], (__bridge void *)pf->exp_up[l], pf->exp_up_addr0[l],
+                            (__bridge void *)pf->exp_down[l], pf->exp_down_addr0[l], pf->exp_gate_bytes[l], pf->exp_up_bytes[l], pf->exp_down_bytes[l],
+                            uid, U, pf->exp_type[l], hidden, e->gguf.n_ff_exp, g0, ntok_g, topk, P, pair_token, pair_weight, expert_start, tok_pair,
+                            (__bridge void *)pf->ffn_in, 0u, (__bridge void *)pf->routed, 0u)) {
+                        snprintf(error, cap, "mapped expert encode failed: %s", redmetal_topk_last_error());
+                        goto done;
+                    }
+                } else {
+                    if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, uid, dummy_w, U, &plan, error, cap)) goto done;
+                    if (!rl_native_metal_encode_topk_batched(m->experts, &plan, (__bridge void *)cb, g0, ntok_g, topk,
+                            pair_token, pair_weight, expert_start, tok_pair, (__bridge void *)pf->ffn_in, 0u,
+                            (__bridge void *)pf->routed, 0u, error, cap)) goto done;
+                }
+                if (g1 == B) {
                     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                     [enc setComputePipelineState:pf->p_scale_add];
                     [enc setBuffer:pf->resid offset:0 atIndex:0]; [enc setBuffer:pf->routed offset:0 atIndex:1]; [enc setBuffer:pf->sh_out offset:0 atIndex:2];
@@ -723,8 +858,12 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                     enc_1d(enc, pf->p_scale_add, (NSUInteger)hidden * B, 64u); [enc endEncoding];
                 }
                 if (!commit_wait(cb, "prefill routed experts", &stats->routed_gpu_ms, error, cap)) goto done;
-                const int last_plan = l + 1u == in->n_layer && tk + 1u == B;
-                if (!rl_native_metal_release_topk(m->experts, &plan, last_plan ? &tel : NULL, error, cap)) goto done;
+                if (!pf->mapped) {
+                    const int last_plan = l + 1u == in->n_layer && g1 == B;
+                    if (!rl_native_metal_release_topk(m->experts, &plan, last_plan ? &tel : NULL, error, cap)) goto done;
+                }
+                stats->expert_plans++;
+                g0 = g1;
             }
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
@@ -761,14 +900,14 @@ done:
         rl_native_metal_release_topk(m->experts, &plan, NULL, NULL, 0);
     }
     stats->total_ms += rl_engine_now_ms() - start;
-    free(probs); free(ids); free(weights);
+    free(probs); free(ids); free(weights); free(umap); free(uid); free(expert_start); free(fill); free(dummy_w); free(pair_token); free(pair_weight); free(tok_pair);
     return ok;
 }
 
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
                             rl_engine_step_stats *stats, char *error, size_t cap) {
     if (!e || !m || !tokens || !count) { set_error(error, cap, "invalid prefill request"); return 0; }
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 32u;
+    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
     if (!m->pf || m->pf->cap < batch) {
         if (m->pf) { rl_metal_prefill_destroy(m->pf); m->pf = NULL; }
         m->pf = prefill_create(e, m, batch, error, cap);

@@ -70,11 +70,11 @@ typedef struct {
     uint32_t ggml_type;
     uint32_t hidden;
     uint32_t ffn;
-    uint32_t slots[64];
-    uint64_t gate_bytes[64];
-    uint64_t up_bytes[64];
-    uint64_t down_bytes[64];
-    float weights[64];
+    uint32_t slots[512];
+    uint64_t gate_bytes[512];
+    uint64_t up_bytes[512];
+    uint64_t down_bytes[512];
+    float weights[512];
     uint64_t bytes_read_at_encode;
     uint64_t calls_at_encode;
     int active;
@@ -104,6 +104,28 @@ int rl_native_metal_encode_topk(
     char *error,
     size_t error_cap);
 
+/* Batched prefill: encode the plan's experts (a union over several tokens) for the given pair layout (see redmetal_topk.h). */
+int rl_native_metal_encode_topk_batched(
+    rl_native_metal_runtime *runtime,
+    rl_native_topk_plan *plan,
+    void *mtl_command_buffer,
+    uint32_t tok_first,
+    uint32_t ntok,
+    uint32_t top_k,
+    const uint32_t *pair_token,
+    const float *pair_weight,
+    const uint32_t *expert_start,
+    const uint32_t *tok_pair,
+    void *mtl_input_buffer,
+    uint64_t input_offset,
+    void *mtl_output_buffer,
+    uint64_t output_offset,
+    char *error,
+    size_t error_cap);
+/* Opaque pool handle for the mapped-expert prefill path (redmetal_topk_pool_encode_mapped). */
+void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime);
+/* Slot capacity of the bounded expert cache. */
+uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime);
 int rl_native_metal_release_topk(
     rl_native_metal_runtime *runtime,
     rl_native_topk_plan *plan,

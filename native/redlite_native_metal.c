@@ -11,7 +11,7 @@
 #include <dispatch/dispatch.h>
 #endif
 
-#define RL_NATIVE_TOPK_MAX 64u
+#define RL_NATIVE_TOPK_MAX 512u
 
 struct rl_native_metal_runtime {
     redmetal_topk_pool_t pool;
@@ -429,6 +429,41 @@ int rl_native_metal_encode_topk(
     if (error && error_cap) error[0] = '\0';
     return 1;
 }
+
+int rl_native_metal_encode_topk_batched(
+        rl_native_metal_runtime *runtime,
+        rl_native_topk_plan *plan,
+        void *mtl_command_buffer,
+        uint32_t tok_first,
+        uint32_t ntok,
+        uint32_t top_k,
+        const uint32_t *pair_token,
+        const float *pair_weight,
+        const uint32_t *expert_start,
+        const uint32_t *tok_pair,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset,
+        char *error,
+        size_t error_cap) {
+    if (!runtime || !plan || !plan->top_k || plan->active) { set_error(error, error_cap, "invalid native batched top-k encode request"); return 0; }
+    plan->bytes_read_at_encode = redmetal_topk_pool_bytes_read(runtime->pool);
+    plan->calls_at_encode = redmetal_topk_pool_read_calls(runtime->pool);
+    if (!redmetal_topk_pool_encode_batched(runtime->pool, mtl_command_buffer, plan->slots, plan->gate_bytes, plan->up_bytes,
+            plan->down_bytes, plan->top_k, plan->ggml_type, plan->hidden, plan->ffn, tok_first, ntok, top_k, ntok * top_k,
+            pair_token, pair_weight, expert_start, tok_pair, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset)) {
+        set_metal_error(error, error_cap, "native batched top-k Metal encode failed");
+        return 0;
+    }
+    plan->active = 1;
+    if (error && error_cap) error[0] = '\0';
+    return 1;
+}
+
+void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime) { return runtime ? (void *)runtime->pool : NULL; }
+
+uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime) { return runtime ? runtime->lru.capacity : 0u; }
 
 int rl_native_metal_release_topk(
         rl_native_metal_runtime *runtime,

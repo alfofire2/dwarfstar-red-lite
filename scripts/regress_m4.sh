@@ -8,8 +8,10 @@
 # multi-token CPU-vs-Metal parity, the native tokenizer against llama_tokenize
 # (tests/fixtures/tokenizer_corpus.txt), native logits against the pinned
 # llama.cpp with KL / max-abs thresholds, native greedy generation against the
-# pinned llama.cpp greedy decode and, in the full run, a >1024-position prompt
-# that exercises the multi-chunk attention path against llama.cpp.
+# pinned llama.cpp greedy decode, the dev20 batched-prefill parity checks and,
+# in the full run, a >1024-position prompt (batched ingestion of the first 1100
+# positions, then token by token) that exercises both attention paths against
+# llama.cpp.
 # Reference tools are built on demand from the bootstrapped .deps/llama.cpp
 # (or the checkout named by REDLITE_LLAMA_DIR).
 set -uo pipefail
@@ -98,6 +100,11 @@ echo "== persistent engine =="
 expect_line engine.info "recurrent=36 full-attention=12" "$BIN/redlite-engine" info "$MODEL"
 expect_line engine.parity "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64
 
+echo "== batched prefill (dev20) =="
+expect_line prefill.parity.chunks8 "BATCHED PREFILL PARITY: YES" "$BIN/redlite-engine" prefill "$MODEL" --tokens 151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198 --batch 8 --cache-mib 1024 --context 64
+PREFILL96="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$(cat "$ROOT/tests/fixtures/long_context_prompt.txt")" --no-special | head -1 | cut -d',' -f1-96)"
+expect_line prefill.parity.96 "BATCHED PREFILL PARITY: YES" "$BIN/redlite-engine" prefill "$MODEL" --tokens "$PREFILL96" --batch 32 --cache-mib 2048 --context 128
+
 echo "== tokenizer / generation =="
 PROMPT="Explain in one sentence why the sky is blue."
 expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198$" \
@@ -149,7 +156,8 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
       LONG_IDS="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$(cat "$ROOT/tests/fixtures/long_context_prompt.txt")" --no-special | head -1 | cut -d',' -f1-1200)"
       LONG_N="$(echo "$LONG_IDS" | tr ',' '\n' | wc -l | tr -d ' ')"
       if [[ "$LONG_N" -gt 1024 ]]; then
-        "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --cache-mib 2048 --context 1536 >"$LOG/logits.long.native.log" 2>&1
+        # the first 1100 positions are ingested by the batched prefill (one chunk), the compared positions token by token
+        "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --batch 1100 --cache-mib 4096 --context 1536 >"$LOG/logits.long.native.log" 2>&1
         "$BIN/redlite-ref-llama" "$MODEL" logits --tokens "$LONG_IDS" --out "$LOG/ref.long.bin" --dump-from 1100 --ctx 1536 >"$LOG/logits.long.ref.log" 2>&1
         expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
       else

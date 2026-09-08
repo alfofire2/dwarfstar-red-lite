@@ -105,9 +105,12 @@ for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. On an M4 Max / 48 GiB the same
-setting gives 34–37 tok/s (`benchmarks/m4max-48gb-native-dev19.json`). Details, validation
-numbers and limits: `docs/REDLITE_DEV18_ENGINE.md`; regression suite:
-`scripts/regress_m4.sh MODEL.gguf`.
+setting gives 34–37 tok/s (`benchmarks/m4max-48gb-native-dev19.json`). Prompts are
+ingested by the dev20 batched prefill (`--batch N` tokens per chunk, default 512):
+on the M4 Max a 1100-token prompt goes from 22.6 tok/s token by token to 99 tok/s as
+one chunk with the 4 GiB cache, and 189 tok/s when the experts are resident
+(`docs/REDLITE_DEV20_BATCHED_PREFILL.md`). Details, validation numbers and limits:
+`docs/REDLITE_DEV18_ENGINE.md`; regression suite: `scripts/regress_m4.sh MODEL.gguf`.
 
 ## Requirements
 

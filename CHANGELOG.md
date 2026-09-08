@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.3.0.dev20 — 2026-09-08
+
+Batched prompt ingestion on `v0.3-streaming`. See
+`docs/REDLITE_DEV20_BATCHED_PREFILL.md`.
+
+- Added `rl_engine_prefill()`: the Metal backend ingests a prompt in chunks
+  (default 512 tokens, `--batch N`) with one dense command buffer per layer
+  (batched norms/residuals, DeltaNet conv and delta-rule recurrences iterated
+  inside single dispatches, full attention appending the chunk's keys/values
+  then causal GQA per token and head, router, shared expert), f32
+  dequantization plus a simdgroup-matrix GEMM for the dense matmuls, and one
+  bounded-pool plan per chunk-layer holding the union of the selected experts
+  (`REDMETAL_TOPK_MAX` 64 → 512; batched gate/up, down and per-token weighted
+  sum kernels over (expert, token) pairs). `redlite-generate` and the chat use
+  it for the prompt; the CPU oracle prefill is the sequential step sequence.
+- Added `redlite-engine prefill MODEL --tokens ... [--batch N] [--cpu]`
+  (batched vs token-by-token Metal, and vs the CPU oracle), `redlite-engine
+  logits --batch N`, and two regression checks (`prefill.parity.chunks8`,
+  `prefill.parity.96`); the long-context oracle check now ingests the first
+  1100 positions batched. Suite: 36 checks (35 with `--quick`).
+- Validation (M4 Max 48 GiB): router ids identical in all 48 layers, worst
+  layer abs 1.9e-05, logits abs 3.1e-05 vs the sequential engine; CPU oracle
+  logits abs 1.1e-05; llama.cpp long-context parity at chunk sizes 32–1100;
+  greedy output token-identical.
+- Prompt throughput on the M4 Max with the 4 GiB cache: 22.6 tok/s token by
+  token → 65.7 tok/s (512-token chunks) → 99.1 tok/s (one 1100-token chunk);
+  189 tok/s with the experts resident (12 GiB cache). Bound by copying the
+  per-layer expert union into the pool (~6.7 GB/s from the page cache).
+  Reading experts in place from the mmap (`RL_PREFILL_MAPPED_EXPERTS=1`) is
+  numerically identical but 4–10× slower because Metal re-establishes
+  residency of each layer's whole expert window per command buffer; kept as
+  an opt-in experiment.
+
 ## 0.3.0.dev19 — 2026-09-07
 
 Native chat integration on `v0.3-streaming`. See

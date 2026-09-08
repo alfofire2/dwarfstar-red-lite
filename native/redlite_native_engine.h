@@ -32,7 +32,7 @@ typedef struct {
     int enable_cpu;        /* keep a CPU oracle backend */
     int enable_gpu;        /* create the Metal backend */
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
-    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 32, 1 -> token-by-token) */
+    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 512, 1 -> token-by-token); larger chunks amortize the per-layer expert union */
 } rl_engine_config;
 
 typedef struct {
@@ -75,6 +75,7 @@ typedef struct {
     uint64_t ssd_reads;
     uint32_t resident_slots;
     uint32_t slot_capacity;
+    uint32_t expert_plans;   /* batched prefill: expert plans (groups) executed */
 } rl_engine_step_stats;
 
 void rl_engine_config_default(rl_engine_config *cfg);
