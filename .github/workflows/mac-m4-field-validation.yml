@@ -20,6 +20,9 @@ jobs:
     timeout-minutes: 45
     env:
       REDLITE_MODEL_PATH: ${{ vars.REDLITE_MODEL_PATH }}
+      # Bootstrapped pinned llama.cpp checkout shared with the runner (the workspace checkout is cleaned,
+      # so .deps/llama.cpp never survives there). Unset -> the oracle step is skipped with a warning.
+      REDLITE_LLAMA_DIR: ${{ vars.REDLITE_LLAMA_DIR }}
 
     steps:
       - name: Checkout exact commit
@@ -174,16 +177,24 @@ jobs:
           .deps/redmetal/redlite-generate "$REDLITE_MODEL_PATH" --prompt "Explain in one sentence why the sky is blue." --max-tokens 48 --cache-mib 2048 --no-stream --stats 2>&1 | tee artifacts/generate.log
           grep -q "Rayleigh scattering" artifacts/generate.log
 
-      - name: Pinned llama.cpp oracle comparison (when bootstrapped)
+      - name: Pinned llama.cpp oracle comparison
         id: oracle
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f .deps/llama.cpp/build/bin/libllama.dylib ]]; then
-            REDLITE_REGRESS_LOG=artifacts/regress scripts/regress_m4.sh "$REDLITE_MODEL_PATH" --quick 2>&1 | tee artifacts/regress.log
-          else
-            echo "pinned llama.cpp not bootstrapped on this runner; oracle comparison skipped" | tee artifacts/regress.log
+          if [[ -z "${REDLITE_LLAMA_DIR:-}" ]]; then
+            echo "::warning title=oracle skipped::Repository variable REDLITE_LLAMA_DIR is not configured; the llama.cpp oracle comparison did not run."
+            echo "oracle comparison SKIPPED: REDLITE_LLAMA_DIR not configured" | tee artifacts/regress.log
+            exit 0
           fi
+          if [[ ! -f "$REDLITE_LLAMA_DIR/build/bin/libllama.dylib" ]]; then
+            echo "REDLITE_LLAMA_DIR=$REDLITE_LLAMA_DIR has no build/bin/libllama.dylib (run scripts/bootstrap_macos.sh there)" >&2
+            exit 2
+          fi
+          REDLITE_REGRESS_LOG=artifacts/regress scripts/regress_m4.sh "$REDLITE_MODEL_PATH" --quick 2>&1 | tee artifacts/regress.log
+          grep -q "^PASS  logits.vs_llama" artifacts/regress.log
+          grep -q "^PASS  generate.vs_llama" artifacts/regress.log
+          grep -q "^PASS  tokenize.corpus_vs_llama" artifacts/regress.log
 
       - name: Write diagnostics summary
         if: always()

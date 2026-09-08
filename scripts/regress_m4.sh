@@ -6,8 +6,12 @@
 # Builds every native tool, runs the model-free self-tests, every stage parity
 # validator that the dev10..dev17 milestones introduced, the persistent-engine
 # multi-token CPU-vs-Metal parity, the native tokenizer against llama_tokenize
-# and native greedy generation against the pinned llama.cpp greedy decode
-# (reference tools are built on demand from the bootstrapped .deps/llama.cpp).
+# (tests/fixtures/tokenizer_corpus.txt), native logits against the pinned
+# llama.cpp with KL / max-abs thresholds, native greedy generation against the
+# pinned llama.cpp greedy decode and, in the full run, a >1024-position prompt
+# that exercises the multi-chunk attention path against llama.cpp.
+# Reference tools are built on demand from the bootstrapped .deps/llama.cpp
+# (or the checkout named by REDLITE_LLAMA_DIR).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,6 +27,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 2
 fi
 BIN="$ROOT/.deps/redmetal"
+LLAMA_DIR="${REDLITE_LLAMA_DIR:-$ROOT/.deps/llama.cpp}"
 LOG="${REDLITE_REGRESS_LOG:-$ROOT/.deps/regress}"
 mkdir -p "$LOG"
 PASS=0
@@ -98,27 +103,62 @@ PROMPT="Explain in one sentence why the sky is blue."
 expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198$" \
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
+# an empty prompt must be refused instead of sampling from uninitialised logits
+if "$BIN/redlite-generate" "$MODEL" --prompt "" --raw --max-tokens 4 --cache-mib 256 >"$LOG/generate.empty.log" 2>&1; then
+  echo "FAIL  generate.empty_prompt (exit 0; see $LOG/generate.empty.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.empty_prompt)
+else
+  echo "PASS  generate.empty_prompt"; PASS=$((PASS + 1))
+fi
 
-if [[ -x "$ROOT/.deps/llama.cpp/build/bin/libllama.dylib" || -f "$ROOT/.deps/llama.cpp/build/bin/libllama.dylib" ]]; then
-  echo "== pinned llama.cpp oracle =="
-  run build.ref bash "$ROOT/scripts/dev/build_ref_llama.sh"
+if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
+  echo "== pinned llama.cpp oracle ($LLAMA_DIR) =="
+  run build.ref env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_llama.sh"
   if [[ -x "$BIN/redlite-ref-llama" ]]; then
     REF_TOK="$("$BIN/redlite-ref-llama" "$MODEL" tokenize --text "$PROMPT" 2>/dev/null | head -1)"
     NAT_TOK="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" | head -1)"
     if [[ -n "$REF_TOK" && "$REF_TOK" == "$NAT_TOK" ]]; then echo "PASS  tokenize.vs_llama"; PASS=$((PASS + 1)); else echo "FAIL  tokenize.vs_llama ($NAT_TOK vs $REF_TOK)"; FAIL=$((FAIL + 1)); FAILED+=(tokenize.vs_llama); fi
+    # whole corpus (special tokens, whitespace runs, code, CJK, emoji, ...) in one model load per tool
+    CORPUS="$ROOT/tests/fixtures/tokenizer_corpus.txt"
+    "$BIN/redlite-ref-llama" "$MODEL" tokenize --file "$CORPUS" >"$LOG/tokenize.corpus.ref.txt" 2>"$LOG/tokenize.corpus.ref.log"
+    "$BIN/redlite-engine" tokenize "$MODEL" --file "$CORPUS" >"$LOG/tokenize.corpus.native.txt" 2>"$LOG/tokenize.corpus.native.log"
+    CORPUS_N="$(wc -l <"$CORPUS" | tr -d ' ')"
+    if [[ -s "$LOG/tokenize.corpus.ref.txt" && "$(wc -l <"$LOG/tokenize.corpus.ref.txt" | tr -d ' ')" == "$CORPUS_N" ]] && cmp -s "$LOG/tokenize.corpus.ref.txt" "$LOG/tokenize.corpus.native.txt"; then
+      echo "PASS  tokenize.corpus_vs_llama ($CORPUS_N inputs identical)"; PASS=$((PASS + 1))
+    else
+      echo "FAIL  tokenize.corpus_vs_llama (diff $LOG/tokenize.corpus.native.txt $LOG/tokenize.corpus.ref.txt)"; FAIL=$((FAIL + 1)); FAILED+=(tokenize.corpus_vs_llama)
+    fi
     "$BIN/redlite-engine" logits "$MODEL" --tokens 9707,11,1879 --backend gpu --out "$LOG/native.bin" --cache-mib 1024 --context 64 >"$LOG/logits.native.log" 2>&1
     "$BIN/redlite-ref-llama" "$MODEL" logits --tokens 9707,11,1879 --out "$LOG/ref.bin" --ctx 64 >"$LOG/logits.ref.log" 2>&1
-    expect_line logits.vs_llama "ARGMAX AGREEMENT: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.bin" "$LOG/ref.bin"
+    expect_line logits.vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.bin" "$LOG/ref.bin"
     CHAT_IDS="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat | head -1)"
+    CHAT_N="$(echo "$CHAT_IDS" | tr ',' '\n' | wc -l | tr -d ' ')"
     "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 24 --cache-mib 2048 --no-stream --tokens-out "$LOG/gen.native.txt" >"$LOG/gen.native.log" 2>&1
-    NAT_GEN="$(tail -n +20 "$LOG/gen.native.txt" | tr '\n' ' ' | sed 's/ *$//')"
+    NAT_GEN="$(tail -n +$((CHAT_N + 1)) "$LOG/gen.native.txt" | tr '\n' ' ' | sed 's/ *$//')"
     REF_GEN="$("$BIN/redlite-ref-llama" "$MODEL" greedy --tokens "$CHAT_IDS" --max 24 --ctx 128 2>/dev/null | grep '^generated:' | sed 's/^generated: //' | cut -d' ' -f1-24)"
     NAT_N=$(echo "$NAT_GEN" | wc -w | tr -d ' ')
     REF_HEAD="$(echo "$REF_GEN" | cut -d' ' -f1-"$NAT_N")"
     if [[ "$NAT_N" -gt 0 && "$NAT_GEN" == "$REF_HEAD" ]]; then echo "PASS  generate.vs_llama ($NAT_N tokens identical)"; PASS=$((PASS + 1)); else echo "FAIL  generate.vs_llama"; echo "  native: $NAT_GEN"; echo "  ref   : $REF_GEN"; FAIL=$((FAIL + 1)); FAILED+=(generate.vs_llama); fi
+    if [[ $QUICK -eq 0 ]]; then
+      # >1024 positions: the GQA kernel switches to its multi-chunk online-softmax path past 1024 keys,
+      # which the short prompts above never reach. The prompt is the frozen fixture
+      # tests/fixtures/long_context_prompt.txt cut to 1200 tokens; positions 1100..1199 are compared.
+      # On this fixture llama.cpp's layer-2 router has an exact probability tie at position 1035
+      # (experts 403/101, both 0.0077861) that the two implementations break differently, so after
+      # that position the logits legitimately differ by up to ~1.1 (KL ~6e-3) while every argmax
+      # stays identical; the thresholds below are sized for that, not for the 1e-5 short-context drift.
+      LONG_IDS="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$(cat "$ROOT/tests/fixtures/long_context_prompt.txt")" --no-special | head -1 | cut -d',' -f1-1200)"
+      LONG_N="$(echo "$LONG_IDS" | tr ',' '\n' | wc -l | tr -d ' ')"
+      if [[ "$LONG_N" -gt 1024 ]]; then
+        "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --cache-mib 2048 --context 1536 >"$LOG/logits.long.native.log" 2>&1
+        "$BIN/redlite-ref-llama" "$MODEL" logits --tokens "$LONG_IDS" --out "$LOG/ref.long.bin" --dump-from 1100 --ctx 1536 >"$LOG/logits.long.ref.log" 2>&1
+        expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+      else
+        echo "FAIL  logits.long_context_vs_llama (prompt only $LONG_N tokens)"; FAIL=$((FAIL + 1)); FAILED+=(logits.long_context_vs_llama)
+      fi
+    fi
   fi
 else
-  echo "SKIP  pinned llama.cpp oracle (run 'redlite bootstrap' to enable)"
+  echo "SKIP  pinned llama.cpp oracle (run 'redlite bootstrap' or set REDLITE_LLAMA_DIR to enable)"
 fi
 
 echo

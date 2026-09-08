@@ -61,6 +61,22 @@ static cmp compare(const float *got, const float *ref, size_t n) {
     return c;
 }
 
+/* Decode the corpus escape sequences (backslash n, t, r and double backslash) in place; returns the new length. */
+static size_t unescape_line(char *s, size_t n) {
+    size_t w = 0;
+    for (size_t r = 0; r < n; ++r) {
+        if (s[r] == '\\' && r + 1 < n) {
+            const char c = s[r + 1];
+            if (c == 'n') { s[w++] = '\n'; ++r; continue; }
+            if (c == 't') { s[w++] = '\t'; ++r; continue; }
+            if (c == 'r') { s[w++] = '\r'; ++r; continue; }
+            if (c == '\\') { s[w++] = '\\'; ++r; continue; }
+        }
+        s[w++] = s[r];
+    }
+    return w;
+}
+
 static uint32_t argmax(const float *v, uint32_t n) {
     uint32_t best = 0;
     for (uint32_t i = 1; i < n; ++i) if (v[i] > v[best]) best = i;
@@ -69,12 +85,13 @@ static uint32_t argmax(const float *v, uint32_t n) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-engine 0.3.0.dev18\n\n"
+        "redlite-engine 0.3.0.dev19\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
+        "  redlite-engine tokenize MODEL --file CORPUS [--no-special]   (one input per line, \\n \\t \\\\ escapes; one id list per line)\n"
         "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers]\n"
-        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--context N] [--cache-mib N]\n"
+        "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--dump-last | --dump-from N] [--context N] [--cache-mib N]\n"
         "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n");
 }
 
@@ -92,7 +109,8 @@ static void print_info(const rl_engine_info *in) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3) { usage(argc > 1 ? stderr : stdout); return argc > 1 ? 2 : 0; }
+    if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
+    if (argc < 3) { usage(stderr); return 2; }
     const char *cmd = argv[1];
     const char *model = argv[2];
     rl_engine_config cfg;
@@ -101,12 +119,15 @@ int main(int argc, char **argv) {
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
     const char *out_path = NULL;
-    const char *text = NULL;
-    int report_layers = 0, no_special = 0, chat = 0;
+    const char *text = NULL, *corpus = NULL;
+    int report_layers = 0, no_special = 0, chat = 0, dump_last = 0;
+    uint32_t dump_from = 0;
+    int router_layer = -1;
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--layers") == 0) { report_layers = 1; continue; }
         if (strcmp(argv[i], "--no-special") == 0) { no_special = 1; continue; }
         if (strcmp(argv[i], "--chat") == 0) { chat = 1; continue; }
+        if (strcmp(argv[i], "--dump-last") == 0) { dump_last = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--tokens") == 0) {
             token_count = parse_tokens(argv[++i], tokens, 4096u);
@@ -117,6 +138,9 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--backend") == 0) backend_name = argv[++i];
         else if (strcmp(argv[i], "--out") == 0) out_path = argv[++i];
         else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
+        else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
+        else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
+        else if (strcmp(argv[i], "--router-layer") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; router_layer = (int)v; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     char error[512] = {0};
@@ -132,11 +156,30 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "tokenize") == 0) {
-        if (!text) { fprintf(stderr, "--text is required\n"); return 2; }
+        if (!text && !corpus) { fprintf(stderr, "--text or --file is required\n"); return 2; }
         rl_gguf_model g;
         if (!rl_gguf_model_open(model, &g, error, sizeof(error))) { fprintf(stderr, "open failed: %s\n", error); return 1; }
         rl_tokenizer *tk = rl_tokenizer_create(&g, error, sizeof(error));
         if (!tk) { fprintf(stderr, "tokenizer failed: %s\n", error); rl_gguf_model_close(&g); return 1; }
+        if (corpus) {
+            FILE *cf = fopen(corpus, "rb");
+            if (!cf) { fprintf(stderr, "cannot open %s\n", corpus); return 1; }
+            static char line[65536];
+            static uint32_t line_ids[16384];
+            while (fgets(line, sizeof(line), cf)) {
+                size_t len = strlen(line);
+                while (len && (line[len - 1u] == '\n' || line[len - 1u] == '\r')) line[--len] = '\0';
+                len = unescape_line(line, len);
+                const int32_t n = rl_tokenizer_encode(tk, line, len, !no_special, line_ids, 16384u, error, sizeof(error));
+                if (n < 0) { fprintf(stderr, "tokenize failed: %s\n", error); fclose(cf); return 1; }
+                for (int32_t i = 0; i < n && i < 16384; ++i) printf("%s%u", i ? "," : "", line_ids[i]);
+                printf("\n");
+            }
+            fclose(cf);
+            rl_tokenizer_destroy(tk);
+            rl_gguf_model_close(&g);
+            return 0;
+        }
         char prompt[65536];
         const char *input = text;
         if (chat) { if (!rl_tokenizer_chat_prompt(NULL, text, prompt, sizeof(prompt))) { fprintf(stderr, "prompt too long\n"); return 1; } input = prompt; }
@@ -174,7 +217,13 @@ int main(int argc, char **argv) {
             const uint32_t best = argmax(logits, in->vocab);
             printf("token[%u]=%u -> argmax=%u logit=%.6f total=%.1f ms (layers %.1f, output %.1f)\n",
                 i, tokens[i], best, logits[best], st.total_ms, st.layers_ms, st.output_ms);
-            if (out) {
+            if (router_layer >= 0 && i >= dump_from) {
+                const uint32_t *rid = rl_engine_last_router_ids(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU, (uint32_t)router_layer);
+                printf("  router[%d] topk:", router_layer);
+                for (uint32_t k = 0; rid && k < in->top_k; ++k) printf(" %u", rid[k]);
+                printf("\n");
+            }
+            if (out && (!dump_last || i + 1u == token_count) && i >= dump_from) {
                 fwrite(rl_engine_last_embedding(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU), sizeof(float), in->hidden, out);
                 for (uint32_t l = 0; l < in->n_layer; ++l)
                     fwrite(rl_engine_last_layer_output(e, gpu ? RL_BACKEND_GPU : RL_BACKEND_CPU, l), sizeof(float), in->hidden, out);

@@ -11,9 +11,11 @@ import numpy as np
 
 
 def stats(a: np.ndarray, b: np.ndarray):
+    a, b = a.astype(np.float64), b.astype(np.float64)
     d = np.abs(a - b)
     denom = np.maximum(np.abs(b), 1e-12)
-    cos = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-30))
+    with np.errstate(all="ignore"):  # Accelerate emits spurious matmul warnings on the zero-filled embed record
+        cos = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-30))
     return float(d.max()), float((d / denom).max()), cos, int(d.argmax())
 
 
@@ -31,6 +33,10 @@ def main() -> int:
     ap.add_argument("--layers", type=int, default=48)
     ap.add_argument("--vocab", type=int, default=151936)
     ap.add_argument("--all-layers", action="store_true")
+    ap.add_argument("--max-logit-abs", type=float, default=1e-2,
+                    help="fail when any logit differs by more than this (field-observed: ~1.5e-5 at short context)")
+    ap.add_argument("--max-kl", type=float, default=1e-5,
+                    help="fail when KL(ref||native) over the vocabulary exceeds this (field-observed: ~1e-12 at short context)")
     args = ap.parse_args()
     rec = args.hidden * (args.layers + 2) + args.vocab
     a = np.fromfile(args.native, dtype=np.float32)
@@ -42,6 +48,7 @@ def main() -> int:
     a = a[: n * rec].reshape(n, rec)
     b = b[: n * rec].reshape(n, rec)
     worst_logit = 0.0
+    worst_kl = 0.0
     ok = True
     for t in range(n):
         ea, eb = a[t, : args.hidden], b[t, : args.hidden]
@@ -65,11 +72,15 @@ def main() -> int:
         print(f"  logits: max_abs={mx:.4e} at {idx} (native {la[idx]:.4f} ref {lb[idx]:.4f}) cos={cos:.6f} KL(ref||native)={kl:.3e}")
         print(f"          argmax native={int(la.argmax())} ref={int(lb.argmax())} top5 native={ta.tolist()} ref={tb.tolist()}")
         worst_logit = max(worst_logit, mx)
+        worst_kl = max(worst_kl, kl)
         if int(la.argmax()) != int(lb.argmax()):
             ok = False
-    print(f"worst logits max_abs: {worst_logit:.4e}")
+    within = worst_logit <= args.max_logit_abs and worst_kl <= args.max_kl
+    print(f"worst logits max_abs: {worst_logit:.4e} (limit {args.max_logit_abs:.1e})  worst KL: {worst_kl:.3e} (limit {args.max_kl:.1e})")
     print("ARGMAX AGREEMENT:", "YES" if ok else "NO")
-    return 0 if ok else 3
+    print("LOGIT THRESHOLDS:", "YES" if within else "NO")
+    print("ORACLE LOGITS PARITY:", "YES" if ok and within else "NO")
+    return 0 if ok and within else 3
 
 
 if __name__ == "__main__":
