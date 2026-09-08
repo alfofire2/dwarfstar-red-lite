@@ -168,6 +168,25 @@
       "router_select_ms": 17.0
     },
     "mapped_experts_experiment": "RL_PREFILL_MAPPED_EXPERTS=1: numerically identical, 1.9-10.8 tok/s (Metal residency of each layer's expert window per command buffer)",
-    "reference_llama_cpp_pp48_tps": 338.6
+    "reference_llama_cpp_pp48_tps": 338.6,
+    "after_lru_fix_dev20c": {
+      "prompt_96_tokens_one_chunk_cache_4096_tps": 155.4,
+      "prompt_96_split_ms": {
+        "dense_gpu": 139.1,
+        "experts_gpu": 312.2,
+        "miss_copies_wall": 78.3,
+        "lru_reserve": 31.4,
+        "router_select": 17.9
+      },
+      "prompt_1100_cache_4096_chunk_tps": {
+        "128": 152.4,
+        "256": 163.9,
+        "512": 171.4,
+        "1100": 166.3
+      },
+      "prompt_1100_cache_12288_chunk_512_tps": 163.4,
+      "decode_warm_cache_4096_tps": 39.9,
+      "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size"
+    }
   }
 }

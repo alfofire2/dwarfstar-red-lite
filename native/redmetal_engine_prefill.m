@@ -802,6 +802,8 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
              * selected experts fits one pool plan; each group runs three batched dispatches (gate/up, down,
              * per-token weighted sum). The residual add of the whole chunk is encoded after the last group. */
             const double read_before = m->last_read_ms;
+            double p_lru0, p_load0, p_commit0;
+            rl_native_metal_prepare_profile(m->experts, &p_lru0, &p_load0, &p_commit0);
             const uint32_t plan_limit = pf->mapped ? (experts < 512u ? experts : 512u) : prefill_plan_limit(m);
             for (uint32_t g0 = 0; g0 < B;) {
                 uint32_t g1 = g0, U = 0;
@@ -857,7 +859,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                     [enc setBuffer:pf->scalar offset:0 atIndex:3]; [enc setBuffer:pf->xb offset:0 atIndex:4]; [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&B length:4 atIndex:6];
                     enc_1d(enc, pf->p_scale_add, (NSUInteger)hidden * B, 64u); [enc endEncoding];
                 }
+                const double w0 = rl_engine_now_ms();
                 if (!commit_wait(cb, "prefill routed experts", &stats->routed_gpu_ms, error, cap)) goto done;
+                stats->expert_wait_ms += rl_engine_now_ms() - w0;
                 if (!pf->mapped) {
                     const int last_plan = l + 1u == in->n_layer && g1 == B;
                     if (!rl_native_metal_release_topk(m->experts, &plan, last_plan ? &tel : NULL, error, cap)) goto done;
@@ -867,6 +871,11 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             }
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
+            {
+                double p_lru1, p_load1, p_commit1;
+                rl_native_metal_prepare_profile(m->experts, &p_lru1, &p_load1, &p_commit1);
+                stats->prep_lru_ms += p_lru1 - p_lru0; stats->prep_load_ms += p_load1 - p_load0; stats->prep_commit_ms += p_commit1 - p_commit0;
+            }
             {
                 const double read_now = rl_native_metal_read_ms(m->experts);
                 stats->routed_load_ms += read_now - read_before;

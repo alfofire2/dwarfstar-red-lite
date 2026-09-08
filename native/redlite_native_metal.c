@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef __APPLE__
 #include <dispatch/dispatch.h>
 #endif
@@ -18,7 +19,20 @@ struct rl_native_metal_runtime {
     rl_native_lru lru;
     uint64_t expert_loads;
     uint64_t slot_bytes;
+    double prep_lru_ms, prep_load_ms, prep_commit_ms;   /* wall-clock profile of prepare_topk */
 };
+
+static double now_ms_local(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, double *lru_ms, double *load_ms, double *commit_ms) {
+    if (lru_ms) *lru_ms = runtime ? runtime->prep_lru_ms : 0.0;
+    if (load_ms) *load_ms = runtime ? runtime->prep_load_ms : 0.0;
+    if (commit_ms) *commit_ms = runtime ? runtime->prep_commit_ms : 0.0;
+}
 
 static void set_error(char *error, size_t cap, const char *message) {
     if (error && cap) snprintf(error, cap, "%s", message ? message : "unknown native Metal error");
@@ -341,7 +355,10 @@ int rl_native_metal_prepare_topk(
         plan->weights[i] = router_weights[i];
     }
     rl_cache_transaction transaction = {0};
+    const double t_lru = now_ms_local();
     if (!rl_native_lru_prepare_many(&runtime->lru, keys, top_k, &transaction, error, error_cap)) return 0;
+    runtime->prep_lru_ms += now_ms_local() - t_lru;
+    const double t_load = now_ms_local();
     uint32_t miss_index[RL_NATIVE_TOPK_MAX];
     uint32_t miss_count = 0;
     for (uint32_t i = 0; i < top_k; ++i) {
@@ -376,6 +393,8 @@ int rl_native_metal_prepare_topk(
         }
 #endif
     }
+    runtime->prep_load_ms += now_ms_local() - t_load;
+    const double t_commit = now_ms_local();
     for (uint32_t k = 0; k < miss_count; ++k) {
         if (!load_ok[k]) {
             rl_native_lru_abort(&runtime->lru, &transaction);
@@ -391,6 +410,7 @@ int rl_native_metal_prepare_topk(
         return 0;
     }
     rl_native_lru_transaction_free(&transaction);
+    runtime->prep_commit_ms += now_ms_local() - t_commit;
     for (uint32_t i = 0; i < top_k; ++i) {
         if (redmetal_topk_pool_slot_inflight(runtime->pool, plan->slots[i])) {
             set_error(error, error_cap, "native top-k slot unexpectedly in-flight before encode");

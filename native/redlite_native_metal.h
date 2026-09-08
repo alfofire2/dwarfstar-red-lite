@@ -124,6 +124,8 @@ int rl_native_metal_encode_topk_batched(
     size_t error_cap);
 /* Opaque pool handle for the mapped-expert prefill path (redmetal_topk_pool_encode_mapped). */
 void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime);
+/* Cumulative wall-clock profile of rl_native_metal_prepare_topk: LRU reservation, miss loads, commit. */
+void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, double *lru_ms, double *load_ms, double *commit_ms);
 /* Slot capacity of the bounded expert cache. */
 uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime);
 int rl_native_metal_release_topk(

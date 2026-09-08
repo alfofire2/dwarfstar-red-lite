@@ -53,25 +53,41 @@ dev18 record and to llama.cpp (`generate.vs_llama`).
 
 ## Throughput (M4 Max 48 GiB, prompt tokens per second)
 
+Before the LRU fix below (dev20b as first committed):
+
 | prompt | path | tok/s |
 |---|---|---:|
 | 1100 tokens, 4 GiB expert cache | token by token (dev18) | 22.6 |
 | 1100 tokens, 4 GiB | chunks of 32 / 128 / 256 / 512 | 33.7 / 40.3 / 49.7 / 65.7 |
-| 1100 tokens, 4 GiB | one chunk of 1100 | **99.1** |
+| 1100 tokens, 4 GiB | one chunk of 1100 | 99.1 |
 | 96 tokens, 4 GiB, chunk 96 | experts not resident | 38.1 |
-| 96 tokens, 12 GiB, chunk 96 | experts resident (no loads) | **189.2** |
+| 96 tokens, 12 GiB, chunk 96 | experts resident (no loads) | 189.2 |
+
+Profiling the expert phase of the 96-token chunk (`expert phase split` line of
+`redlite-engine prefill`) showed that copying the misses from the page cache
+took 78 ms of wall time for the whole prompt while the LRU reservation took
+1807 ms: `rl_native_lru_prepare_many` scanned every cache entry against the
+whole selection for each miss (capacity × selection × misses ≈ 4×10⁸ key
+compares per 300-expert plan), and key lookups were linear in the capacity.
+dev20c reserves all hits before any victim is chosen (so the selection never
+needs to be scanned) and indexes resident keys with an open-addressing hash;
+both changes preserve the LRU semantics and pass the model-free LRU tests.
+After the fix (same machine, `ORACLE LOGITS PARITY: YES` at every size):
+
+| prompt | path | tok/s |
+|---|---|---:|
+| 96 tokens, 4 GiB, chunk 96 | LRU reserve 31 ms, miss copies 78 ms, experts GPU 312 ms | **155.4** |
+| 1100 tokens, 4 GiB | chunks of 128 / 256 / 512 / 1100 | 152.4 / 163.9 / **171.4** / 166.3 |
+| 1100 tokens, 12 GiB | chunks of 512 | 163.4 |
 | reference: pinned llama.cpp fully resident (`llama-bench` pp48) | | 338.6 |
 
-Where the time goes (96 tokens, one chunk): dense GPU 140 ms (1.5 ms/token,
-about 7× faster than the decode kernels per token), experts GPU 314–338 ms,
-router selection 17 ms. Everything else is copying expert misses from the page
-cache into the bounded pool: a 96-token chunk selects ~300 of the 512 experts
-in every layer (135 MiB per token), far more than a 4 GiB cache holds across
-48 layers, so each chunk-layer reloads its union at ~6.7 GB/s. Because the
-union saturates at all 512 experts (17 GB per chunk) the copy cost is bounded
-per chunk, which is why longer chunks are faster: the default chunk is 512
-tokens and the whole prompt as one chunk is fastest when memory allows
-(scratch ≈ 0.26 MiB per chunk token plus the pair buffers).
+Where the time goes now (96 tokens, one chunk, 618 ms): experts GPU 312 ms
+(3.3 ms/token: the batched gate/up/down kernels re-read a weight row once per
+(expert, token) pair), dense GPU 139 ms (1.5 ms/token), miss copies 78 ms,
+LRU 31 ms, router selection 18 ms. The copy path itself (`pread` from the page
+cache into the pool, `dispatch_apply` over the misses) is not the bottleneck;
+the expert kernels are. The default chunk stays at 512 tokens (scratch ≈
+0.26 MiB per chunk token plus the pair buffers).
 
 Reading the experts in place from the mmap instead of copying them
 (`RL_PREFILL_MAPPED_EXPERTS=1`, `redmetal_topk_pool_encode_mapped`) is
@@ -87,8 +103,8 @@ each layer's whole ~350 MB expert window for every command buffer (~3.3 s per
   the expert copies.
 - Decode is unchanged (one token, deferred expert buffer); the batched kernels
   are used for prompt ingestion only.
-- The expert gate/up kernels re-read a weight row once per (expert, token)
-  pair; a register-tiled variant and overlapping the miss copies with the
-  previous layer's GPU work are the next optimizations, together with a
-  faster copy path than per-expert `pread` (measured 6.7 GB/s from the page cache).
+- The expert gate/up/down kernels re-read a weight row once per (expert,
+  token) pair and are now the largest cost (3.3 ms/token); a register-tiled
+  variant over the pairs of an expert is the next optimization. Overlapping
+  the miss copies with GPU work is not worth it at 78 ms per 96-token prompt.
 - No batched sampling, no multi-sequence batching.

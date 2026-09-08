@@ -29,6 +29,8 @@ typedef struct {
     uint64_t evictions;
     uint64_t blocked_victims;
     rl_cache_entry *entries;
+    uint32_t *index;        /* open-addressing hash of resident keys -> entry index + 1 (0 = empty) */
+    uint32_t index_mask;
 } rl_native_lru;
 
 typedef struct {

@@ -313,6 +313,8 @@ int main(int argc, char **argv) {
             bat_ms, token_count * 1000.0 / bat_ms, st.gpu_ms, st.routed_gpu_ms, st.routed_load_ms, st.expert_plans);
         printf("batched wall split   : embed %.1f, dense recurrent %.1f + attention %.1f, router select %.1f, experts (prepare+GPU+wait) %.1f, output %.1f ms\n",
             st.embed_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.output_ms);
+        printf("expert phase split   : LRU reserve %.1f, miss loads (wall) %.1f, commit %.1f, GPU commit+wait %.1f ms\n",
+            st.prep_lru_ms, st.prep_load_ms, st.prep_commit_ms, st.expert_wait_ms);
         printf("worst layer abs      : %.6g\n", worst_layer);
         printf("final norm abs       : %.6g\n", cf.max_abs);
         printf("logits abs           : %.6g (argmax batched=%u sequential=%u)\n", cl.max_abs, a_bat, a_seq);

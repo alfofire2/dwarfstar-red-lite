@@ -18,6 +18,11 @@ int rl_native_lru_init(rl_native_lru *cache, uint32_t capacity) {
     memset(cache, 0, sizeof(*cache));
     cache->entries = (rl_cache_entry *)calloc(capacity, sizeof(*cache->entries));
     if (!cache->entries) return 0;
+    uint32_t size = 16u;
+    while (size < 2u * capacity) size <<= 1;
+    cache->index = (uint32_t *)calloc(size, sizeof(uint32_t));
+    if (!cache->index) { free(cache->entries); cache->entries = NULL; return 0; }
+    cache->index_mask = size - 1u;
     cache->capacity = capacity;
     return 1;
 }
@@ -25,14 +30,53 @@ int rl_native_lru_init(rl_native_lru *cache, uint32_t capacity) {
 void rl_native_lru_free(rl_native_lru *cache) {
     if (!cache) return;
     free(cache->entries);
+    free(cache->index);
     memset(cache, 0, sizeof(*cache));
 }
 
+/* ---- key index: open addressing with linear probing and backward-shift deletion ---- */
+static uint32_t key_hash(rl_cache_key key) {
+    uint32_t h = key.layer * 0x9E3779B1u;
+    h ^= key.expert * 0x85EBCA77u;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return h;
+}
+
 static int index_for_key(const rl_native_lru *cache, rl_cache_key key) {
-    for (uint32_t i = 0; i < cache->capacity; ++i) {
-        if (cache->entries[i].valid && key_equal(cache->entries[i].key, key)) return (int)i;
+    if (!cache->index) return -1;
+    uint32_t pos = key_hash(key) & cache->index_mask;
+    for (;;) {
+        const uint32_t v = cache->index[pos];
+        if (!v) return -1;
+        const rl_cache_entry *entry = &cache->entries[v - 1u];
+        if (entry->valid && key_equal(entry->key, key)) return (int)(v - 1u);
+        pos = (pos + 1u) & cache->index_mask;
     }
-    return -1;
+}
+
+static void index_insert(rl_native_lru *cache, rl_cache_key key, uint32_t entry_index) {
+    uint32_t pos = key_hash(key) & cache->index_mask;
+    while (cache->index[pos]) pos = (pos + 1u) & cache->index_mask;
+    cache->index[pos] = entry_index + 1u;
+}
+
+static void index_remove(rl_native_lru *cache, rl_cache_key key, uint32_t entry_index) {
+    uint32_t pos = key_hash(key) & cache->index_mask;
+    while (cache->index[pos] && cache->index[pos] != entry_index + 1u) pos = (pos + 1u) & cache->index_mask;
+    if (!cache->index[pos]) return;
+    /* backward shift: pull later probe-chain members into the hole */
+    uint32_t hole = pos;
+    uint32_t j = (pos + 1u) & cache->index_mask;
+    while (cache->index[j]) {
+        const uint32_t home = key_hash(cache->entries[cache->index[j] - 1u].key) & cache->index_mask;
+        /* the element at j may move to the hole when its home is not in (hole, j] cyclically */
+        const int in_range = hole <= j ? (home > hole && home <= j) : (home > hole || home <= j);
+        if (!in_range) { cache->index[hole] = cache->index[j]; hole = j; }
+        j = (j + 1u) & cache->index_mask;
+    }
+    cache->index[hole] = 0;
 }
 
 int rl_native_lru_lookup(const rl_native_lru *cache, rl_cache_key key, uint32_t *slot_id) {
@@ -54,24 +98,13 @@ int rl_native_lru_set_inflight(rl_native_lru *cache, uint32_t slot_id, uint32_t 
     return 0;
 }
 
-static int selected_contains(const rl_cache_key *keys, uint32_t count, rl_cache_key key) {
-    for (uint32_t i = 0; i < count; ++i) {
-        if (key_equal(keys[i], key)) return 1;
-    }
-    return 0;
-}
 
-static int first_unreserved_free_entry(const rl_native_lru *cache, const uint8_t *reserved) {
-    for (uint32_t i = 0; i < cache->capacity; ++i) {
-        if (!cache->entries[i].valid && !reserved[i]) return (int)i;
-    }
-    return -1;
-}
 
+/* Oldest valid entry that is neither reserved by this transaction nor in flight. Every selected key
+ * that is resident has already been reserved (hits are processed before misses), so the selection
+ * itself never needs to be scanned here. */
 static int planned_victim_entry(
         const rl_native_lru *cache,
-        const rl_cache_key *protected_keys,
-        uint32_t protected_count,
         const uint8_t *reserved,
         uint64_t *blocked) {
     int victim = -1;
@@ -79,7 +112,7 @@ static int planned_victim_entry(
     for (uint32_t i = 0; i < cache->capacity; ++i) {
         const rl_cache_entry *entry = &cache->entries[i];
         if (!entry->valid || reserved[i]) continue;
-        if (entry->inflight || selected_contains(protected_keys, protected_count, entry->key)) {
+        if (entry->inflight) {
             if (blocked) (*blocked)++;
             continue;
         }
@@ -135,20 +168,27 @@ int rl_native_lru_prepare_many(
     }
 
     uint64_t blocked = 0;
+    /* pass 1: every resident key of the selection is reserved before any victim is chosen */
     for (uint32_t i = 0; i < count; ++i) {
         items[i].key = keys[i];
         const int existing = index_for_key(cache, keys[i]);
+        items[i].hit = existing >= 0;
         if (existing >= 0) {
             items[i].entry_index = (uint32_t)existing;
             items[i].slot_id = cache->entries[existing].slot_id;
-            items[i].hit = 1;
             reserved[existing] = 1;
-            continue;
         }
-
-        int index = first_unreserved_free_entry(cache, reserved);
+    }
+    /* pass 2: misses take free entries first, then the oldest unreserved, not-in-flight entries */
+    uint32_t free_scan = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (items[i].hit) continue;
+        int index = -1;
+        for (; free_scan < cache->capacity; ++free_scan) {
+            if (!cache->entries[free_scan].valid && !reserved[free_scan]) { index = (int)free_scan; break; }
+        }
         if (index < 0) {
-            index = planned_victim_entry(cache, keys, count, reserved, &blocked);
+            index = planned_victim_entry(cache, reserved, &blocked);
         }
         if (index < 0) {
             free(items);
@@ -206,8 +246,9 @@ int rl_native_lru_commit(
             entry->stamp = ++cache->clock;
         } else {
             cache->misses++;
-            if (entry->valid) cache->evictions++;
+            if (entry->valid) { cache->evictions++; index_remove(cache, entry->key, r->entry_index); }
             else cache->resident++;
+            index_insert(cache, r->key, r->entry_index);
             entry->key = r->key;
             entry->slot_id = r->slot_id;
             entry->stamp = ++cache->clock;
@@ -236,6 +277,7 @@ void rl_native_lru_abort(rl_native_lru *cache, rl_cache_transaction *transaction
         if (r->hit || r->entry_index >= cache->capacity) continue;
         rl_cache_entry *entry = &cache->entries[r->entry_index];
         if (entry->valid) {
+            index_remove(cache, entry->key, r->entry_index);
             memset(entry, 0, sizeof(*entry));
             if (cache->resident) cache->resident--;
             cache->evictions++;

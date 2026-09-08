@@ -32,6 +32,17 @@ Batched prompt ingestion on `v0.3-streaming`. See
   numerically identical but 4–10× slower because Metal re-establishes
   residency of each layer's whole expert window per command buffer; kept as
   an opt-in experiment.
+- dev20c (2026-09-08): profiling the expert phase showed the bounded-cache
+  copy path was never the bottleneck (78 ms of miss copies for a 96-token
+  prompt) while the LRU reservation cost 1.8 s: victim selection scanned every
+  entry against the whole selection for each miss, and key lookups were linear
+  in the capacity. `rl_native_lru_prepare_many` now reserves all hits before
+  choosing victims and resident keys are indexed with an open-addressing hash
+  (semantics unchanged, model-free LRU tests pass). Prompt ingestion on the
+  M4 Max, 4 GiB cache: 96-token chunk 39 → 155 tok/s; 1100-token prompt 65.7 →
+  171 tok/s (512-token chunks), capacity-independent (12 GiB: 163 tok/s).
+  Decode also benefits slightly (warm 4 GiB: ~40 tok/s). `redlite-engine
+  prefill` prints the expert-phase split (LRU, miss copies, commit, GPU wait).
 
 ## 0.3.0.dev19 — 2026-09-07
 

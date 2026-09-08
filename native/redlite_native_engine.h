@@ -76,6 +76,7 @@ typedef struct {
     uint32_t resident_slots;
     uint32_t slot_capacity;
     uint32_t expert_plans;   /* batched prefill: expert plans (groups) executed */
+    double prep_lru_ms, prep_load_ms, prep_commit_ms, expert_wait_ms;   /* prefill expert phase wall split */
 } rl_engine_step_stats;
 
 void rl_engine_config_default(rl_engine_config *cfg);
