@@ -30,9 +30,9 @@ a development-time oracle.
 | Persistent engine (audit, states, CPU oracle) | `redlite_native_engine*.{h,c}` | `src/models/qwen3next.cpp`, `delta-net-base.cpp` | engine parity, oracle comparison |
 | Metal backend | `redmetal_engine.m` | validated dev14–dev16 kernels + new Q5_K rows, threadgroup GQA, fused DeltaNet state | engine parity, oracle comparison |
 | Batched expert pool | `redmetal_topk.m` (rewritten execution) | dev10/dev11 IQ2_XS/IQ1_M decode | `topk-parity`, `routed-parity`, full-width FFN parity, engine parity |
-| Tokenizer | `redlite_native_tokenizer.[ch]`, `redlite_native_unicode_data.h` | pinned `llama-vocab.cpp`, `unicode.cpp` | identical ids to `llama_tokenize` on 26 inputs |
-| Sampler | `redlite_native_sampler.[ch]` | — | greedy identical to llama.cpp; seeded runs reproducible |
-| Generation CLI | `redlite_native_generate_cli.c` | chat template from the GGUF | end-to-end + oracle comparison |
+| Tokenizer | `redlite_native_tokenizer.[ch]`, `redlite_native_unicode_data.h` | pinned `llama-vocab.cpp`, `unicode.cpp` | identical ids to `llama_tokenize` on the 30-input corpus `tests/fixtures/tokenizer_corpus.txt` |
+| Sampler | `redlite_native_sampler.[ch]` | llama.cpp default chain order (top-k → top-p → temperature) | greedy identical to llama.cpp; seeded runs reproducible; model-free selftest |
+| Generation CLI | `redlite_native_generate_cli.c` | hard-coded Qwen3-Next Instruct chat template (matches this GGUF's `tokenizer.chat_template` for system/user/assistant turns; not interpreted at runtime) | end-to-end + oracle comparison |
 
 ## Model input / output path (real GGUF)
 
@@ -107,17 +107,19 @@ identical argmax/top-5 and identical greedy tokens, which holds.
 ## Tokenizer
 
 `redlite-engine tokenize MODEL --text ... [--chat] [--no-special]` reproduces
-`llama_tokenize` ids on all 26 test inputs (ASCII, contractions, digit runs,
-CJK/Cyrillic/accents, emoji and ZWJ sequences, code, tabs, CR/LF runs, leading
-and trailing whitespace, special tokens inside text, the full chat template).
-Decoding round-trips UTF-8 byte-exactly.
+`llama_tokenize` ids on the 30-input corpus in `tests/fixtures/tokenizer_corpus.txt`
+(ASCII, contractions, digit runs, CJK/Cyrillic/Arabic/accents, emoji and flag
+sequences, code, tabs, LF runs, leading and trailing whitespace, URLs, special
+tokens inside text, the full chat template). `--file CORPUS` tokenizes one line
+per input; the regression suite compares it against `redlite-ref-llama tokenize
+--file` (check `tokenize.corpus_vs_llama`). Decoding round-trips UTF-8 byte-exactly.
 
 ## End-to-end
 
 ```bash
 make native
 .deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
-  --prompt "Explain in one sentence why the sky is blue." --max-tokens 40 --cache-mib 8192 --stats
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 40 --cache-mib 4096 --stats
 ```
 
 Output on the M4 Pro (greedy):
@@ -168,6 +170,9 @@ SSD expert traffic per token and 24.4 tok/s.
 | deferred expert buffer (one GPU sync per layer) | 50 ms | 21.6 |
 | fused DeltaNet state / tail / L2 / attention prep kernels | 43 ms | 25.9 |
 
+The rows above were measured with `--cache-mib 8192` on a warm page cache; the
+27.8 tok/s figure with the default 4 GiB cache is in the final field run below.
+
 Per-token GPU profile after these changes (`RL_ENGINE_PROFILE=1`, cumulative
 over a 46-pass run divided by 46): experts 9.0 ms, DeltaNet projections 3.8 ms,
 DeltaNet tail 2.0 ms, DeltaNet state 1.9 ms, shared expert 1.7 ms, router 1.3 ms,
@@ -176,9 +181,10 @@ everything else < 0.5 ms; ~24 ms of GPU work per token, the remainder of the
 43 ms step is expert miss loading (~8 ms wall, concurrent `pread` into the LRU
 slots) and CPU/GPU synchronization (one wait per layer).
 
-Expert cache behaviour (this prompt): 1 GiB cache → 70 % hit rate, 105 MiB SSD
-traffic per token; 8 GiB cache → 80 % hit rate, 67 MiB per token. The routed
-experts are never resident as a whole: 22 GiB of expert payload streams through
+Expert cache behaviour (this prompt): 1 GiB cache → 56 % hit rate, 150 MiB SSD
+traffic per token; 2 GiB → 70 %, 105 MiB; 4 GiB (default) → 79 %, 71 MiB;
+8 GiB → 80 %, 67 MiB. The routed experts are never resident as a whole: the
+~16.9 GiB of routed expert payload (`redlite-native inspect`) streams through
 the bounded cache.
 
 For reference, the pinned llama.cpp with the whole model resident in Metal
@@ -203,10 +209,21 @@ resident.
   Q8_0, Q4_K, Q5_K, Q6_K, IQ2_XXS) and routed IQ2_XS/IQ1_M; the CPU oracle also
   decodes F16 and Q2_K.
 - Sampling parity with llama.cpp is claimed for greedy only; temperature /
-  top-k / top-p sampling is native and reproducible per seed but not compared
-  distributionally.
+  top-k / top-p sampling follows the order of llama.cpp's default sampler chain
+  (top-k, then top-p over the untempered distribution, then temperature) and is
+  reproducible per seed, but the PRNG differs, so sampled outputs are not
+  compared token by token.
 - `--context` bounds the KV cache; the GQA kernel handles any length by chunked
-  online softmax but long-context throughput has not been benchmarked.
+  online softmax. The multi-chunk path (> 1024 keys) is validated against the
+  pinned llama.cpp on the frozen 1200-token fixture
+  `tests/fixtures/long_context_prompt.txt` (`logits.long_context_vs_llama`,
+  positions 1100–1199 compared, argmax identical at every position). On that
+  fixture llama.cpp's layer-2 router hits an exact probability tie at position
+  1035 (experts 403 and 101, both 0.0077861) which the two implementations
+  break differently; before the tie, and on a second 1200-token prompt without
+  one, the drift at position 1199 is 1.5e-05 max abs / 1e-11 KL, after it the
+  logits differ by up to 1.1 (KL ≤ 6e-3) with identical argmax. Long-context
+  throughput has not been benchmarked.
 
 ## Final field run (clean build)
 
@@ -241,8 +258,8 @@ The same prompt immediately afterwards:
 
 | setting | prompt tok/s | generation tok/s | decode step | hit rate | SSD MiB/token | physical footprint |
 |---|---:|---:|---:|---:|---:|---:|
-| `--cache-mib 8192`, second run | 12.0 | 17.9 | 63.1 ms | 80.5 % | 66.5 | 5.9 GiB |
-| `--cache-mib 4096` (default) | 16.3 | **27.8** | 38.7 ms | 79.2 % | 71.2 | 4.5 GiB |
+| `--cache-mib 8192`, second run | 12.0 | 17.9 | 63.1 ms | 80.5 % | 66.5 | 5.8 GiB (5940 MiB) |
+| `--cache-mib 4096` (default) | 16.3 | **27.8** | 38.7 ms | 79.2 % | 71.2 | 4.4 GiB (4485 MiB) |
 
 The 8 GiB cache runs were slower only because their expert miss reads came from
 the SSD instead of the macOS page cache (the concurrent `pread` sum was 72–77 ms

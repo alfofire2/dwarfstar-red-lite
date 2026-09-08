@@ -16,14 +16,53 @@ Native chat integration on `v0.3-streaming`. See
 - Added parser and command-construction tests while keeping `redlite run` and
   `redlite serve` backward-compatible with the pinned upstream engines.
 
+Hardening round (2026-09-08), from the post-dev18 audit:
+
+- Native defects fixed: `redlite-generate` refuses an empty prompt instead of
+  sampling from uninitialised logits and checks its allocations; the tokenizer's
+  special-token fragment array is sized for the worst case (`2·len+3`); the GGUF
+  reader rejects a `tokenizer.ggml.token_type` array whose length differs from
+  the vocabulary (as llama.cpp does) and reports BF16 row bytes correctly; the
+  engine rejects `ssm_conv < 2`; the Metal backend no longer allocates the unused
+  267 MiB host-side copy of the conv/recurrent/KV state; the CPU oracle runs a
+  row job inline when `pthread_create` fails; `redlite-engine --help` exits 0.
+- Sampler: top-k uses a single-pass partial selection instead of sorting the
+  whole vocabulary per token, and the stage order now matches llama.cpp's
+  default chain (top-k → top-p on the untempered distribution → temperature).
+  A model-free sampler selftest was added to `redlite-engine-offline-test`.
+- Validation: `tests/fixtures/tokenizer_corpus.txt` (30 inputs) is compared
+  against `llama_tokenize` in one model load per tool (`--file`); the llama.cpp
+  logits comparison now gates on max-abs ≤ 1e-2 and KL ≤ 1e-5 in addition to the
+  argmax; the frozen 1200-token fixture `tests/fixtures/long_context_prompt.txt`
+  validates the > 1024-key attention path against llama.cpp at positions
+  1100–1199 (`--dump-from` / `--dump-last` and `--router-layer` on both dump
+  tools; argmax identical at every position, with a documented exact router tie
+  at position 1035 that the implementations break differently); the greedy
+  comparison derives the prompt length from the tokenizer instead of a
+  hard-coded 19. The suite is now 34 checks (33 with `--quick`).
+- CI: the M4 workflow's oracle step used to skip silently because the workspace
+  checkout never contains `.deps/llama.cpp`; it now reads the bootstrapped
+  checkout from the `REDLITE_LLAMA_DIR` repository variable, fails when that
+  path is configured but invalid, and emits a warning annotation when unset.
+- Documentation corrections: routed expert payload is ~16.9 GiB (not 22 GiB);
+  physical footprints were MiB/1000 mislabelled as GiB (5940 MiB = 5.8 GiB,
+  4485 MiB = 4.4 GiB, 8583 MiB = 8.4 GiB); the 70 % hit-rate figure belongs to a
+  2 GiB cache (1 GiB gives 56 %); the 25.9 tok/s progression rows were measured
+  with an 8 GiB cache; the chat template is hard-coded, not interpreted from the
+  GGUF; the CPU oracle accumulates row dots in double but carries float32 state.
+- Observation (not a benchmark): after these changes the same 19-token prompt
+  measured 39–40 generation tok/s at 1, 2 and 4 GiB cache sizes with the whole
+  GGUF warm in the macOS page cache from the preceding oracle runs; hit rates
+  and SSD bytes per token were unchanged from dev18.
+
 ## 0.3.0.dev18 — 2026-09-03
 
 Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
 `docs/REDLITE_DEV18_ENGINE.md`.
 
 - Added `rl_engine`, a persistent native runtime: mmap'd GGUF, audited per-layer
-  tensor table, and two independent stateful backends (double-precision CPU
-  oracle and Metal) with persistent DeltaNet conv/recurrent states and
+  tensor table, and two independent stateful backends (CPU oracle with
+  double-precision row dots and float32 state, and Metal) with persistent DeltaNet conv/recurrent states and
   full-attention KV caches carried across tokens.
 - Added a complete GGUF directory/metadata reader (hyper-parameters, tokenizer
   vocabulary/merges/types, chat template) and scalar CPU decoders for Q8_0,
@@ -63,10 +102,11 @@ Native end-to-end Qwen3-Next inference on `v0.3-streaming`. See
   (cosine 1.000000, KL ≤ 3e-12, identical top-5); greedy generation identical to
   llama.cpp for 28 tokens (short prompt) and 96 tokens after a 70-token prompt.
 - Performance on the M4 Pro (greedy): decode step 39–43 ms, generation
-  25.9–27.8 tok/s (short prompt, 4 GiB expert cache) / 24.4 tok/s (166-position
-  run, warm 8 GiB cache), prompt ingestion 14–20 tok/s token-by-token; expert
-  cache hit rate 79–95 %, 17–71 MiB SSD expert traffic per token; physical
-  footprint 4.5 GiB (4 GiB cache) to 8.6 GiB (fully populated 8 GiB cache).
+  25.9 tok/s (short prompt, warm 8 GiB expert cache) to 27.8 tok/s (short
+  prompt, default 4 GiB cache) / 24.4 tok/s (166-position run, warm 8 GiB
+  cache), prompt ingestion 14–20 tok/s token-by-token; expert cache hit rate
+  79–95 %, 17–71 MiB SSD expert traffic per token; physical footprint 4.4 GiB
+  (4 GiB cache) to 8.4 GiB (fully populated 8 GiB cache).
   Recorded in `benchmarks/m4pro-24gb-native-dev18.json`.
 - Added `scripts/regress_m4.sh` (31 checks incl. the pinned llama.cpp
   tokenizer/logits/greedy comparisons) and the corresponding self-hosted M4

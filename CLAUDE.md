@@ -33,7 +33,7 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (31 checks incl. pinned llama.cpp comparisons)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (34 checks incl. pinned llama.cpp comparisons; --quick skips the 48-layer stack and the 1200-token long-context check)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
 make bootstrap                  # clone+build the pinned llama.cpp and oversized-moe-runtime into .deps/ (Apple Silicon only, slow)
 ```
@@ -46,7 +46,7 @@ Metal-only `build_*.sh` scripts exit 0 with a skip message.
 Real-model parity tools all follow the same shape and only work on macOS with the GGUF present:
 
 ```bash
-.deps/redmetal/redlite-generate MODEL --prompt "..." --max-tokens 64 --cache-mib 8192 --stats   # native end-to-end generation
+.deps/redmetal/redlite-generate MODEL --prompt "..." --max-tokens 64 --cache-mib 4096 --stats   # native end-to-end generation (4 GiB cache is the recommended default on 24 GiB)
 .deps/redmetal/redlite-engine parity MODEL --tokens 9707,11,1879 --cache-mib 1024 --context 64  # 48-layer CPU-vs-Metal multi-token parity
 .deps/redmetal/redlite-engine tokenize MODEL --text "..." --chat
 RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time profile
@@ -62,7 +62,14 @@ The full list of invocations that constitute "field validation" is the step list
 `REDLITE_MODEL_PATH`). When you add a new native stage, add its parity step there.
 
 Environment variables: `REDLITE_REDMETAL_LIB` overrides the dylib path for the Python
-bridge; `REDLITE_JOBS` sets bootstrap build parallelism.
+bridge; `REDLITE_JOBS` sets bootstrap build parallelism; `REDLITE_LLAMA_DIR` points
+`regress_m4.sh` and `scripts/dev/build_ref_llama.sh` at a bootstrapped llama.cpp checkout
+outside `.deps/` (the M4 workflow reads it from a repository variable of the same name,
+because the runner's workspace checkout is cleaned and never contains `.deps/llama.cpp`).
+The tokenizer oracle corpus is `tests/fixtures/tokenizer_corpus.txt` (one input per line,
+`\n` `\t` `\\` escapes) and the long-context oracle prompt is the frozen
+`tests/fixtures/long_context_prompt.txt`; do not regenerate the latter casually, its known
+router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`.
 
 ## Architecture
 
@@ -97,7 +104,7 @@ bridge; `REDLITE_JOBS` sets bootstrap build parallelism.
    `redlite_native_tokenizer.[ch]`, `redlite_native_sampler.[ch]`,
    `redlite_native_generate_cli.c`). `rl_engine` owns the mmap'd GGUF
    (`redlite_native_gguf_dir.[ch]`), the audited per-layer tensor table and two
-   independent stateful backends: a double-precision CPU oracle and the Metal backend.
+   independent stateful backends: a CPU oracle (double-precision row dots, float32 state) and the Metal backend.
    Dense weights are wrapped in place from the mmap; routed experts go through the
    top-k LRU pool with one GPU sync per layer (prepare/encode/release API). The stage
    CLIs stay as regression tools; the engine reuses their kernel arithmetic.

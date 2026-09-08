@@ -79,7 +79,7 @@ The planner still labels these fits `CRITICAL` because the estimated headroom re
 
 The `v0.3-streaming` branch adds a native Qwen3-Next runtime that does not use
 llama.cpp or Python at inference time. It keeps the ~1.06 GiB of dense weights
-resident (mapped in place from the GGUF), streams the 22 GiB of routed experts
+resident (mapped in place from the GGUF), streams the ~16.9 GiB of routed experts
 through a bounded Metal-visible LRU cache, and runs the whole 48-layer hybrid
 DeltaNet / full-attention / MoE stack on Metal.
 
@@ -103,7 +103,7 @@ for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`
 `--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`,
 `--no-stream` and `--stats`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
-with the default 4 GiB expert cache (physical footprint ~4.5 GiB); see
+with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. Details, validation
 numbers and limits: `docs/REDLITE_DEV18_ENGINE.md`; regression suite:
 `scripts/regress_m4.sh MODEL.gguf`.
