@@ -34,6 +34,7 @@
 #define GGML_TYPE_IQ2_XS 17u
 #define GGML_TYPE_IQ1_M 29u
 #define QK_IQ 256u
+#define REDMETAL_TOPK_SLICE 4u   /* must match RM_S in the kernel source */
 #define REDMETAL_TOPK_MAX 512u   /* experts per encoded plan (a batched-prefill union of several tokens) */
 
 static __thread char g_topk_error[512];
@@ -100,6 +101,7 @@ static NSString * const kTopKSource = @
 "using namespace metal;\n"
 "\n"
 "struct redmetal_topk_slots { device const uchar *slot[512]; };\n"
+"#define RM_S 4u   /* pairs per slice: one decoded weight serves RM_S tokens */\n"
 "struct redmetal_topk_slots3 { device const uchar *gate[512]; device const uchar *up[512]; device const uchar *down[512]; };\n"
 "\n"
 "inline uint redlite_sign8(uint sign7) {\n"
@@ -234,8 +236,45 @@ static NSString * const kTopKSource = @
 "    if (active && lane == 0u) tmp[expert * row_count + r] = acc;\n"
 "}\n"
 "\n"
-/* ---- batched prefill (dev20b): U unique experts serve P (expert, token) pairs sorted by expert ---- */
-/* act[p][row] = SiLU(gate_e[row].x_t) * up_e[row].x_t for every pair p of expert e */
+/* ---- batched prefill (dev20b/d): U unique experts serve P (expert, token) pairs sorted by expert ---- */
+/* Eight consecutive dequantized values (columns gi*8 .. gi*8+7) of one IQ2_XS / IQ1_M block; same
+ * arithmetic as redmetal_topk_iq2_xs_block / redmetal_topk_iq1_m_block, one 8-value group at a time
+ * so several rows can be decoded in lockstep and share the activation loads. */
+"inline void rm_group8(uint type, device const uchar *bp, uint gi, device const char *grid, thread float4 &v0, thread float4 &v1) {\n"
+"    float v[8];\n"
+"    if (type == 17u) {\n"
+"        const uint g = gi >> 1; const uint half_ = gi & 1u;\n"
+"        const float d = float(as_type<half>(*(device const ushort *)bp));\n"
+"        device const ushort *qs = (device const ushort *)(bp + 2);\n"
+"        device const uchar *scales = bp + 66;\n"
+"        const uint scale = (uint(scales[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
+"        const float db = d * (0.5f + float(scale)) * 0.25f;\n"
+"        const uint q = uint(qs[2u * g + half_]);\n"
+"        const uint grid_index = q & 511u;\n"
+"        const uint signs = redlite_sign8(q >> 9);\n"
+"        device const char *gv = grid + grid_index * 8u;\n"
+"        for (uint j = 0; j < 8u; ++j) { const float sign = (signs & (1u << j)) ? -1.0f : 1.0f; v[j] = db * float(gv[j]) * sign; }\n"
+"    } else {\n"
+"        device const uchar *qs = bp; device const uchar *qh = bp + 32;\n"
+"        device const ushort *sc = (device const ushort *)(bp + 48);\n"
+"        const ushort dbits = ushort(sc[0] >> 12) | ushort((sc[1] >> 8) & 0x00f0u) | ushort((sc[2] >> 4) & 0x0f00u) | ushort(sc[3] & 0xf000u);\n"
+"        const float d = float(as_type<half>(dbits));\n"
+"        const uint g = gi;\n"
+"        const uint nibble = (uint(qh[g >> 1]) >> (4u * (g & 1u))) & 15u;\n"
+"        const uint grid_index = uint(qs[g]) | ((nibble & 7u) << 8);\n"
+"        const float delta = (nibble & 8u) ? -0.125f : 0.125f;\n"
+"        const uint scale_index = g >> 1;\n"
+"        const uint scale = (uint(sc[scale_index >> 2]) >> (3u * (scale_index & 3u))) & 7u;\n"
+"        const float dl = d * float(2u * scale + 1u);\n"
+"        device const char *gv = grid + grid_index * 8u;\n"
+"        for (uint j = 0; j < 8u; ++j) v[j] = dl * (float(gv[j]) + delta);\n"
+"    }\n"
+"    v0 = float4(v[0], v[1], v[2], v[3]); v1 = float4(v[4], v[5], v[6], v[7]);\n"
+"}\n"
+"inline float rm_dot8(float4 x0, float4 x1, float4 v0, float4 v1) { const float4 s = fma(x0, v0, x1 * v1); return (s.x + s.y) + (s.z + s.w); }\n"
+/* act[p][row] = SiLU(gate_e[row].x_t) * up_e[row].x_t for every pair p of expert e.
+ * Thread = (expert, tile of 4 rows, lane): the lane's blocks are decoded for the 4 rows in lockstep so each
+ * activation group is loaded once per pair and applied to 4 rows (gate and up). */
 "kernel void redmetal_topk_gateup_b(\n"
 "    device const redmetal_topk_slots3 &slots [[buffer(0)]],\n"
 "    constant uint &ncols [[buffer(1)]],\n"
@@ -248,37 +287,62 @@ static NSString * const kTopKSource = @
 "    constant uint &type [[buffer(8)]],\n"
 "    constant uint &lanes_per_row [[buffer(9)]],\n"
 "    device const uint *pair_token [[buffer(10)]],\n"
-"    device const uint *expert_start [[buffer(11)]],\n"
+"    device const uint *pair_expert [[buffer(11)]],\n"
+"    constant uint &n_pairs [[buffer(12)]],\n"
+"    device const uint *slice_first [[buffer(13)]],\n"
+"    device const uint *slice_count [[buffer(14)]],\n"
+"    constant uint &n_slices [[buffer(15)]],\n"
 "    uint2 tid [[thread_position_in_grid]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
-"    const uint expert = tid.y;\n"
-"    const uint row = tid.x / lanes_per_row;\n"
+"    const uint sl = tid.y; const uint p = sl < n_slices ? slice_first[sl] : 0u; const uint cnt = sl < n_slices ? slice_count[sl] : 0u;\n"
+"    const uint expert = p < n_pairs ? pair_expert[p] : 0u;\n"
+"    const uint tile = tid.x / lanes_per_row; const uint row0 = tile * 4u;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
-"    const bool active = expert < n_expert && row < rows;\n"
+"    const bool active = sl < n_slices && cnt > 0u && expert < n_expert && row0 < rows;\n"
 "    const uint blocks = ncols / 256u;\n"
 "    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
-"    const uint p0 = expert < n_expert ? expert_start[expert] : 0u; const uint p1 = expert < n_expert ? expert_start[expert + 1u] : 0u;\n"
+"    const uint gper = 32u / nparts; const uint g0 = part * gper, g1 = g0 + gper;\n"
 "    const uint ex = expert < n_expert ? expert : 0u;\n"
-"    device const uchar *grow = slots.gate[ex] + ulong(active ? row : 0u) * row_bytes;\n"
-"    device const uchar *urow = slots.up[ex] + ulong(active ? row : 0u) * row_bytes;\n"
-"    for (uint p = p0; p < p1; ++p) {\n"
-"        device const float *xt = x + ulong(pair_token[p]) * ncols;\n"
-"        float g = 0.0f, u = 0.0f;\n"
+"    const uint rbase = active ? row0 : 0u;\n"
+"    device const uchar *grow = slots.gate[ex] + ulong(rbase) * row_bytes;\n"
+"    device const uchar *urow = slots.up[ex] + ulong(rbase) * row_bytes;\n"
+"    {\n"
+"        device const float *xs[RM_S];\n"
+"        for (uint n = 0; n < RM_S; ++n) { const uint q = (n < cnt && p + n < n_pairs) ? p + n : (p < n_pairs ? p : 0u); xs[n] = x + ulong(pair_token[q]) * ncols; }\n"
+"        float ag[4][RM_S], au[4][RM_S];\n"
+"        for (uint r = 0; r < 4u; ++r) for (uint n = 0; n < RM_S; ++n) { ag[r][n] = 0.0f; au[r][n] = 0.0f; }\n"
 "        if (active) {\n"
+"            const uint nrows = min(4u, rows - row0);\n"
 "            for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
-"                g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, xt + b * 256u, grid, part, nparts);\n"
-"                u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, xt + b * 256u, grid, part, nparts);\n"
+"                device const uchar *gb = grow + ulong(b) * block_bytes; device const uchar *ub = urow + ulong(b) * block_bytes;\n"
+"                for (uint gi = g0; gi < g1; ++gi) {\n"
+"                    const uint col = b * 256u + gi * 8u;\n"
+"                    float4 x0[RM_S], x1[RM_S];\n"
+"                    for (uint n = 0; n < RM_S; ++n) { x0[n] = *(device const float4 *)(xs[n] + col); x1[n] = *(device const float4 *)(xs[n] + col + 4u); }\n"
+"                    for (uint r = 0; r < nrows; ++r) {\n"
+"                        float4 v0, v1;\n"
+"                        rm_group8(type, gb + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) ag[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                        rm_group8(type, ub + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) au[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                    }\n"
+"                }\n"
 "            }\n"
 "        }\n"
-"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
-"        if (active && lane == 0u) act[p * rows + row] = (g / (1.0f + exp(-g))) * u;\n"
+"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) {\n"
+"            for (uint r = 0; r < 4u; ++r) for (uint n = 0; n < RM_S; ++n) { ag[r][n] += simd_shuffle_xor(ag[r][n], ushort(off)); au[r][n] += simd_shuffle_xor(au[r][n], ushort(off)); }\n"
+"        }\n"
+"        if (active && lane == 0u) {\n"
+"            for (uint n = 0; n < cnt && n < RM_S; ++n) {\n"
+"                device float *out = act + (p + n) * rows + row0;\n"
+"                for (uint r = 0; r < 4u && row0 + r < rows; ++r) { const float g = ag[r][n]; out[r] = (g / (1.0f + exp(-g))) * au[r][n]; }\n"
+"            }\n"
+"        }\n"
 "    }\n"
 "}\n"
 "\n"
-/* tmp[p][r] = down_e[r] . act[p] for every pair p of expert e */
+/* tmp[p][r] = down_e[r] . act[p] for every pair p of expert e; same 4-row tile */
 "kernel void redmetal_topk_down_b(\n"
 "    device const redmetal_topk_slots3 &slots [[buffer(0)]],\n"
 "    constant uint &ncols [[buffer(1)]],\n"
@@ -290,25 +354,54 @@ static NSString * const kTopKSource = @
 "    constant uint &n_expert [[buffer(7)]],\n"
 "    constant uint &type [[buffer(8)]],\n"
 "    constant uint &lanes_per_row [[buffer(9)]],\n"
-"    device const uint *expert_start [[buffer(10)]],\n"
+"    device const uint *pair_expert [[buffer(10)]],\n"
+"    constant uint &n_pairs [[buffer(11)]],\n"
+"    device const uint *slice_first [[buffer(12)]],\n"
+"    device const uint *slice_count [[buffer(13)]],\n"
+"    constant uint &n_slices [[buffer(14)]],\n"
 "    uint2 tid [[thread_position_in_grid]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
-"    const uint expert = tid.y;\n"
-"    const uint r = tid.x / lanes_per_row;\n"
+"    const uint sl = tid.y; const uint p = sl < n_slices ? slice_first[sl] : 0u; const uint cnt = sl < n_slices ? slice_count[sl] : 0u;\n"
+"    const uint expert = p < n_pairs ? pair_expert[p] : 0u;\n"
+"    const uint tile = tid.x / lanes_per_row; const uint row0 = tile * 4u;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
-"    const bool active = expert < n_expert && r < row_count;\n"
+"    const bool active = sl < n_slices && cnt > 0u && expert < n_expert && row0 < row_count;\n"
 "    const uint blocks = ncols / 256u;\n"
 "    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
-"    const uint p0 = expert < n_expert ? expert_start[expert] : 0u; const uint p1 = expert < n_expert ? expert_start[expert + 1u] : 0u;\n"
-"    device const uchar *drow = slots.down[expert < n_expert ? expert : 0u] + ulong(active ? r : 0u) * row_bytes;\n"
-"    for (uint p = p0; p < p1; ++p) {\n"
-"        device const float *xe = act + ulong(p) * ncols; float acc = 0.0f;\n"
-"        if (active) { for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts); }\n"
-"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
-"        if (active && lane == 0u) tmp[p * row_count + r] = acc;\n"
+"    const uint gper = 32u / nparts; const uint g0 = part * gper, g1 = g0 + gper;\n"
+"    device const uchar *drow = slots.down[expert < n_expert ? expert : 0u] + ulong(active ? row0 : 0u) * row_bytes;\n"
+"    {\n"
+"        device const float *xs[RM_S];\n"
+"        for (uint n = 0; n < RM_S; ++n) { const uint q = (n < cnt && p + n < n_pairs) ? p + n : (p < n_pairs ? p : 0u); xs[n] = act + ulong(q) * ncols; }\n"
+"        float a[4][RM_S];\n"
+"        for (uint r = 0; r < 4u; ++r) for (uint n = 0; n < RM_S; ++n) a[r][n] = 0.0f;\n"
+"        if (active) {\n"
+"            const uint nrows = min(4u, row_count - row0);\n"
+"            for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
+"                device const uchar *db = drow + ulong(b) * block_bytes;\n"
+"                for (uint gi = g0; gi < g1; ++gi) {\n"
+"                    const uint col = b * 256u + gi * 8u;\n"
+"                    float4 x0[RM_S], x1[RM_S];\n"
+"                    for (uint n = 0; n < RM_S; ++n) { x0[n] = *(device const float4 *)(xs[n] + col); x1[n] = *(device const float4 *)(xs[n] + col + 4u); }\n"
+"                    for (uint r = 0; r < nrows; ++r) {\n"
+"                        float4 v0, v1;\n"
+"                        rm_group8(type, db + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) a[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                    }\n"
+"                }\n"
+"            }\n"
+"        }\n"
+"        for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) {\n"
+"            for (uint r = 0; r < 4u; ++r) for (uint n = 0; n < RM_S; ++n) a[r][n] += simd_shuffle_xor(a[r][n], ushort(off));\n"
+"        }\n"
+"        if (active && lane == 0u) {\n"
+"            for (uint n = 0; n < cnt && n < RM_S; ++n) {\n"
+"                device float *out = tmp + (p + n) * row_count + row0;\n"
+"                for (uint r = 0; r < 4u && row0 + r < row_count; ++r) out[r] = a[r][n];\n"
+"            }\n"
+"        }\n"
 "    }\n"
 "}\n"
 "\n"
@@ -355,6 +448,9 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _sumBPipeline;
     id<MTLBuffer> _slotTable3;
     id<MTLBuffer> _pairTokenBuf;
+    id<MTLBuffer> _pairExpertBuf;
+    id<MTLBuffer> _sliceFirstBuf;
+    id<MTLBuffer> _sliceCountBuf;
     id<MTLBuffer> _pairWeightBuf;
     id<MTLBuffer> _expertStartBuf;
     id<MTLBuffer> _tokPairBuf;
@@ -523,12 +619,15 @@ static NSString * const kTopKSource = @
     const NSUInteger es = (NSUInteger)(experts + 1u) * sizeof(uint32_t), tp = (NSUInteger)ntok * top_k * sizeof(uint32_t);
     const NSUInteger actBytes = (NSUInteger)pairs * ffn * sizeof(float), tmpBytes = (NSUInteger)pairs * hidden * sizeof(float);
     if (!_pairTokenBuf || _pairTokenBuf.length < pt) _pairTokenBuf = [_device newBufferWithLength:pt options:MTLResourceStorageModeShared];
+    if (!_pairExpertBuf || _pairExpertBuf.length < pt) _pairExpertBuf = [_device newBufferWithLength:pt options:MTLResourceStorageModeShared];
+    if (!_sliceFirstBuf || _sliceFirstBuf.length < pt) _sliceFirstBuf = [_device newBufferWithLength:pt options:MTLResourceStorageModeShared];
+    if (!_sliceCountBuf || _sliceCountBuf.length < pt) _sliceCountBuf = [_device newBufferWithLength:pt options:MTLResourceStorageModeShared];
     if (!_pairWeightBuf || _pairWeightBuf.length < pw) _pairWeightBuf = [_device newBufferWithLength:pw options:MTLResourceStorageModeShared];
     if (!_expertStartBuf || _expertStartBuf.length < es) _expertStartBuf = [_device newBufferWithLength:es options:MTLResourceStorageModeShared];
     if (!_tokPairBuf || _tokPairBuf.length < tp) _tokPairBuf = [_device newBufferWithLength:tp options:MTLResourceStorageModeShared];
     if (!_actB || _actB.length < actBytes) _actB = [_device newBufferWithLength:actBytes options:MTLResourceStorageModeShared];
     if (!_tmpB || _tmpB.length < tmpBytes) _tmpB = [_device newBufferWithLength:tmpBytes options:MTLResourceStorageModeShared];
-    if (!_pairTokenBuf || !_pairWeightBuf || !_expertStartBuf || !_tokPairBuf || !_actB || !_tmpB) {
+    if (!_pairTokenBuf || !_pairExpertBuf || !_sliceFirstBuf || !_sliceCountBuf || !_pairWeightBuf || !_expertStartBuf || !_tokPairBuf || !_actB || !_tmpB) {
         topk_set_error("failed to allocate batched top-k buffers");
         return 0;
     }
@@ -974,6 +1073,20 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     memcpy(p->_pairWeightBuf.contents, pair_weight, (size_t)n_pairs * sizeof(float));
     memcpy(p->_expertStartBuf.contents, expert_start, (size_t)(n_expert + 1u) * sizeof(uint32_t));
     memcpy(p->_tokPairBuf.contents, tok_pair, (size_t)ntok * top_k * sizeof(uint32_t));
+    uint32_t n_slices = 0;
+    {
+        /* slices of at most REDMETAL_TOPK_SLICE consecutive pairs of the same expert: one decoded weight serves all of them */
+        uint32_t *pe = (uint32_t *)p->_pairExpertBuf.contents;
+        uint32_t *sf = (uint32_t *)p->_sliceFirstBuf.contents;
+        uint32_t *sc = (uint32_t *)p->_sliceCountBuf.contents;
+        for (uint32_t u = 0; u < n_expert; ++u) {
+            for (uint32_t q = expert_start[u]; q < expert_start[u + 1u]; ++q) pe[q] = u;
+            for (uint32_t q = expert_start[u]; q < expert_start[u + 1u]; q += REDMETAL_TOPK_SLICE) {
+                const uint32_t left = expert_start[u + 1u] - q;
+                sf[n_slices] = q; sc[n_slices] = left >= REDMETAL_TOPK_SLICE ? REDMETAL_TOPK_SLICE : left; n_slices++;
+            }
+        }
+    }
     const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
     const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
     const uint32_t zero = 0u;
@@ -993,8 +1106,12 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
     [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
     [enc setBuffer:p->_pairTokenBuf offset:0 atIndex:10];
-    [enc setBuffer:p->_expertStartBuf offset:0 atIndex:11];
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, n_expert, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc setBuffer:p->_pairExpertBuf offset:0 atIndex:11];
+    [enc setBytes:&n_pairs length:sizeof(n_pairs) atIndex:12];
+    [enc setBuffer:p->_sliceFirstBuf offset:0 atIndex:13];
+    [enc setBuffer:p->_sliceCountBuf offset:0 atIndex:14];
+    [enc setBytes:&n_slices length:sizeof(n_slices) atIndex:15];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)((ffn_size + 3u) / 4u) * gate_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
@@ -1010,8 +1127,12 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     [enc setBytes:&n_expert length:sizeof(n_expert) atIndex:7];
     [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
     [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:9];
-    [enc setBuffer:p->_expertStartBuf offset:0 atIndex:10];
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, n_expert, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc setBuffer:p->_pairExpertBuf offset:0 atIndex:10];
+    [enc setBytes:&n_pairs length:sizeof(n_pairs) atIndex:11];
+    [enc setBuffer:p->_sliceFirstBuf offset:0 atIndex:12];
+    [enc setBuffer:p->_sliceCountBuf offset:0 atIndex:13];
+    [enc setBytes:&n_slices length:sizeof(n_slices) atIndex:14];
+    [enc dispatchThreads:MTLSizeMake((NSUInteger)((hidden_size + 3u) / 4u) * down_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
 
     enc = [cb computeCommandEncoder];

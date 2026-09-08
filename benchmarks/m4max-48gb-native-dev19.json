@@ -187,6 +187,32 @@
       "prompt_1100_cache_12288_chunk_512_tps": 163.4,
       "decode_warm_cache_4096_tps": 39.9,
       "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size"
+    },
+    "after_expert_kernel_relayout_dev20d": {
+      "prompt_96_tokens_one_chunk_cache_4096_tps": 200.8,
+      "prompt_96_experts_gpu_ms": 188.0,
+      "prompt_512_tokens_one_chunk_cache_4096_tps": 294.3,
+      "prompt_512_split_ms": {
+        "dense_gpu": 619.6,
+        "experts_gpu": 825.6,
+        "router_select": 90.0
+      },
+      "prompt_1100_cache_4096_chunk_tps": {
+        "256": 231.3,
+        "512": 248.6,
+        "1100": 270.7
+      },
+      "kernel_variants_experts_gpu_ms_96_tokens": {
+        "per_expert_sequential_pairs": 312,
+        "8_pair_tile": 981,
+        "adaptive_4_2_1_tile_float4": 370,
+        "4_row_tile": 295,
+        "grid_over_pairs": 256,
+        "slices_of_2_pairs": 182,
+        "slices_of_4_pairs": 188
+      },
+      "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size",
+      "regression": "36/36"
     }
   }
 }

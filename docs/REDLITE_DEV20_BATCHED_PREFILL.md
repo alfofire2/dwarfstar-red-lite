@@ -81,13 +81,36 @@ After the fix (same machine, `ORACLE LOGITS PARITY: YES` at every size):
 | 1100 tokens, 12 GiB | chunks of 512 | 163.4 |
 | reference: pinned llama.cpp fully resident (`llama-bench` pp48) | | 338.6 |
 
-Where the time goes now (96 tokens, one chunk, 618 ms): experts GPU 312 ms
-(3.3 ms/token: the batched gate/up/down kernels re-read a weight row once per
-(expert, token) pair), dense GPU 139 ms (1.5 ms/token), miss copies 78 ms,
-LRU 31 ms, router selection 18 ms. The copy path itself (`pread` from the page
-cache into the pool, `dispatch_apply` over the misses) is not the bottleneck;
-the expert kernels are. The default chunk stays at 512 tokens (scratch ≈
-0.26 MiB per chunk token plus the pair buffers).
+After dev20c (96 tokens, one chunk, 618 ms): experts GPU 312 ms (3.3 ms/token),
+dense GPU 139 ms (1.5 ms/token), miss copies 78 ms, LRU 31 ms, router 18 ms.
+The copy path itself (`pread` from the page cache into the pool,
+`dispatch_apply` over the misses) is not the bottleneck; the expert kernels are.
+
+### dev20d: expert kernel layout
+
+The batched gate/up and down kernels were re-laid out step by step on the
+96-token chunk (experts GPU ms per 48 layers; every variant kept parity):
+
+| variant | experts GPU | note |
+|---|---:|---|
+| one thread per (expert, row, lane), pairs of the expert in sequence (dev20b) | 312 | baseline |
+| eight-pair register tile per thread | 981 | padding to 8 slots with ~3 pairs per expert; 8 scalar activation loads per weight |
+| adaptive 4/2/1-pair tiles, float4 activation loads | 370 | activation traffic is not the bound |
+| 4-row register tile (one activation load serves 4 rows) | 295 | neither is row reuse |
+| grid over pairs instead of experts (4-row tile) | 256 | the bound was load imbalance: 115 of ~300 experts serve one pair, a few serve 15–19, and a thread walked its expert's pairs serially |
+| grid over slices of 2 pairs of one expert | 182 | one decoded weight serves both pairs, imbalance bounded |
+| **slices of 4 pairs** (`REDMETAL_TOPK_SLICE`, `RM_S`) | **188 / 826 (512-token chunk, was 1361)** | kept: same at 96 tokens, 1.6× better at 512 |
+
+The kernels decode each IQ2_XS / IQ1_M block one 8-value group at a time
+(`rm_group8`, the same arithmetic as the validated block dots) for four rows in
+lockstep and apply it to up to four tokens with float4 activation loads.
+
+Throughput after dev20d (M4 Max, 4 GiB cache, `ORACLE LOGITS PARITY: YES` at
+every size): 96-token chunk 201 tok/s; 512-token chunk 294 tok/s (experts GPU
+1.6 ms/token, dense 1.2 ms/token); 1100-token prompt 231 / 249 / 271 tok/s with
+chunks of 256 / 512 / 1100 — versus 22.6 tok/s token by token before dev20 and
+339 tok/s for the pinned llama.cpp fully resident. The default chunk stays at
+512 tokens (scratch ≈ 0.26 MiB per chunk token plus the pair buffers).
 
 Reading the experts in place from the mmap instead of copying them
 (`RL_PREFILL_MAPPED_EXPERTS=1`, `redmetal_topk_pool_encode_mapped`) is
@@ -103,8 +126,8 @@ each layer's whole ~350 MB expert window for every command buffer (~3.3 s per
   the expert copies.
 - Decode is unchanged (one token, deferred expert buffer); the batched kernels
   are used for prompt ingestion only.
-- The expert gate/up/down kernels re-read a weight row once per (expert,
-  token) pair and are now the largest cost (3.3 ms/token); a register-tiled
-  variant over the pairs of an expert is the next optimization. Overlapping
-  the miss copies with GPU work is not worth it at 78 ms per 96-token prompt.
+- Prompt ingestion is now within 1.4× of llama.cpp's fully resident prefill;
+  the remaining split at a 512-token chunk is experts 1.6 ms/token, dense
+  1.2 ms/token, router selection 0.2 ms/token. Overlapping the miss copies
+  with GPU work is not worth it at ~80 ms per 96-token prompt.
 - No batched sampling, no multi-sequence batching.

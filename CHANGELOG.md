@@ -43,6 +43,17 @@ Batched prompt ingestion on `v0.3-streaming`. See
   171 tok/s (512-token chunks), capacity-independent (12 GiB: 163 tok/s).
   Decode also benefits slightly (warm 4 GiB: ~40 tok/s). `redlite-engine
   prefill` prints the expert-phase split (LRU, miss copies, commit, GPU wait).
+- dev20d (2026-09-08): batched expert kernels re-laid out. Measured on the
+  96-token chunk, register tiles over pairs (8-slot: 981 ms; adaptive 4/2/1
+  with float4 loads: 370 ms) and over rows (295 ms) did not beat the 312 ms
+  baseline; the bound was per-expert load imbalance (most experts serve one
+  pair, a few serve 15–19). The kernels are now gridded over slices of up to
+  four pairs of one expert with a 4-row register tile and per-group decoders
+  (`rm_group8`, same arithmetic as the validated block dots): experts GPU
+  312 → 188 ms on the 96-token chunk and 1361 → 826 ms on a 512-token chunk.
+  Prompt ingestion on the M4 Max, 4 GiB cache: 1100-token prompt 249 tok/s
+  (512-token chunks) / 271 tok/s (one chunk), 512-token chunk 294 tok/s;
+  llama.cpp parity at every size, regress_m4.sh 36/36.
 
 ## 0.3.0.dev19 — 2026-09-07
 
