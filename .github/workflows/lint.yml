@@ -1,13 +1,9 @@
 name: Lint
 
+# Automatic triggers disabled on 2026-09-08: validation runs locally on the test machine
+# (scripts/regress_m4.sh). Re-enable by restoring the push/pull_request triggers.
 on:
-  push:
-    branches:
-      - main
-      - v0.3-streaming
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
