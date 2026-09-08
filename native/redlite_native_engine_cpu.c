@@ -62,17 +62,19 @@ static int matvec(const rl_engine *e, const rl_gguf_tensor *t, const float *x, f
     if (threads < 1) threads = 1;
     rows_job jobs[64];
     pthread_t tids[64];
+    int spawned[64] = {0};
     const uint32_t chunk = (rows + (uint32_t)threads - 1u) / (uint32_t)threads;
     for (int i = 0; i < threads; ++i) {
         jobs[i].ggml_type = t->ggml_type; jobs[i].weights = w; jobs[i].row_bytes = rb; jobs[i].x = x;
         jobs[i].ncols = ncols; jobs[i].grid = e->iq2_grid; jobs[i].out = out;
         jobs[i].begin = (uint32_t)i * chunk; jobs[i].end = jobs[i].begin + chunk > rows ? rows : jobs[i].begin + chunk;
         jobs[i].ok = 1;
-        if (i > 0) pthread_create(&tids[i], NULL, rows_worker, &jobs[i]);
+        if (i > 0) spawned[i] = pthread_create(&tids[i], NULL, rows_worker, &jobs[i]) == 0;
     }
     rows_worker(&jobs[0]);
+    for (int i = 1; i < threads; ++i) if (!spawned[i]) rows_worker(&jobs[i]); /* thread creation failed: run inline */
     int ok = jobs[0].ok;
-    for (int i = 1; i < threads; ++i) { pthread_join(tids[i], NULL); ok = ok && jobs[i].ok; }
+    for (int i = 1; i < threads; ++i) { if (spawned[i]) pthread_join(tids[i], NULL); ok = ok && jobs[i].ok; }
     if (!ok) { snprintf(error, cap, "matvec on %s failed", t->name); return 0; }
     return 1;
 }

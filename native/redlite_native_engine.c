@@ -37,11 +37,12 @@ size_t rl_engine_conv_count(const rl_engine *e) { return (size_t)(e->info.d_conv
 size_t rl_engine_rec_count(const rl_engine *e) { return (size_t)e->info.dt_rank * e->info.head_v * e->info.head_v; }
 size_t rl_engine_kv_row_count(const rl_engine *e) { return (size_t)e->info.n_head_kv * e->info.head_dim; }
 
-int rl_backend_state_alloc(rl_engine *e, rl_backend_state *s, char *error, size_t cap) {
+int rl_backend_state_alloc(rl_engine *e, rl_backend_state *s, int host_state, char *error, size_t cap) {
     memset(s, 0, sizeof(*s));
-    const size_t conv = rl_engine_conv_count(e) * e->info.n_recurrent;
-    const size_t rec = rl_engine_rec_count(e) * e->info.n_recurrent;
-    const size_t kv = rl_engine_kv_row_count(e) * (size_t)e->info.context * e->info.n_attention;
+    s->host_state = host_state ? 1 : 0;
+    const size_t conv = host_state ? rl_engine_conv_count(e) * e->info.n_recurrent : 0u;
+    const size_t rec = host_state ? rl_engine_rec_count(e) * e->info.n_recurrent : 0u;
+    const size_t kv = host_state ? rl_engine_kv_row_count(e) * (size_t)e->info.context * e->info.n_attention : 0u;
     s->conv = (float *)calloc(conv ? conv : 1u, sizeof(float));
     s->rec = (float *)calloc(rec ? rec : 1u, sizeof(float));
     s->kcache = (float *)calloc(kv ? kv : 1u, sizeof(float));
@@ -67,6 +68,7 @@ void rl_backend_state_free(rl_backend_state *s) {
 
 void rl_backend_state_reset(rl_engine *e, rl_backend_state *s) {
     s->position = 0;
+    if (!s->host_state) return;
     memset(s->conv, 0, rl_engine_conv_count(e) * e->info.n_recurrent * sizeof(float));
     memset(s->rec, 0, rl_engine_rec_count(e) * e->info.n_recurrent * sizeof(float));
     const size_t kv = rl_engine_kv_row_count(e) * (size_t)e->info.context * e->info.n_attention;
@@ -197,7 +199,7 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
         set_error(error, cap, "GGUF architecture is not qwen3next"); rl_engine_close(e); return NULL;
     }
     if (!g->n_layer || !g->n_embd || !g->n_head || !g->n_head_kv || !g->key_length || !g->rope_dims || !g->n_expert ||
-        !g->n_expert_used || !g->ssm_conv || !g->ssm_state || !g->ssm_group || !g->ssm_dt_rank || !g->ssm_inner ||
+        !g->n_expert_used || g->ssm_conv < 2u || !g->ssm_state || !g->ssm_group || !g->ssm_dt_rank || !g->ssm_inner ||
         !g->n_ff_shexp || g->rms_eps <= 0.0f || g->rope_freq_base <= 0.0f || g->key_length != g->value_length ||
         g->n_head % g->n_head_kv || g->ssm_dt_rank % g->ssm_group || g->ssm_inner % g->ssm_dt_rank || g->vocab_count == 0) {
         set_error(error, cap, "incomplete or inconsistent qwen3next metadata"); rl_engine_close(e); return NULL;
@@ -257,12 +259,12 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
     if (e->cpu_threads > 64) e->cpu_threads = 64;
 
     if (e->cfg.enable_cpu) {
-        if (!rl_backend_state_alloc(e, &e->cpu, error, cap)) { rl_engine_close(e); return NULL; }
+        if (!rl_backend_state_alloc(e, &e->cpu, 1, error, cap)) { rl_engine_close(e); return NULL; }
         e->cpu_enabled = 1;
     }
     if (e->cfg.enable_gpu) {
 #ifdef __APPLE__
-        if (!rl_backend_state_alloc(e, &e->gpu, error, cap)) { rl_engine_close(e); return NULL; }
+        if (!rl_backend_state_alloc(e, &e->gpu, 0, error, cap)) { rl_engine_close(e); return NULL; }
         e->metal = rl_metal_engine_create(e, error, cap);
         if (!e->metal) { rl_engine_close(e); return NULL; }
         e->gpu_enabled = 1;

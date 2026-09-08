@@ -370,7 +370,7 @@ int32_t rl_tokenizer_encode(const rl_tokenizer *t, const char *text, size_t text
     size_t count = 0;
     /* fragments: split the text around special tokens (longest special first, left to right) */
     typedef struct { size_t start, len; int32_t special; } frag;
-    frag *frags = (frag *)malloc((text_len + 2u) * sizeof(frag));
+    frag *frags = (frag *)malloc((2u * text_len + 3u) * sizeof(frag)); /* each hit splits one fragment into three */
     if (!frags) return -1;
     size_t nfrag = 1;
     frags[0].start = 0; frags[0].len = text_len; frags[0].special = -1;

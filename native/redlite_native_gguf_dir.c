@@ -179,6 +179,7 @@ static void free_string_array(char **arr, uint32_t count) {
 }
 
 static int read_metadata(FILE *f, rl_gguf_model *m, char *error, size_t cap) {
+    uint32_t token_type_count = 0;
     for (uint64_t i = 0; i < m->kv_count; ++i) {
         char *key = NULL;
         uint32_t type = 0;
@@ -239,13 +240,17 @@ static int read_metadata(FILE *f, rl_gguf_model *m, char *error, size_t cap) {
         } else if (strcmp(key, "tokenizer.ggml.merges") == 0 && type == GGUF_ARRAY) {
             if (!read_string_array(f, &m->merges, &m->merge_count)) handled = 0;
         } else if (strcmp(key, "tokenizer.ggml.token_type") == 0 && type == GGUF_ARRAY) {
-            uint32_t n = 0;
-            if (!read_i32_array(f, &m->token_types, &n)) handled = 0;
+            if (!read_i32_array(f, &m->token_types, &token_type_count)) handled = 0;
         } else if (!skip_value(f, type)) {
             handled = 0;
         }
         free(key);
         if (!handled) { set_error(error, cap, "GGUF metadata value parse failed"); return 0; }
+    }
+    /* llama.cpp rejects a token_type array whose length differs from the vocabulary */
+    if (m->token_types && token_type_count != m->vocab_count) {
+        set_error(error, cap, "tokenizer.ggml.token_type length does not match tokenizer.ggml.tokens");
+        return 0;
     }
     return 1;
 }
@@ -270,7 +275,7 @@ size_t rl_gguf_row_bytes(uint32_t ggml_type, uint64_t ncols) {
         case 16: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 66u;    /* IQ2_XXS */
         case 17: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 74u;    /* IQ2_XS */
         case 29: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 56u;    /* IQ1_M */
-        case 30: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 2u;     /* BF16 (unused) */
+        case 30: return (size_t)ncols * 2u;                                  /* BF16 */
         default: return 0;
     }
 }

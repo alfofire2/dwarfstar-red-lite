@@ -57,7 +57,7 @@ static uint64_t phys_footprint_bytes(void) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-generate 0.3.0.dev18 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
+        "redlite-generate 0.3.0.dev19 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
         "  redlite-generate MODEL --prompt \"...\" [options]\n"
         "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"
@@ -315,9 +315,13 @@ int main(int argc, char **argv) {
     else if (!rl_tokenizer_chat_prompt(system_prompt, prompt, templated, strlen(prompt) + (system_prompt ? strlen(system_prompt) : 0u) + 256u)) { fprintf(stderr, "prompt too long\n"); return 1; }
     const int32_t needed = rl_tokenizer_encode(tk, templated, strlen(templated), 1, NULL, 0, error, sizeof(error));
     if (needed < 0) { fprintf(stderr, "tokenize failed: %s\n", error); return 1; }
+    if (needed == 0) { fprintf(stderr, "prompt produced no tokens; nothing to prefill\n"); return 1; }
     if ((uint32_t)needed + max_tokens > in->context) { fprintf(stderr, "prompt (%d) + max-tokens (%u) exceed --context %u\n", needed, max_tokens, in->context); return 1; }
     uint32_t *ids = (uint32_t *)malloc(((size_t)needed + max_tokens + 1u) * sizeof(uint32_t));
-    rl_tokenizer_encode(tk, templated, strlen(templated), 1, ids, (size_t)needed, error, sizeof(error));
+    if (!ids) { fprintf(stderr, "token buffer allocation failed\n"); return 1; }
+    if (rl_tokenizer_encode(tk, templated, strlen(templated), 1, ids, (size_t)needed, error, sizeof(error)) != needed) {
+        fprintf(stderr, "tokenization changed between passes\n"); return 1;
+    }
     const uint32_t prompt_len = (uint32_t)needed;
 
     float *logits = (float *)malloc((size_t)in->vocab * sizeof(float));
@@ -335,7 +339,9 @@ int main(int argc, char **argv) {
     const double prefill_ms = now_ms() - t_prefill;
 
     /* generation */
+    /* every decoded piece is at most 512 bytes (see rl_tokenizer_decode), so this bound is exact */
     char *text = (char *)malloc((size_t)max_tokens * 512u + 1u);
+    if (!text) { fprintf(stderr, "text buffer allocation failed\n"); return 1; }
     size_t text_len = 0;
     uint32_t generated = 0;
     const double t_gen = now_ms();
@@ -349,7 +355,7 @@ int main(int argc, char **argv) {
         if (rl_tokenizer_is_eog(tk, next)) break;
         char piece[512];
         const int32_t n = rl_tokenizer_decode(tk, next, piece, sizeof(piece));
-        if (n > 0) {
+        if (n > 0 && text_len + (size_t)n <= (size_t)max_tokens * 512u) {
             memcpy(text + text_len, piece, (size_t)n);
             text_len += (size_t)n;
             if (stream) { fwrite(piece, 1, (size_t)n, stdout); fflush(stdout); }

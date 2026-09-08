@@ -33,6 +33,7 @@ typedef struct {
 
 typedef struct {
     uint32_t position;
+    int host_state;     /* 1 when conv/rec/kcache/vcache are allocated (CPU oracle); the Metal backend keeps them on the GPU */
     float *conv;        /* [n_recurrent][(d_conv-1)*channels] */
     float *rec;         /* [n_recurrent][dt_rank*head_v*head_v] */
     float *kcache;      /* [n_attention][context][n_head_kv*head_dim] */
@@ -76,7 +77,7 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
 uint64_t rl_metal_engine_resident_bytes(const rl_metal_engine *m);
 
 /* shared helpers (redlite_native_engine.c) */
-int rl_backend_state_alloc(rl_engine *e, rl_backend_state *s, char *error, size_t cap);
+int rl_backend_state_alloc(rl_engine *e, rl_backend_state *s, int host_state, char *error, size_t cap);
 void rl_backend_state_free(rl_backend_state *s);
 void rl_backend_state_reset(rl_engine *e, rl_backend_state *s);
 size_t rl_engine_conv_count(const rl_engine *e);

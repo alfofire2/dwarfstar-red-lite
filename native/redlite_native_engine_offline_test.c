@@ -11,6 +11,7 @@
 #include "redlite_native_gguf_dir.h"
 #include "redlite_native_iq2_xxs.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_sampler.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -26,32 +27,12 @@ static void put_kv_u32(FILE *f, const char *k, uint32_t v) { put_str(f, k); put_
 static void put_kv_f32(FILE *f, const char *k, float v) { uint32_t b; memcpy(&b, &v, 4); put_str(f, k); put_u32(f, 6u); put_u32(f, b); }
 static void put_kv_str(FILE *f, const char *k, const char *v) { put_str(f, k); put_u32(f, 8u); put_str(f, v); }
 
+static int write_fixture(const char *path, uint32_t token_type_count);
+
 static int synthetic_gguf_test(char *error, size_t cap) {
     char path[512];
     snprintf(path, sizeof(path), "/tmp/redlite_engine_fixture_%ld.gguf", (long)getpid());
-    FILE *f = fopen(path, "wb");
-    if (!f) { snprintf(error, cap, "fixture open failed"); return 0; }
-    fwrite("GGUF", 1, 4, f);
-    put_u32(f, 3u);
-    put_u64(f, 3u);   /* tensors */
-    put_u64(f, 9u);   /* kv */
-    put_kv_str(f, "general.architecture", "qwen3next");
-    put_kv_u32(f, "general.alignment", 32u);
-    put_kv_u32(f, "qwen3next.block_count", 2u);
-    put_kv_u32(f, "qwen3next.embedding_length", 256u);
-    put_kv_f32(f, "qwen3next.attention.layer_norm_rms_epsilon", 1e-6f);
-    put_str(f, "tokenizer.ggml.tokens"); put_u32(f, 9u); put_u32(f, 8u); put_u64(f, 3u); put_str(f, "a"); put_str(f, "b"); put_str(f, "ab");
-    put_str(f, "tokenizer.ggml.token_type"); put_u32(f, 9u); put_u32(f, 5u); put_u64(f, 3u); put_u32(f, 1u); put_u32(f, 1u); put_u32(f, 1u);
-    put_str(f, "tokenizer.ggml.merges"); put_u32(f, 9u); put_u32(f, 8u); put_u64(f, 1u); put_str(f, "a b");
-    put_str(f, "tokenizer.ggml.eos_token_id"); put_u32(f, 4u); put_u32(f, 2u);
-    /* tensor directory: F32[256], Q4_K[256,2], Q2_K[256] */
-    put_str(f, "output_norm.weight"); put_u32(f, 1u); put_u64(f, 256u); put_u32(f, 0u); put_u64(f, 0u);
-    put_str(f, "blk.0.attn_k.weight"); put_u32(f, 2u); put_u64(f, 256u); put_u64(f, 2u); put_u32(f, 12u); put_u64(f, 1024u);
-    put_str(f, "token_embd.weight"); put_u32(f, 1u); put_u64(f, 256u); put_u32(f, 10u); put_u64(f, 1024u + 288u);
-    long pos = ftell(f);
-    while (pos % 32) { fputc(0, f); ++pos; }
-    for (uint32_t i = 0; i < 1024u + 288u + 84u; ++i) fputc((int)(i & 255u), f);
-    fclose(f);
+    if (!write_fixture(path, 3u)) { snprintf(error, cap, "fixture open failed"); return 0; }
 
     rl_gguf_model m;
     int ok = rl_gguf_model_open(path, &m, error, cap);
@@ -77,7 +58,104 @@ static int synthetic_gguf_test(char *error, size_t cap) {
         rl_gguf_model_close(&m);
     }
     remove(path);
+    if (!ok) return 0;
+    /* a token_type array whose length differs from the vocabulary must be rejected, as in llama.cpp */
+    if (!write_fixture(path, 2u)) { snprintf(error, cap, "fixture open failed"); return 0; }
+    char scratch[256];
+    ok = !rl_gguf_model_open(path, &m, scratch, sizeof(scratch));
+    if (!ok) { rl_gguf_model_close(&m); snprintf(error, cap, "short token_type array was accepted"); }
+    remove(path);
     return ok;
+}
+
+static int write_fixture(const char *path, uint32_t token_type_count) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    fwrite("GGUF", 1, 4, f);
+    put_u32(f, 3u);
+    put_u64(f, 3u);   /* tensors */
+    put_u64(f, 9u);   /* kv */
+    put_kv_str(f, "general.architecture", "qwen3next");
+    put_kv_u32(f, "general.alignment", 32u);
+    put_kv_u32(f, "qwen3next.block_count", 2u);
+    put_kv_u32(f, "qwen3next.embedding_length", 256u);
+    put_kv_f32(f, "qwen3next.attention.layer_norm_rms_epsilon", 1e-6f);
+    put_str(f, "tokenizer.ggml.tokens"); put_u32(f, 9u); put_u32(f, 8u); put_u64(f, 3u); put_str(f, "a"); put_str(f, "b"); put_str(f, "ab");
+    put_str(f, "tokenizer.ggml.token_type"); put_u32(f, 9u); put_u32(f, 5u); put_u64(f, token_type_count);
+    for (uint32_t i = 0; i < token_type_count; ++i) put_u32(f, 1u);
+    put_str(f, "tokenizer.ggml.merges"); put_u32(f, 9u); put_u32(f, 8u); put_u64(f, 1u); put_str(f, "a b");
+    put_str(f, "tokenizer.ggml.eos_token_id"); put_u32(f, 4u); put_u32(f, 2u);
+    /* tensor directory: F32[256], Q4_K[256,2], Q2_K[256] */
+    put_str(f, "output_norm.weight"); put_u32(f, 1u); put_u64(f, 256u); put_u32(f, 0u); put_u64(f, 0u);
+    put_str(f, "blk.0.attn_k.weight"); put_u32(f, 2u); put_u64(f, 256u); put_u64(f, 2u); put_u32(f, 12u); put_u64(f, 1024u);
+    put_str(f, "token_embd.weight"); put_u32(f, 1u); put_u64(f, 256u); put_u32(f, 10u); put_u64(f, 1024u + 288u);
+    long pos = ftell(f);
+    while (pos % 32) { fputc(0, f); ++pos; }
+    for (uint32_t i = 0; i < 1024u + 288u + 84u; ++i) fputc((int)(i & 255u), f);
+    fclose(f);
+    return 1;
+}
+
+/* Model-free sampler checks: greedy is the argmax, top-k=1 is the argmax at any temperature,
+ * every draw stays inside the top-k / top-p candidate set, and the partial top-k selection
+ * matches a full sort. */
+static int sampler_selftest(char *error, size_t cap) {
+    enum { V = 4096 };
+    float logits[V];
+    uint64_t st = 12345u;
+    for (uint32_t i = 0; i < V; ++i) {
+        st = st * 6364136223846793005ull + 1442695040888963407ull;
+        logits[i] = (float)((double)(st >> 11) / 9007199254740992.0) * 12.0f - 6.0f;
+    }
+    logits[777] = 20.0f;  /* unique argmax; with logits[4000] it carries >99.9% of the softmax mass */
+    logits[4000] = 19.5f;
+    rl_sampler_params p;
+    rl_sampler_params_default(&p);
+    rl_sampler s;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    int ok = rl_sampler_sample(&s, logits) == 777u;
+    if (!ok) { snprintf(error, cap, "greedy sample is not the argmax"); rl_sampler_free(&s); return 0; }
+    rl_sampler_free(&s);
+
+    p.temperature = 1.5f; p.top_k = 1u; p.top_p = 1.0f; p.seed = 7u;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    for (int i = 0; i < 64 && ok; ++i) ok = rl_sampler_sample(&s, logits) == 777u;
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "top-k=1 did not return the argmax"); return 0; }
+
+    /* top-k=8: the partial selection must equal the 8 largest logits from a full sort */
+    p.top_k = 8u; p.top_p = 1.0f; p.temperature = 0.7f;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    (void)rl_sampler_sample(&s, logits);
+    uint32_t expect[8];
+    for (uint32_t j = 0; j < 8u; ++j) {
+        uint32_t best = UINT32_MAX;
+        for (uint32_t i = 0; i < V; ++i) {
+            int used = 0;
+            for (uint32_t q = 0; q < j; ++q) if (expect[q] == i) used = 1;
+            if (used) continue;
+            if (best == UINT32_MAX || logits[i] > logits[best]) best = i;
+        }
+        expect[j] = best;
+    }
+    for (uint32_t j = 0; j < 8u && ok; ++j) ok = s.index[j] == expect[j];
+    if (!ok) { snprintf(error, cap, "partial top-k selection differs from a full sort"); rl_sampler_free(&s); return 0; }
+    for (int i = 0; i < 256 && ok; ++i) {
+        const uint32_t id = rl_sampler_sample(&s, logits);
+        int inside = 0;
+        for (uint32_t j = 0; j < 8u; ++j) if (expect[j] == id) inside = 1;
+        ok = inside;
+    }
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "top-k sample left the candidate set"); return 0; }
+
+    /* top-p=0.9: the nucleus is exactly the two dominant ids (0.62 after 777, 0.9998 after 4000) */
+    p.top_k = 0u; p.top_p = 0.9f; p.temperature = 1.0f;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    for (int i = 0; i < 256 && ok; ++i) { const uint32_t id = rl_sampler_sample(&s, logits); ok = id == 777u || id == 4000u; }
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "top-p sample left the nucleus"); return 0; }
+    return 1;
 }
 
 static void digest_row(const char *label, uint32_t type, const uint8_t *row, uint32_t ncols, const uint8_t *grid) {
@@ -101,7 +179,9 @@ int main(int argc, char **argv) {
     if (!rl_quant_selftest(error, sizeof(error))) { fprintf(stderr, "quant selftest failed: %s\n", error); return 1; }
     printf("quant selftest        : OK (Q8_0 Q2_K Q4_K Q5_K Q6_K IQ2_XXS)\n");
     if (!synthetic_gguf_test(error, sizeof(error))) { fprintf(stderr, "synthetic GGUF test failed: %s\n", error); return 1; }
-    printf("synthetic GGUF parse  : OK\n");
+    printf("synthetic GGUF parse  : OK (token_type length mismatch rejected)\n");
+    if (!sampler_selftest(error, sizeof(error))) { fprintf(stderr, "sampler selftest failed: %s\n", error); return 1; }
+    printf("sampler selftest      : OK (greedy, top-k selection, top-p nucleus)\n");
     if (argc < 2) return 0;
 
     rl_gguf_model m;

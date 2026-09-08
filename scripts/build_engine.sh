@@ -13,6 +13,7 @@ OFFLINE=(
   "$ROOT/native/redlite_native_quant_cpu.c"
   "$ROOT/native/redlite_native_shared_exec.c"
   "$ROOT/native/redlite_native_iq2_xxs.c"
+  "$ROOT/native/redlite_native_sampler.c"
 )
 ENGINE=(
   "$ROOT/native/redlite_native_engine_cli.c"
