@@ -20,6 +20,7 @@ struct rl_native_metal_runtime {
     uint64_t expert_loads;
     uint64_t slot_bytes;
     double prep_lru_ms, prep_load_ms, prep_commit_ms;   /* wall-clock profile of prepare_topk */
+    int residency;                                       /* GPU residency table enabled */
 };
 
 static double now_ms_local(void) {
@@ -110,6 +111,58 @@ void rl_native_metal_destroy(rl_native_metal_runtime *runtime) {
     if (runtime->pool) redmetal_topk_pool_destroy(runtime->pool);
     memset(runtime, 0, sizeof(*runtime));
     free(runtime);
+}
+
+/* mirror one committed transaction into the GPU residency table */
+static void residency_apply(rl_native_metal_runtime *runtime, const rl_cache_transaction *tx, uint32_t layer, const uint32_t *slots) {
+    if (!runtime->residency) return;
+    for (uint32_t i = 0; i < tx->count; ++i) {
+        const rl_cache_reservation *r = &tx->items[i];
+        if (r->hit) continue;
+        if (r->evicts) redmetal_topk_pool_residency_clear(runtime->pool, r->evicted_key.layer, r->evicted_key.expert);
+        redmetal_topk_pool_residency_set(runtime->pool, layer, r->key.expert, slots[i]);
+    }
+}
+
+static void residency_abort(rl_native_metal_runtime *runtime, const rl_cache_transaction *tx) {
+    if (!runtime->residency) return;
+    for (uint32_t i = 0; i < tx->count; ++i) {
+        const rl_cache_reservation *r = &tx->items[i];
+        if (!r->hit && r->evicts) redmetal_topk_pool_residency_clear(runtime->pool, r->evicted_key.layer, r->evicted_key.expert);
+    }
+}
+
+int rl_native_metal_residency_enable(rl_native_metal_runtime *runtime, uint32_t layers, uint32_t experts, char *error, size_t error_cap) {
+    if (!runtime || !runtime->pool) { set_error(error, error_cap, "invalid runtime"); return 0; }
+    if (runtime->lru.resident) { set_error(error, error_cap, "residency table must be enabled before any expert is loaded"); return 0; }
+    if (!redmetal_topk_pool_residency_table_init(runtime->pool, layers, experts)) { set_metal_error(error, error_cap, "residency table"); return 0; }
+    runtime->residency = 1;
+    return 1;
+}
+
+void *rl_native_metal_residency_table(rl_native_metal_runtime *runtime) {
+    return runtime && runtime->residency ? redmetal_topk_pool_residency_table(runtime->pool) : NULL;
+}
+
+int rl_native_metal_touch_resident(rl_native_metal_runtime *runtime, uint32_t layer, const uint32_t *expert_ids, uint32_t count, char *error, size_t error_cap) {
+    if (!runtime || !expert_ids || !count || count > RL_NATIVE_TOPK_MAX) { set_error(error, error_cap, "invalid touch request"); return 0; }
+    rl_cache_key keys[RL_NATIVE_TOPK_MAX];
+    for (uint32_t i = 0; i < count; ++i) { keys[i].layer = layer; keys[i].expert = expert_ids[i]; }
+    rl_cache_transaction tx = {0};
+    if (!rl_native_lru_prepare_many(&runtime->lru, keys, count, &tx, error, error_cap)) return 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!tx.items[i].hit) {
+            rl_native_lru_abort(&runtime->lru, &tx);
+            residency_abort(runtime, &tx);
+            rl_native_lru_transaction_free(&tx);
+            set_error(error, error_cap, "GPU-routed expert is not resident");
+            return 0;
+        }
+    }
+    uint32_t slots[RL_NATIVE_TOPK_MAX];
+    const int ok = rl_native_lru_commit(&runtime->lru, &tx, slots, error, error_cap);
+    rl_native_lru_transaction_free(&tx);
+    return ok;
 }
 
 int rl_native_metal_execute_topk(
@@ -225,6 +278,7 @@ int rl_native_metal_execute_topk(
     for (uint32_t k = 0; k < miss_count; ++k) {
         if (!load_ok[k]) {
             rl_native_lru_abort(&runtime->lru, &transaction);
+            residency_abort(runtime, &transaction);
             rl_native_lru_transaction_free(&transaction);
             set_metal_error(error, error_cap, "native expert load failed; LRU transaction aborted");
             return 0;
@@ -234,9 +288,11 @@ int rl_native_metal_execute_topk(
 
     if (!rl_native_lru_commit(&runtime->lru, &transaction, slots, error, error_cap)) {
         rl_native_lru_abort(&runtime->lru, &transaction);
+        residency_abort(runtime, &transaction);
         rl_native_lru_transaction_free(&transaction);
         return 0;
     }
+    residency_apply(runtime, &transaction, layer, slots);
     rl_native_lru_transaction_free(&transaction);
 
     for (uint32_t i = 0; i < top_k; ++i) {
@@ -398,6 +454,7 @@ int rl_native_metal_prepare_topk(
     for (uint32_t k = 0; k < miss_count; ++k) {
         if (!load_ok[k]) {
             rl_native_lru_abort(&runtime->lru, &transaction);
+            residency_abort(runtime, &transaction);
             rl_native_lru_transaction_free(&transaction);
             set_metal_error(error, error_cap, "native expert load failed; LRU transaction aborted");
             return 0;
@@ -406,9 +463,11 @@ int rl_native_metal_prepare_topk(
     }
     if (!rl_native_lru_commit(&runtime->lru, &transaction, plan->slots, error, error_cap)) {
         rl_native_lru_abort(&runtime->lru, &transaction);
+        residency_abort(runtime, &transaction);
         rl_native_lru_transaction_free(&transaction);
         return 0;
     }
+    residency_apply(runtime, &transaction, layer, plan->slots);
     rl_native_lru_transaction_free(&transaction);
     runtime->prep_commit_ms += now_ms_local() - t_commit;
     for (uint32_t i = 0; i < top_k; ++i) {
@@ -492,15 +551,17 @@ int rl_native_metal_release_topk(
         char *error,
         size_t error_cap) {
     if (!runtime || !plan) { set_error(error, error_cap, "invalid native top-k release request"); return 0; }
-    if (!plan->active) return 1;
     const uint64_t bytes_after = redmetal_topk_pool_bytes_read(runtime->pool);
     const uint64_t calls_after = redmetal_topk_pool_read_calls(runtime->pool);
-    redmetal_topk_pool_release(runtime->pool, plan->slots, plan->top_k);
-    plan->active = 0;
-    if (bytes_after != plan->bytes_read_at_encode || calls_after != plan->calls_at_encode) {
-        set_error(error, error_cap, "native top-k experts were overwritten by SSD reads while in flight");
-        return 0;
+    if (plan->active) {
+        redmetal_topk_pool_release(runtime->pool, plan->slots, plan->top_k);
+        plan->active = 0;
+        if (bytes_after != plan->bytes_read_at_encode || calls_after != plan->calls_at_encode) {
+            set_error(error, error_cap, "native top-k experts were overwritten by SSD reads while in flight");
+            return 0;
+        }
     }
+    /* an inactive plan (GPU-routed token, preload) still reports the counters */
     if (telemetry) {
         memset(telemetry, 0, sizeof(*telemetry));
         telemetry->cache_hits = runtime->lru.hits;

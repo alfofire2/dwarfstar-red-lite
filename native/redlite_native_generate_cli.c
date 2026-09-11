@@ -57,7 +57,7 @@ static uint64_t phys_footprint_bytes(void) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-generate 0.3.0.dev20 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
+        "redlite-generate 0.3.0.dev21 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
         "  redlite-generate MODEL --prompt \"...\" [options]\n"
         "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"
@@ -200,7 +200,7 @@ static int interactive_chat(
         printf("redlite> ");
         fflush(stdout);
         size_t answer_len = 0;
-        uint32_t generated = 0;
+        uint32_t generated = 0, spec_turn = 0;
         int stopped_on_eog = 0;
         const double generation_start = now_ms();
         while (generated < max_tokens) {
@@ -230,14 +230,16 @@ static int interactive_chat(
             if (!rl_engine_step(engine, RL_BACKEND_GPU, next, logits, &step, error, error_cap)) {
                 free(ids); free(logits); free(answer); free(line); return 0;
             }
+            spec_turn += step.speculative;
         }
         const double generation_ms = now_ms() - generation_start;
         answer[answer_len] = '\0';
         if (!stream) fwrite(answer, 1, answer_len, stdout);
         printf("\n\n");
         if (show_stats) {
-            fprintf(stderr, "[turno: prompt=%u token %.2fs, risposta=%u token %.2fs, posizione=%u/%u%s]\n\n",
+            fprintf(stderr, "[turno: prompt=%u token %.2fs, risposta=%u token %.2fs (%.1f tok/s, %u GPU-routed), posizione=%u/%u%s]\n\n",
                 prompt_tokens, prefill_ms / 1000.0, generated, generation_ms / 1000.0,
+                generated > 1u ? (generated - 1u) * 1000.0 / generation_ms : 0.0, spec_turn,
                 rl_engine_position(engine, RL_BACKEND_GPU), info->context,
                 stopped_on_eog ? ", EOG" : ", limite");
         }
@@ -345,6 +347,7 @@ int main(int argc, char **argv) {
     double last_routed_ms = 0.0;
     uint64_t ssd_start = st.ssd_bytes, reads_start = st.ssd_reads, loads_start = st.expert_loads;
     uint64_t hits_start = st.cache_hits, misses_start = st.cache_misses;
+    uint32_t spec_tokens = 0, spec_fallbacks = 0;
     while (generated < max_tokens) {
         const uint32_t next = rl_sampler_sample(&sampler, logits);
         ids[prompt_len + generated] = next;
@@ -361,6 +364,7 @@ int main(int argc, char **argv) {
         if (!rl_engine_step(e, RL_BACKEND_GPU, next, logits, &st, error, sizeof(error))) {
             fprintf(stderr, "\ndecode failed: %s\n", error); return 1;
         }
+        spec_tokens += st.speculative; spec_fallbacks += st.speculative_fallback;
         last_routed_ms = st.routed_ms;
     }
     const double gen_ms = now_ms() - t_gen;
@@ -375,12 +379,18 @@ int main(int argc, char **argv) {
     if (stats) {
         const uint32_t decoded = generated > 0 ? generated - 1u : 0u; /* forward passes after prefill */
         fprintf(stderr, "\n--- redlite-generate stats ---\n");
-        fprintf(stderr, "model open           : %.1f ms\n", open_ms);
+        {
+            double pre_ms = 0.0;
+            fprintf(stderr, "model open           : %.1f ms%s\n", open_ms,
+                rl_engine_experts_preloaded(e, &pre_ms) ? " (every routed expert preloaded: full residency)" : "");
+            if (pre_ms > 0.0) fprintf(stderr, "expert preload       : %.1f ms\n", pre_ms);
+        }
         fprintf(stderr, "prompt tokens        : %u (%.1f ms, %.2f tok/s)\n", prompt_len, prefill_ms, prompt_len * 1000.0 / prefill_ms);
         fprintf(stderr, "generated tokens     : %u (%.1f ms, %.2f tok/s over %u decode passes)\n", generated, gen_ms,
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);
         fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f [load %.1f gpu %.1f] shared %.1f out %.1f) dense GPU %.1f ms\n",
             st.total_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.routed_load_ms, st.routed_gpu_ms, st.shared_ms, st.output_ms, st.gpu_ms);
+        fprintf(stderr, "decode path          : %u GPU-routed (speculative) tokens, %u fallbacks, %u synchronous\n", spec_tokens, spec_fallbacks, decoded - spec_tokens);
         fprintf(stderr, "expert cache         : hits=%" PRIu64 " misses=%" PRIu64 " loads=%" PRIu64 " resident=%u/%u slots (hit rate %.1f%%)\n",
             st.cache_hits - hits_start, st.cache_misses - misses_start, st.expert_loads - loads_start, st.resident_slots, st.slot_capacity,
             (st.cache_hits + st.cache_misses - hits_start - misses_start) ? 100.0 * (double)(st.cache_hits - hits_start) / (double)(st.cache_hits + st.cache_misses - hits_start - misses_start) : 0.0);

@@ -447,6 +447,9 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _downBPipeline;
     id<MTLComputePipelineState> _sumBPipeline;
     id<MTLBuffer> _slotTable3;
+    id<MTLBuffer> _residency;
+    uint32_t _residencyLayers, _residencyExperts;
+    id<MTLResidencySet> _residencySet API_AVAILABLE(macos(15.0));   /* every slab, committed once; attached to the engine queue */
     id<MTLBuffer> _pairTokenBuf;
     id<MTLBuffer> _pairExpertBuf;
     id<MTLBuffer> _sliceFirstBuf;
@@ -605,6 +608,14 @@ static NSString * const kTopKSource = @
         return nil;
     }
     _slabs = [NSMutableArray array];
+    if (@available(macOS 15.0, *)) {
+        MTLResidencySetDescriptor *rd = [[MTLResidencySetDescriptor alloc] init];
+        rd.label = @"redlite_topk_slabs";
+        rd.initialCapacity = 512;
+        NSError *re = nil;
+        _residencySet = [_device newResidencySetWithDescriptor:rd error:&re];
+        if (_residencySet) [_residencySet commit];
+    }
     return self;
 }
 
@@ -678,6 +689,9 @@ static NSString * const kTopKSource = @
             slab.label = [NSString stringWithFormat:@"redlite_topk_slab_%u", newSlab];
             [_slabs addObject:slab];
             _allocatedBytes += bytes64;
+            if (@available(macOS 15.0, *)) {
+                if (_residencySet) { [_residencySet addAllocation:slab]; [_residencySet commit]; }
+            }
         }
         id<MTLBuffer> slab = _slabs[slabIndex];
         const uint64_t inner = (uint64_t)localSlot * _slotBytes;
@@ -710,6 +724,11 @@ static RMTopKPool *topk_obj(redmetal_topk_pool_t handle) {
         return nil;
     }
     return (__bridge RMTopKPool *)handle;
+}
+
+static int topk_has_residency_set(RMTopKPool *p) {
+    if (@available(macOS 15.0, *)) return p->_residencySet != nil;
+    return 0;
 }
 
 static id<MTLBuffer> topk_grid_for_type(RMTopKPool *p, uint32_t type) {
@@ -1091,9 +1110,10 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
     const uint32_t zero = 0u;
 
+    const int use_res = !topk_has_residency_set(p) || resident.count <= 3u;   /* mapped tensors are not slabs */
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     if (!enc) { topk_set_error("failed to create batched top-k compute encoder"); return 0; }
-    for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
+    if (use_res) for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
     [enc setComputePipelineState:p->_gateupBPipeline];
     [enc setBuffer:p->_slotTable3 offset:0 atIndex:0];
     [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
@@ -1115,7 +1135,7 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
-    for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
+    if (use_res) for (id<MTLBuffer> b in resident) [enc useResource:b usage:MTLResourceUsageRead];
     [enc setComputePipelineState:p->_downBPipeline];
     [enc setBuffer:p->_slotTable3 offset:0 atIndex:0];
     [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
@@ -1283,6 +1303,143 @@ int redmetal_topk_pool_encode_batched(
             topk_set_error("failed to encode batched top-k expert execution");
             return 0;
         }
+        return 1;
+    }
+}
+
+int redmetal_topk_pool_residency_table_init(redmetal_topk_pool_t handle, uint32_t layers, uint32_t experts) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !layers || !experts) return 0;
+        const NSUInteger bytes = (NSUInteger)layers * experts * sizeof(uint64_t);
+        p->_residency = [p->_device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+        if (!p->_residency) { topk_set_error("failed to allocate the expert residency table"); return 0; }
+        memset(p->_residency.contents, 0, bytes);
+        p->_residencyLayers = layers; p->_residencyExperts = experts;
+        return 1;
+    }
+}
+
+void *redmetal_topk_pool_residency_table(redmetal_topk_pool_t handle) {
+    RMTopKPool *p = topk_obj(handle);
+    return p ? (__bridge void *)p->_residency : NULL;
+}
+
+int redmetal_topk_pool_residency_set(redmetal_topk_pool_t handle, uint32_t layer, uint32_t expert, uint32_t slot_id) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !p->_residency || layer >= p->_residencyLayers || expert >= p->_residencyExperts) return 0;
+        NSUInteger inner = 0;
+        id<MTLBuffer> slab = [p bufferForSlot:slot_id offset:&inner];
+        if (!slab) return 0;
+        uint64_t base = 0;
+        if (@available(macOS 13.0, *)) base = (uint64_t)[slab gpuAddress] + (uint64_t)inner;
+        if (!base) return 0;
+        ((uint64_t *)p->_residency.contents)[(size_t)layer * p->_residencyExperts + expert] = base;
+        return 1;
+    }
+}
+
+void redmetal_topk_pool_residency_clear(redmetal_topk_pool_t handle, uint32_t layer, uint32_t expert) {
+    RMTopKPool *p = topk_obj(handle);
+    if (!p || !p->_residency || layer >= p->_residencyLayers || expert >= p->_residencyExperts) return;
+    ((uint64_t *)p->_residency.contents)[(size_t)layer * p->_residencyExperts + expert] = 0;
+}
+
+void *redmetal_topk_pool_slab_residency_set(redmetal_topk_pool_t handle) {
+    RMTopKPool *p = topk_obj(handle);
+    if (!p) return NULL;
+    if (@available(macOS 15.0, *)) return (__bridge void *)p->_residencySet;
+    return NULL;
+}
+
+void redmetal_topk_pool_use_all_slabs(redmetal_topk_pool_t handle, void *mtl_compute_encoder) {
+    RMTopKPool *p = topk_obj(handle);
+    if (!p || !mtl_compute_encoder) return;
+    if (topk_has_residency_set(p)) return;   /* the residency set attached to the queue covers every slab */
+    id<MTLComputeCommandEncoder> enc = (__bridge id<MTLComputeCommandEncoder>)mtl_compute_encoder;
+    @synchronized (p) {
+        for (id<MTLBuffer> slab in p->_slabs) [enc useResource:slab usage:MTLResourceUsageRead];
+    }
+}
+
+int redmetal_topk_pool_encode_device(
+        redmetal_topk_pool_t handle,
+        void *mtl_command_buffer,
+        void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset,
+        uint32_t top_k,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint64_t gate_bytes,
+        uint64_t up_bytes,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !mtl_command_buffer || !slot_table_buffer || !weight_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
+        if (!top_k || top_k > REDMETAL_TOPK_MAX || (ggml_type != 17u && ggml_type != 29u) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
+            topk_set_error("invalid device-driven top-k request"); return 0;
+        }
+        if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
+        id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
+        id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>)mtl_command_buffer;
+        id<MTLBuffer> table = (__bridge id<MTLBuffer>)slot_table_buffer;
+        id<MTLBuffer> weights = (__bridge id<MTLBuffer>)weight_buffer;
+        id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
+        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+        const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
+        const uint64_t up_offset = gate_bytes;
+        const uint64_t down_offset = gate_bytes + up_bytes;
+        const uint32_t row_start = 0u;
+
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        if (!enc) { topk_set_error("failed to create device top-k compute encoder"); return 0; }
+        redmetal_topk_pool_use_all_slabs(handle, (__bridge void *)enc);
+        [enc setComputePipelineState:p->_gateupPipeline];
+        [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
+        [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
+        [enc setBuffer:input offset:(NSUInteger)input_offset atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:grid offset:0 atIndex:6];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+        [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc endEncoding];
+
+        enc = [cb computeCommandEncoder];
+        redmetal_topk_pool_use_all_slabs(handle, (__bridge void *)enc);
+        [enc setComputePipelineState:p->_downPipeline];
+        [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+        [enc setBytes:&row_start length:sizeof(row_start) atIndex:2];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:3];
+        [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:6];
+        [enc setBuffer:grid offset:0 atIndex:7];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
+        [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc endEncoding];
+
+        enc = [cb computeCommandEncoder];
+        [enc setComputePipelineState:p->_sumPipeline];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
+        [enc setBuffer:weights offset:(NSUInteger)weight_offset atIndex:1];
+        [enc setBuffer:output offset:(NSUInteger)output_offset atIndex:2];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:3];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
+        [enc dispatchThreads:MTLSizeMake(hidden_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        [enc endEncoding];
         return 1;
     }
 }

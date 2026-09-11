@@ -47,6 +47,15 @@ struct rl_metal_engine {
     uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
     double last_read_ms;
     struct rl_metal_prefill *pf;   /* batched prefill state (dev20), created on first use */
+    /* dev21: GPU-routed decode */
+    int spec_enabled;              /* RL_ENGINE_SPECULATIVE != 0 and residency table available */
+    uint64_t misses_seen;          /* pool cache misses observed so far (to know whether the last token missed) */
+    int last_token_missed;         /* the previous token needed a load: decode the next one synchronously */
+    id<MTLComputePipelineState> p_route;
+    id<MTLBuffer> plan_slots, plan_weights, plan_ids, plan_miss, layer_out_gpu;
+    __unsafe_unretained id<MTLBuffer> *bk_conv, *bk_rec;   /* state backups for the fallback */
+    int preloaded;                 /* every routed expert was loaded at open (cache holds them all) */
+    double preload_ms;
 };
 
 

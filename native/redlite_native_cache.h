@@ -38,6 +38,8 @@ typedef struct {
     uint32_t entry_index;
     uint32_t slot_id;
     int hit;
+    int evicts;               /* miss that replaces a resident key (evicted_key) */
+    rl_cache_key evicted_key;
 } rl_cache_reservation;
 
 typedef struct {

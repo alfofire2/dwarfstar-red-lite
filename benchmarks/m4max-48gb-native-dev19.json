@@ -214,5 +214,34 @@
       "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size",
       "regression": "36/36"
     }
+  },
+  "dev21_gpu_routed_decode": {
+    "cache_mib": 22528,
+    "preload_ms": 3752.6,
+    "phys_footprint_mib": 22120.3,
+    "chat_turns_decode_tps_speculative": [
+      54.4,
+      55.4,
+      54.9,
+      57.1
+    ],
+    "chat_turns_decode_tps_RL_ENGINE_SPECULATIVE_0": [
+      18.0,
+      26.3,
+      35.8
+    ],
+    "answer_200_tokens_tps": 56.55,
+    "gpu_ms_per_token_single_command_buffer": [
+      16.1,
+      16.9
+    ],
+    "parity_repeat2_full_residency": {
+      "gpu_routed_tokens": 12,
+      "worst_layer_abs": 5.34e-05,
+      "logits_abs": 1.67e-05,
+      "router_mismatches": 0
+    },
+    "first_attempt_without_residency_set_tps": 11.1,
+    "llama_cpp_tg64_tps": 68.0
   }
 }

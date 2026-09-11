@@ -199,6 +199,8 @@ int rl_native_lru_prepare_many(
         items[i].entry_index = (uint32_t)index;
         items[i].slot_id = cache->entries[index].valid ? cache->entries[index].slot_id : (uint32_t)index;
         items[i].hit = 0;
+        items[i].evicts = cache->entries[index].valid;
+        if (items[i].evicts) items[i].evicted_key = cache->entries[index].key;
         reserved[index] = 1;
     }
     free(reserved);

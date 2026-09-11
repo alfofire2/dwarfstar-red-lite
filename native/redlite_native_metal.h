@@ -126,6 +126,15 @@ int rl_native_metal_encode_topk_batched(
 void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime);
 /* Cumulative wall-clock profile of rl_native_metal_prepare_topk: LRU reservation, miss loads, commit. */
 void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, double *lru_ms, double *load_ms, double *commit_ms);
+/*
+ * GPU-driven decode (dev21): a layers x experts table of slot GPU addresses
+ * (0 = not resident) maintained as the LRU commits and evicts; the routing
+ * kernel reads it. Enable once per runtime; returns the id<MTLBuffer>.
+ */
+int rl_native_metal_residency_enable(rl_native_metal_runtime *runtime, uint32_t layers, uint32_t experts, char *error, size_t error_cap);
+void *rl_native_metal_residency_table(rl_native_metal_runtime *runtime);
+/* Refresh the LRU stamps of experts a GPU-routed token used (all must be resident; returns 0 if any is not). */
+int rl_native_metal_touch_resident(rl_native_metal_runtime *runtime, uint32_t layer, const uint32_t *expert_ids, uint32_t count, char *error, size_t error_cap);
 /* Slot capacity of the bounded expert cache. */
 uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime);
 int rl_native_metal_release_topk(

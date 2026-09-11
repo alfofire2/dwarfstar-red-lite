@@ -29,6 +29,7 @@
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_router_exec.h"
 #include "redmetal_topk.h"
+#include "redlite_native_model.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -305,6 +306,47 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    }\n"
 "    if (tid < head_dim) gated[qbase + tid] = (acc / l) / (1.0f + exp(-gate[qbase + tid]));\n"
 "}\n"
+/* ---- dev21: router selection on the GPU ----
+ * Same selection as rl_native_router_select_softmax_topk: top_k experts by probability, ties to the
+ * lower index (softmax is monotone, so the logits order the candidates exactly); weights are the
+ * softmax probabilities of the selected experts renormalized to sum 1. Looks each selected expert up
+ * in the layer's residency table and writes the slot addresses / weights the expert kernels read.
+ * plan_miss counts selected experts that are not resident (the token must then be redone). */
+"kernel void rl_route(device const float *logits [[buffer(0)]], device const ulong *resident [[buffer(1)]],\n"
+"    device ulong *plan_slots [[buffer(2)]], device float *plan_weights [[buffer(3)]], device uint *plan_ids [[buffer(4)]],\n"
+"    device uint *plan_miss [[buffer(5)]], constant uint &n_expert [[buffer(6)]], constant uint &top_k [[buffer(7)]],\n"
+"    uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float lg[512]; threadgroup float red_v[16]; threadgroup uint red_i[16]; threadgroup uint chosen[64];\n"
+"    for (uint i = tid; i < n_expert; i += 256u) lg[i] = logits[i];\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float gmax = -INFINITY; for (uint i = tid; i < n_expert; i += 256u) gmax = max(gmax, lg[i]);\n"
+"    gmax = simd_max(gmax); if (simd_lane == 0) red_v[simd_id] = gmax; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    gmax = red_v[0]; for (uint k = 1; k < 8u; ++k) gmax = max(gmax, red_v[k]);\n"
+"    for (uint k = 0; k < top_k; ++k) {\n"
+"        /* each thread: best (value, lowest index) among its experts not yet chosen */\n"
+"        float bv = -INFINITY; uint bi = 0xFFFFFFFFu;\n"
+"        for (uint i = tid; i < n_expert; i += 256u) { const float v = lg[i]; if (v > bv || (v == bv && i < bi)) { bv = v; bi = i; } }\n"
+"        const float sv = simd_max(bv);\n"
+"        const uint si = simd_min(bv == sv ? bi : 0xFFFFFFFFu);\n"
+"        if (simd_lane == 0) { red_v[simd_id] = sv; red_i[simd_id] = si; }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        if (tid == 0u) {\n"
+"            float tv = red_v[0]; uint ti = red_i[0];\n"
+"            for (uint q = 1; q < 8u; ++q) { if (red_v[q] > tv || (red_v[q] == tv && red_i[q] < ti)) { tv = red_v[q]; ti = red_i[q]; } }\n"
+"            chosen[k] = ti; lg[ti] = -INFINITY;\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    if (tid == 0u) {\n"
+"        float sum = 0.0f; uint miss = 0u;\n"
+"        for (uint k = 0; k < top_k; ++k) { const float pk = exp(logits[chosen[k]] - gmax); plan_weights[k] = pk; sum += pk; }\n"
+"        for (uint k = 0; k < top_k; ++k) {\n"
+"            plan_weights[k] = plan_weights[k] / sum; plan_ids[k] = chosen[k];\n"
+"            const ulong a = resident[chosen[k]]; plan_slots[k] = a; if (a == 0ul) miss++;\n"
+"        }\n"
+"        plan_miss[0] = miss;\n"
+"    }\n"
+"}\n"
 /* ---- shared expert (validated dev14 kernels) ---- */
 "kernel void sh_scalar_gate(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
 "    constant uint &hidden [[buffer(3)]], uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]],\n"
@@ -481,6 +523,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
             {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
+            {&m->p_route, @"rl_route"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
             *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -565,6 +608,71 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         /* routed experts: one bounded LRU shared by every layer */
         m->experts = rl_native_metal_create(e->gguf.path, &e->expert_map, e->cfg.cache_mib * 1024ull * 1024ull, 64u, error, cap);
         if (!m->experts) { rl_metal_engine_destroy(m); return NULL; }
+
+        /* expert slabs stay resident for this queue without per-encoder useResource (macOS 15+) */
+        if (@available(macOS 15.0, *)) {
+            id<MTLResidencySet> rs = (__bridge id<MTLResidencySet>)redmetal_topk_pool_slab_residency_set(rl_native_metal_pool_handle(m->experts));
+            if (rs) [m->queue addResidencySet:rs];
+        }
+        /* dev21: GPU-routed decode (residency table, per-layer plans, state backups) */
+        const char *spec_env = getenv("RL_ENGINE_SPECULATIVE");
+        m->spec_enabled = (!spec_env || atoi(spec_env) != 0) && !m->profile && in->n_expert <= 512u && in->top_k <= 64u;
+        m->last_token_missed = 1;
+        if (m->spec_enabled) {
+            char serr[256];
+            if (!rl_native_metal_residency_enable(m->experts, in->n_layer, in->n_expert, serr, sizeof(serr))) m->spec_enabled = 0;
+        }
+        if (m->spec_enabled) {
+            m->plan_slots = new_buf(m, (size_t)in->n_layer * 512u * sizeof(uint64_t));
+            m->plan_weights = new_buf(m, (size_t)in->n_layer * 512u * sizeof(float));
+            m->plan_ids = new_buf(m, (size_t)in->n_layer * 64u * sizeof(uint32_t));
+            m->plan_miss = new_buf(m, (size_t)in->n_layer * sizeof(uint32_t));
+            m->layer_out_gpu = new_buf(m, (size_t)in->n_layer * hb);
+            m->bk_conv = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
+            m->bk_rec = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
+            int ok = m->plan_slots && m->plan_weights && m->plan_ids && m->plan_miss && m->layer_out_gpu && m->bk_conv && m->bk_rec;
+            for (uint32_t r = 0; ok && r < in->n_recurrent; ++r) {
+                m->bk_conv[r] = new_buf(m, conv_bytes); m->bk_rec[r] = new_buf(m, rec_bytes);
+                if (!m->bk_conv[r] || !m->bk_rec[r]) ok = 0;
+            }
+            if (!ok) m->spec_enabled = 0;
+        }
+        /* full residency: when the cache can hold every routed expert, load them all now (page cache -> pool)
+         * so every token from the first one takes the GPU-routed path (RL_ENGINE_PRELOAD=0 disables) */
+        const char *preload_env = getenv("RL_ENGINE_PRELOAD");
+        if (m->spec_enabled && (!preload_env || atoi(preload_env) != 0) &&
+            rl_native_metal_slot_capacity(m->experts) >= (uint64_t)in->n_layer * in->n_expert) {
+            uint32_t *all_ids = (uint32_t *)malloc((size_t)in->n_expert * sizeof(uint32_t));
+            float *zero_w = (float *)calloc(in->n_expert, sizeof(float));
+            if (all_ids && zero_w) {
+                for (uint32_t x = 0; x < in->n_expert; ++x) all_ids[x] = x;
+                const double t0 = rl_engine_now_ms();
+                int ok = 1;
+                for (uint32_t l = 0; ok && l < in->n_layer; ++l) {
+                    rl_native_topk_plan plan;
+                    memset(&plan, 0, sizeof(plan));
+                    char perr[256];
+                    ok = rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, all_ids, zero_w, in->n_expert, &plan, perr, sizeof(perr));
+                }
+                if (ok) {
+                    rl_native_topk_plan none; memset(&none, 0, sizeof(none));
+                    rl_native_metal_telemetry tel;
+                    if (rl_native_metal_release_topk(m->experts, &none, &tel, NULL, 0)) m->misses_seen = tel.cache_misses;
+                    m->last_token_missed = 0;
+                    m->preloaded = 1;
+                    /* the first command buffer after the preload pays the residency of the freshly written slabs
+                     * (~3 s for 22 GiB); take it here rather than on the first prompt */
+                    id<MTLCommandBuffer> warm = [m->queue commandBuffer];
+                    id<MTLBlitCommandEncoder> blit = [warm blitCommandEncoder];
+                    [blit fillBuffer:m->scalar range:NSMakeRange(0, 4) value:0];
+                    [blit endEncoding];
+                    [warm commit];
+                    [warm waitUntilCompleted];
+                    m->preload_ms = rl_engine_now_ms() - t0;
+                }
+            }
+            free(all_ids); free(zero_w);
+        }
     }
     if (error && cap) error[0] = '\0';
     return m;
@@ -576,6 +684,8 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     if (m->experts) rl_native_metal_destroy(m->experts);
     if (m->pf) rl_metal_prefill_destroy(m->pf);
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
+    free(m->bk_conv); free(m->bk_rec);
+    m->p_route = nil; m->plan_slots = m->plan_weights = m->plan_ids = m->plan_miss = m->layer_out_gpu = nil;
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
@@ -603,6 +713,11 @@ int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap) {
 }
 
 uint64_t rl_metal_engine_resident_bytes(const rl_metal_engine *m) { return m ? m->resident_bytes : 0u; }
+
+int rl_metal_engine_preloaded(const rl_metal_engine *m, double *preload_ms) {
+    if (preload_ms) *preload_ms = m ? m->preload_ms : 0.0;
+    return m ? m->preloaded : 0;
+}
 
 static id<MTLCommandBuffer> enc_recurrent(rl_engine *e, rl_metal_engine *m, id<MTLCommandBuffer> cb, const rl_layer_tensors *t, const mlayer *w) {
     const rl_engine_info *in = &e->info;
@@ -695,8 +810,171 @@ static id<MTLCommandBuffer> enc_attention(rl_engine *e, rl_metal_engine *m, id<M
     return stage_end(m, cb, 8);
 }
 
+/* dev21: the whole token in one command buffer with the router selection and the expert lookups on the GPU.
+ * Returns 1 on success, 0 on error, -1 when a selected expert was not resident (states restored; the
+ * caller decodes the token synchronously). */
+static int step_speculative(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
+                            rl_engine_step_stats *stats, char *error, size_t cap) {
+    rl_backend_state *s = &e->gpu;
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
+    const float eps = in->rms_eps;
+    const size_t hb = (size_t)hidden * sizeof(float);
+    const double start = rl_engine_now_ms();
+    id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->experts);
+    if (!resident) { set_error(error, cap, "residency table unavailable"); return 0; }
+    int result = 0;
+    @autoreleasepool {
+        if (!rl_engine_embed_token(e, token, (float *)m->x.contents, error, cap)) return 0;
+        memcpy(s->embed, m->x.contents, hb);
+        stats->embed_ms = rl_engine_now_ms() - start;
+        memset(m->plan_miss.contents, 0, (size_t)in->n_layer * sizeof(uint32_t));
+
+        id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+        /* state backups: the fallback restores them if any layer selects a non-resident expert */
+        {
+            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+            for (uint32_t r = 0; r < in->n_recurrent; ++r) {
+                [blit copyFromBuffer:m->conv_state[r] sourceOffset:0 toBuffer:m->bk_conv[r] destinationOffset:0 size:m->conv_state[r].length];
+                [blit copyFromBuffer:m->rec_state[r] sourceOffset:0 toBuffer:m->bk_rec[r] destinationOffset:0 size:m->rec_state[r].length];
+            }
+            [blit endEncoding];
+        }
+        for (uint32_t l = 0; l < in->n_layer; ++l) {
+            const rl_layer_tensors *t = &e->layers[l];
+            const mlayer *w = &m->layers[l];
+            enc_rms(m, cb, m->x, &w->attn_norm, m->normed, hidden, eps);
+            if (t->kind == RL_LAYER_MAP_RECURRENT) cb = enc_recurrent(e, m, cb, t, w);
+            else cb = enc_attention(e, m, cb, t, w, s->position);
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_resid_rms];
+                [enc setBuffer:m->x offset:0 atIndex:0]; [enc setBuffer:m->branch offset:0 atIndex:1];
+                [enc setBuffer:w->post_norm.buf offset:w->post_norm.off atIndex:2];
+                [enc setBuffer:m->resid offset:0 atIndex:3]; [enc setBuffer:m->ffn_in offset:0 atIndex:4];
+                [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
+                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+            }
+            enc_rows(m, cb, &w->router, m->ffn_in, m->router_logits);
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_sh_scalar];
+                [enc setBuffer:w->sh_gate_inp.buf offset:w->sh_gate_inp.off atIndex:0]; [enc setBuffer:m->ffn_in offset:0 atIndex:1];
+                [enc setBuffer:m->scalar offset:0 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
+                [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+            }
+            enc_rows(m, cb, &w->sh_gate, m->ffn_in, m->sh_gate);
+            enc_rows(m, cb, &w->sh_up, m->ffn_in, m->sh_up);
+            {
+                const uint32_t ffn = w->sh_gate.rows;
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_sh_silu];
+                [enc setBuffer:m->sh_gate offset:0 atIndex:0]; [enc setBuffer:m->sh_up offset:0 atIndex:1]; [enc setBuffer:m->sh_act offset:0 atIndex:2];
+                [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u); [enc endEncoding];
+            }
+            enc_rows(m, cb, &w->sh_down, m->sh_act, m->sh_out);
+            /* routing + expert lookup on the GPU */
+            const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
+            const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_route];
+                [enc setBuffer:m->router_logits offset:0 atIndex:0];
+                [enc setBuffer:resident offset:(NSUInteger)l * experts * sizeof(uint64_t) atIndex:1];
+                [enc setBuffer:m->plan_slots offset:slots_off atIndex:2];
+                [enc setBuffer:m->plan_weights offset:weights_off atIndex:3];
+                [enc setBuffer:m->plan_ids offset:ids_off atIndex:4];
+                [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
+                [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
+                [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+            }
+            {
+                rl_native_layer_info li;
+                rl_expert_layout lay;
+                if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
+                    !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) goto done;
+                if (!redmetal_topk_pool_encode_device(rl_native_metal_pool_handle(m->experts), (__bridge void *)cb,
+                        (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, li.ggml_type,
+                        li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
+                        (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
+                    snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); goto done;
+                }
+            }
+            {
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:m->p_scale_add];
+                [enc setBuffer:m->resid offset:0 atIndex:0]; [enc setBuffer:m->routed offset:0 atIndex:1]; [enc setBuffer:m->sh_out offset:0 atIndex:2];
+                [enc setBuffer:m->scalar offset:0 atIndex:3]; [enc setBuffer:m->x offset:0 atIndex:4]; [enc setBytes:&hidden length:4 atIndex:5];
+                enc_1d(enc, m->p_scale_add, hidden, 64u); [enc endEncoding];
+            }
+            {
+                id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+                [blit copyFromBuffer:m->x sourceOffset:0 toBuffer:m->layer_out_gpu destinationOffset:(NSUInteger)l * hb size:hb];
+                [blit endEncoding];
+            }
+        }
+        enc_rms(m, cb, m->x, &m->output_norm, m->final_norm, hidden, eps);
+        if (logits) enc_rows(m, cb, &m->output, m->final_norm, m->logits);
+        if (!commit_wait(cb, "GPU-routed token", &stats->gpu_ms, error, cap)) goto done;
+        stats->layers_ms = rl_engine_now_ms() - start - stats->embed_ms;
+
+        uint32_t missed = 0;
+        const uint32_t *miss = (const uint32_t *)m->plan_miss.contents;
+        for (uint32_t l = 0; l < in->n_layer; ++l) missed += miss[l];
+        if (missed) {
+            /* restore the DeltaNet states; the KV rows at this position are rewritten by the synchronous pass */
+            id<MTLCommandBuffer> rb = [m->queue commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [rb blitCommandEncoder];
+            for (uint32_t r = 0; r < in->n_recurrent; ++r) {
+                [blit copyFromBuffer:m->bk_conv[r] sourceOffset:0 toBuffer:m->conv_state[r] destinationOffset:0 size:m->conv_state[r].length];
+                [blit copyFromBuffer:m->bk_rec[r] sourceOffset:0 toBuffer:m->rec_state[r] destinationOffset:0 size:m->rec_state[r].length];
+            }
+            [blit endEncoding];
+            if (!commit_wait(rb, "state restore", NULL, error, cap)) goto done;
+            result = -1;
+            goto done;
+        }
+        /* LRU bookkeeping for the experts the GPU used, host views, telemetry */
+        const uint32_t *ids = (const uint32_t *)m->plan_ids.contents;
+        for (uint32_t l = 0; l < in->n_layer; ++l) {
+            if (!rl_native_metal_touch_resident(m->experts, l, ids + (size_t)l * 64u, topk, error, cap)) goto done;
+            memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids + (size_t)l * 64u, (size_t)topk * sizeof(uint32_t));
+        }
+        memcpy(s->layer_out, m->layer_out_gpu.contents, (size_t)in->n_layer * hb);
+        memcpy(s->final_norm, m->final_norm.contents, hb);
+        if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));
+        {
+            rl_native_topk_plan none; memset(&none, 0, sizeof(none));
+            rl_native_metal_telemetry tel;
+            /* an inactive plan release only reports counters */
+            if (!rl_native_metal_release_topk(m->experts, &none, &tel, error, cap)) goto done;
+            stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
+            stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
+            stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
+        }
+        s->position++;
+        stats->speculative = 1;
+        result = 1;
+    }
+done:
+    stats->total_ms = rl_engine_now_ms() - start;
+    return result;
+}
+
 int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
                          rl_engine_step_stats *stats, char *error, size_t cap) {
+    if (m->spec_enabled && !m->last_token_missed) {
+        const int r = step_speculative(e, m, token, logits, stats, error, cap);
+        if (r == 1) return 1;
+        if (r == 0) return 0;
+        stats->speculative_fallback = 1;
+        m->last_token_missed = 1;
+    }
+    return rl_metal_engine_step_sync(e, m, token, logits, stats, error, cap);
+}
+
+int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
+                              rl_engine_step_stats *stats, char *error, size_t cap) {
     rl_backend_state *s = &e->gpu;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
@@ -813,6 +1091,8 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
             stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
             stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
             stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
+            m->last_token_missed = tel.cache_misses != m->misses_seen;
+            m->misses_seen = tel.cache_misses;
         }
         memcpy(s->final_norm, m->final_norm.contents, (size_t)hidden * sizeof(float));
         if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));

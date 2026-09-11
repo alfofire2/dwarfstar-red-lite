@@ -321,6 +321,7 @@ static void stats_accumulate(rl_engine_step_stats *acc, const rl_engine_step_sta
     acc->ssd_bytes = one->ssd_bytes; acc->ssd_reads = one->ssd_reads; acc->resident_slots = one->resident_slots;
     acc->slot_capacity = one->slot_capacity; acc->expert_plans += one->expert_plans;
     acc->prep_lru_ms += one->prep_lru_ms; acc->prep_load_ms += one->prep_load_ms; acc->prep_commit_ms += one->prep_commit_ms; acc->expert_wait_ms += one->expert_wait_ms;
+    acc->speculative += one->speculative; acc->speculative_fallback += one->speculative_fallback;
 }
 
 int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens, uint32_t count,
@@ -399,6 +400,15 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *e, rl_engine_backend 
 }
 
 double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
+
+int rl_engine_experts_preloaded(const rl_engine *e, double *preload_ms) {
+    if (preload_ms) *preload_ms = 0.0;
+#ifdef __APPLE__
+    if (e && e->metal) return rl_metal_engine_preloaded(e->metal, preload_ms);
+#endif
+    (void)e;
+    return 0;
+}
 
 int rl_engine_embed_token(const rl_engine *e, uint32_t token, float *out, char *error, size_t cap) {
     if (!e || !out) { set_error(error, cap, "invalid embed arguments"); return 0; }

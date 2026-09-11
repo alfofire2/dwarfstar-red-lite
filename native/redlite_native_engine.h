@@ -77,6 +77,8 @@ typedef struct {
     uint32_t slot_capacity;
     uint32_t expert_plans;   /* batched prefill: expert plans (groups) executed */
     double prep_lru_ms, prep_load_ms, prep_commit_ms, expert_wait_ms;   /* prefill expert phase wall split */
+    uint32_t speculative;          /* dev21: token decoded by the GPU-routed single-command-buffer path */
+    uint32_t speculative_fallback; /* dev21: GPU-routed attempt hit a non-resident expert and was redone synchronously */
 } rl_engine_step_stats;
 
 void rl_engine_config_default(rl_engine_config *cfg);
@@ -113,6 +115,9 @@ const float *rl_engine_last_layer_output(const rl_engine *engine, rl_engine_back
 const float *rl_engine_last_final_norm(const rl_engine *engine, rl_engine_backend backend);
 /* Router selection of the last step for a layer (top_k ids); NULL if unavailable. */
 const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_backend backend, uint32_t layer);
+
+/* dev21: 1 when the Metal backend preloaded every routed expert at open (full residency); preload_ms receives the time. */
+int rl_engine_experts_preloaded(const rl_engine *engine, double *preload_ms);
 
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);

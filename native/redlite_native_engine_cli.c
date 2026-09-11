@@ -85,12 +85,13 @@ static uint32_t argmax(const float *v, uint32_t n) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-engine 0.3.0.dev20\n\n"
+        "redlite-engine 0.3.0.dev21\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
         "  redlite-engine tokenize MODEL --file CORPUS [--no-special]   (one input per line, \\n \\t \\\\ escapes; one id list per line)\n"
-        "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers]\n"
+        "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers] [--repeat N]\n"
+        "      --repeat N: replay the sequence N times with a reset in between (a warm cache exercises the dev21 GPU-routed decode)\n"
         "  redlite-engine logits MODEL --tokens a,b,c --backend cpu|gpu [--out DUMP] [--dump-last | --dump-from N] [--batch N] [--context N] [--cache-mib N]\n"
         "      --batch N: ingest the tokens before --dump-from with the batched Metal prefill (chunks of N) instead of token by token\n"
         "  redlite-engine prefill MODEL --tokens a,b,c [--batch N] [--cpu] [--context N] [--cache-mib N]\n"
@@ -124,7 +125,7 @@ int main(int argc, char **argv) {
     const char *out_path = NULL;
     const char *text = NULL, *corpus = NULL;
     int report_layers = 0, no_special = 0, chat = 0, dump_last = 0, with_cpu = 0;
-    uint32_t dump_from = 0, batch = 0;
+    uint32_t dump_from = 0, batch = 0, repeat = 1;
     int router_layer = -1;
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--layers") == 0) { report_layers = 1; continue; }
@@ -145,6 +146,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
         else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
         else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &batch)) return 2; }
+        else if (strcmp(argv[i], "--repeat") == 0) { if (!parse_u32(argv[++i], &repeat) || !repeat) return 2; }
         else if (strcmp(argv[i], "--router-layer") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; router_layer = (int)v; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
@@ -356,6 +358,14 @@ int main(int argc, char **argv) {
     float *gpu_logits = (float *)malloc((size_t)in->vocab * sizeof(float));
     int all_ok = 1;
     float worst_layer = 0.0f, worst_logit = 0.0f;
+    uint32_t spec_tokens = 0, spec_fallbacks = 0;
+    for (uint32_t pass = 0; pass < repeat; ++pass) {
+    if (pass) {
+        if (!rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error)) || !rl_engine_reset(e, RL_BACKEND_CPU, error, sizeof(error))) {
+            fprintf(stderr, "reset failed: %s\n", error); all_ok = 0; break;
+        }
+        printf("-- pass %u (after reset; expert cache warm) --\n", pass + 1u);
+    }
     for (uint32_t i = 0; i < token_count; ++i) {
         rl_engine_step_stats cs, gs;
         if (!rl_engine_step(e, RL_BACKEND_GPU, tokens[i], gpu_logits, &gs, error, sizeof(error))) {
@@ -393,11 +403,15 @@ int main(int argc, char **argv) {
         printf("  timing gpu=%.1f ms (rec %.1f attn %.1f router %.1f routed %.1f shared %.1f out %.1f) cpu=%.1f ms | experts loads=%" PRIu64 " hits=%" PRIu64 " misses=%" PRIu64 " resident=%u/%u ssd=%.1f MiB\n",
             gs.total_ms, gs.recurrent_ms, gs.attention_ms, gs.router_ms, gs.routed_ms, gs.shared_ms, gs.output_ms, cs.total_ms,
             gs.expert_loads, gs.cache_hits, gs.cache_misses, gs.resident_slots, gs.slot_capacity, (double)gs.ssd_bytes / (1024.0 * 1024.0));
+        if (gs.speculative || gs.speculative_fallback) printf("  path: %s\n", gs.speculative ? "GPU-routed (speculative)" : "speculative attempt fell back to synchronous");
         fflush(stdout);
+        spec_tokens += gs.speculative; spec_fallbacks += gs.speculative_fallback;
         if (!token_ok) all_ok = 0;
+    }
     }
     printf("worst layer abs       : %.6g\n", worst_layer);
     printf("worst logits abs      : %.6g\n", worst_logit);
+    printf("GPU-routed tokens     : %u speculative, %u fallbacks, %u synchronous\n", spec_tokens, spec_fallbacks, token_count * repeat - spec_tokens);
     printf("MULTI-TOKEN ENGINE PARITY: %s\n", all_ok ? "YES" : "NO");
     free(cpu_logits); free(gpu_logits);
     rl_engine_close(e);

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.0.dev21 — 2026-09-11
+
+GPU-routed decode with full expert residency on `v0.3-streaming`. See
+`docs/REDLITE_DEV21_GPU_ROUTED_DECODE.md`.
+
+- Added a per-layer expert residency table (GPU slot addresses, maintained by
+  the runtime on every LRU commit/abort; the LRU now reports evicted keys), a
+  Metal router kernel (`rl_route`, same selection rule as the CPU router) and
+  a GPU-driven single-token expert encode, so a whole token runs in one
+  command buffer with one CPU wait. DeltaNet states are backed up before the
+  attempt and restored if any layer selected a non-resident expert, in which
+  case the token is redone by the unchanged synchronous path. Attempted only
+  after a token with no expert load (`RL_ENGINE_SPECULATIVE=0` disables).
+- Full residency: when the cache can hold every routed expert (≥ 21 300 MiB
+  for this GGUF) they are all loaded at open (3.7 s from the page cache;
+  `RL_ENGINE_PRELOAD=0` disables) and every token is GPU-routed. The pool's
+  slabs are attached to the engine queue with an `MTLResidencySet` (macOS
+  15+); per-encoder `useResource` over 384 slabs had made Metal redo 22 GiB of
+  residency per command buffer (11 tok/s).
+- `redlite-engine parity --repeat N` replays the sequence after a reset so the
+  warm-cache GPU-routed path is checked against the CPU oracle; `--stats`
+  outputs report GPU-routed / fallback / synchronous token counts.
+- Validation (M4 Max): 12/12 GPU-routed tokens with identical router ids,
+  worst layer abs 5.3e-05, logits abs 1.7e-05 vs the CPU oracle; regression
+  36/36 plus `engine.parity.gpu_routed` on ≥ 40 GiB machines.
+- Decode on the M4 Max with a 22 GiB cache: 54–57 tok/s (from ~40), GPU-bound
+  at 16 ms of GPU time per token; llama.cpp fully resident: 68 tok/s.
+
 ## 0.3.0.dev20 — 2026-09-08
 
 Batched prompt ingestion on `v0.3-streaming`. See

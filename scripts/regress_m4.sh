@@ -100,6 +100,12 @@ echo "== persistent engine =="
 expect_line engine.info "recurrent=36 full-attention=12" "$BIN/redlite-engine" info "$MODEL"
 expect_line engine.parity "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64
 
+if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
+  echo "== GPU-routed decode (dev21, full residency; >= 40 GiB) =="
+  expect_line engine.parity.gpu_routed "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib 22528 --context 64 --repeat 2
+  grep -q "GPU-routed tokens     : 12 speculative" "$LOG/engine.parity.gpu_routed.log" || { echo "FAIL  engine.parity.gpu_routed.count (expected 12 GPU-routed tokens)"; FAIL=$((FAIL + 1)); FAILED+=(engine.parity.gpu_routed.count); }
+fi
+
 echo "== batched prefill (dev20) =="
 expect_line prefill.parity.chunks8 "BATCHED PREFILL PARITY: YES" "$BIN/redlite-engine" prefill "$MODEL" --tokens 151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198 --batch 8 --cache-mib 1024 --context 64
 PREFILL96="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$(cat "$ROOT/tests/fixtures/long_context_prompt.txt")" --no-special | head -1 | cut -d',' -f1-96)"

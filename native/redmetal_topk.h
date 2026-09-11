@@ -100,6 +100,43 @@ int redmetal_topk_pool_encode(
 void redmetal_topk_pool_release(redmetal_topk_pool_t pool, const uint32_t *slot_ids, uint32_t top_k);
 
 /*
+ * GPU-driven decode (dev21). The pool keeps a residency table of
+ * layers x experts GPU slot addresses (0 = not resident) that a routing
+ * kernel can read; the owner updates it as the LRU commits and evicts.
+ */
+int redmetal_topk_pool_residency_table_init(redmetal_topk_pool_t pool, uint32_t layers, uint32_t experts);
+void *redmetal_topk_pool_residency_table(redmetal_topk_pool_t pool);   /* id<MTLBuffer>, uint64_t[layers][experts] */
+int redmetal_topk_pool_residency_set(redmetal_topk_pool_t pool, uint32_t layer, uint32_t expert, uint32_t slot_id);
+void redmetal_topk_pool_residency_clear(redmetal_topk_pool_t pool, uint32_t layer, uint32_t expert);
+/* The MTLResidencySet holding every slab (macOS 15+; NULL otherwise). Attach it to the command queue that
+ * executes GPU-driven or batched expert work; per-encoder useResource is then skipped for slabs. */
+void *redmetal_topk_pool_slab_residency_set(redmetal_topk_pool_t pool);
+/* Mark every slab resident for the given compute encoder (id<MTLComputeCommandEncoder>); no-op with a residency set. */
+void redmetal_topk_pool_use_all_slabs(redmetal_topk_pool_t pool, void *mtl_compute_encoder);
+/*
+ * Encode the single-token three-dispatch execution reading the slot table
+ * (uint64 slot base addresses, REDMETAL_TOPK_MAX entries) and the router
+ * weights (float[top_k]) from external MTLBuffers written on the GPU, so no
+ * CPU round trip is needed. Every slab is marked resident; no in-flight
+ * marking (the caller guarantees the LRU does not load during the command buffer).
+ */
+int redmetal_topk_pool_encode_device(
+    redmetal_topk_pool_t pool,
+    void *mtl_command_buffer,
+    void *slot_table_buffer, uint64_t slot_table_offset,
+    void *weight_buffer, uint64_t weight_offset,
+    uint32_t top_k,
+    uint32_t ggml_type,
+    uint32_t hidden_size,
+    uint32_t ffn_size,
+    uint64_t gate_bytes,
+    uint64_t up_bytes,
+    void *mtl_input_buffer,
+    uint64_t input_offset,
+    void *mtl_output_buffer,
+    uint64_t output_offset);
+
+/*
  * Batched prefill (dev20b): n_expert unique experts (slot table) serve n_pairs
  * (expert, token) pairs sorted by expert (expert_start[n_expert+1] prefix
  * sums; pair_token / pair_weight per pair). tok_pair[ntok*top_k] lists each
