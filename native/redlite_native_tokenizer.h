@@ -50,6 +50,13 @@ int rl_tokenizer_chat_prompt(const char *system_prompt, const char *user_prompt,
 /* Continue an existing ChatML conversation after the previous assistant EOG token. */
 int rl_tokenizer_chat_continuation(const char *user_prompt, char *out, size_t out_cap);
 
+/*
+ * Which chat format to use given the GGUF tokenizer.chat_template (may be NULL). The template is
+ * not interpreted (no Jinja): a ChatML template is confirmed, anything else falls back to the
+ * built-in ChatML. Returns a short human-readable description; *from_gguf is 1 when confirmed.
+ */
+const char *rl_tokenizer_chat_template_source(const char *gguf_template, int *from_gguf);
+
 #ifdef __cplusplus
 }
 #endif

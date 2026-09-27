@@ -198,10 +198,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     /* The GGUF template is not interpreted (no Jinja); it only confirms the ChatML format. */
-    fprintf(stderr, "[redlite-server] chat template: %s\n",
-        g.chat_template && strstr(g.chat_template, "<|im_start|>")
-            ? "ChatML (matches the GGUF tokenizer.chat_template)"
-            : "built-in ChatML (the GGUF has no ChatML tokenizer.chat_template)");
+    fprintf(stderr, "[redlite-server] chat template: %s\n", rl_tokenizer_chat_template_source(g.chat_template, NULL));
     double preload_ms = 0.0;
     const int preloaded = rl_engine_experts_preloaded(e, &preload_ms);
     fprintf(stderr, "[redlite-server] engine ready in %.1f s (%s backend, cache %llu MiB%s, context %u)\n",
