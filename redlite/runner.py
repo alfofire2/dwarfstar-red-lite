@@ -37,6 +37,10 @@ def native_generate() -> Path:
     return _first_existing([REDMETAL_BIN / "redlite-generate"])
 
 
+def native_server() -> Path:
+    return _first_existing([REDMETAL_BIN / "redlite-server"])
+
+
 def engine_status() -> dict[str, bool]:
     return {
         "native_redlite_generate": (REDMETAL_BIN / "redlite-generate").exists(),
@@ -80,6 +84,30 @@ def run_native_chat(
         cmd.append("--stats")
     if no_stream:
         cmd.append("--no-stream")
+    if batch is not None:
+        cmd.extend(["--batch", str(batch)])
+    print("[redlite]", " ".join(_quote(x) for x in cmd))
+    if dry_run:
+        return 0
+    return subprocess.call(cmd)
+
+
+def run_native_server(
+    model: str,
+    host: str,
+    port: int,
+    context: int,
+    cache_mib: int,
+    batch: int | None = None,
+    dry_run: bool = False,
+) -> int:
+    cmd = [
+        str(native_server()), model,
+        "--host", host,
+        "--port", str(port),
+        "--context", str(context),
+        "--cache-mib", str(cache_mib),
+    ]
     if batch is not None:
         cmd.extend(["--batch", str(batch)])
     print("[redlite]", " ".join(_quote(x) for x in cmd))

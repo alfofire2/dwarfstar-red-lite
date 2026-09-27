@@ -12,7 +12,7 @@ from . import __version__
 from .hardware import detect
 from .model_catalog import VARIANTS, resolve_variant
 from .planner import native_defaults, plan_for
-from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, ROOT
+from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
 
@@ -196,6 +196,8 @@ def cmd_chat(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    if args.native:
+        return _serve_native(args)
     _, plan = _make_plan(args)
     _print_plan(plan)
     if not plan.safe and not args.force:
@@ -203,6 +205,26 @@ def cmd_serve(args) -> int:
     if plan.status == "CRITICAL" and not args.quiet_warning:
         print("[redlite] warning: CRITICAL resident margin; server concurrency should remain 1 on 24 GiB.")
     return run_server(args.model, plan, args.host, args.port, args.extra, args.dry_run)
+
+
+def _serve_native(args) -> int:
+    hw = detect(Path(args.model).parent)
+    _require_apple(hw)
+    model = Path(args.model).expanduser()
+    if not model.is_file():
+        _die(f"Model not found: {model}")
+    cache_mib = args.cache_mib
+    if cache_mib is None:
+        defaults = native_defaults(hw.ram_bytes)
+        cache_mib = defaults.cache_mib
+        print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    try:
+        return run_native_server(
+            str(model), args.host, args.port, args.context or 4096, cache_mib,
+            batch=args.batch, dry_run=args.dry_run,
+        )
+    except FileNotFoundError:
+        _die("Native Red Lite server not built. Run: make native")
 
 
 def cmd_bench(args) -> int:
@@ -309,6 +331,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_plan_args(s)
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8080)
+    s.add_argument("--native", action="store_true",
+                   help="Serve with the native Red Lite runtime (redlite-server) instead of llama-server")
+    s.add_argument("--cache-mib", type=int, default=None,
+                   help="--native: routed-expert cache in MiB (default: 22528 when RAM >= 40 GiB, otherwise 4096)")
+    s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 512)")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

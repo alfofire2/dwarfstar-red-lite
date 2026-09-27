@@ -118,6 +118,7 @@ PROMPT="Explain in one sentence why the sky is blue."
 expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198$" \
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
+expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
 # an empty prompt must be refused instead of sampling from uninitialised logits
 if "$BIN/redlite-generate" "$MODEL" --prompt "" --raw --max-tokens 4 --cache-mib 256 >"$LOG/generate.empty.log" 2>&1; then
   echo "FAIL  generate.empty_prompt (exit 0; see $LOG/generate.empty.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.empty_prompt)

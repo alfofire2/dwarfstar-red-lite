@@ -69,5 +69,28 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
         self.assertNotIn("full expert residency", text)
 
 
+class NativeServeCliTests(unittest.TestCase):
+    def _run(self, ram_gib: float, *extra: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "m.gguf"
+            model.write_bytes(b"GGUF")
+            out = io.StringIO()
+            with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
+                 contextlib.redirect_stdout(out):
+                self.assertEqual(main(["serve", str(model), "--native", "--dry-run", *extra]), 0)
+            return out.getvalue()
+
+    def test_serve_native_builds_the_redlite_server_command(self):
+        text = self._run(48, "--port", "9000", "-c", "8192", "--batch", "256")
+        self.assertIn("/x/redlite-server", text)
+        self.assertIn("--host 127.0.0.1 --port 9000 --context 8192 --cache-mib 22528 --batch 256", text)
+        self.assertNotIn("llama-server", text)
+
+    def test_serve_native_on_24gb_defaults_to_4gb_and_4096_context(self):
+        text = self._run(24)
+        self.assertIn("--context 4096 --cache-mib 4096", text)
+
+
 if __name__ == "__main__":
     unittest.main()
