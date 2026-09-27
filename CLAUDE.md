@@ -33,14 +33,17 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (36 checks + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (38 checks + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+make sanitize                   # ASan+UBSan build and run of every model-free native test and the GGUF fuzz (macOS or Linux)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
 make bootstrap                  # clone+build the pinned llama.cpp and oversized-moe-runtime into .deps/ (Apple Silicon only, slow)
 ```
 
 Python tests never need a model file or Metal; they use synthetic fixtures and fake pools.
 `make native` also runs model-free C tests (`redlite-native selftest`, the
-`*-offline-test` binaries). On Linux it builds only the portable subset and the
+`*-offline-test` binaries, `redlite-gguf-fuzz`). Any change to the GGUF readers must
+keep `make sanitize` clean; the fuzz's invariants (seeds accepted, truncations
+rejected, accepted mutants mappable) are the readers' contract. On Linux it builds only the portable subset and the
 Metal-only `build_*.sh` scripts exit 0 with a skip message.
 
 Real-model parity tools all follow the same shape and only work on macOS with the GGUF present:

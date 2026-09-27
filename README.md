@@ -113,6 +113,9 @@ every routed expert (`--cache-mib 22528` on 48 GiB) the experts are preloaded at
 each token is routed on the GPU in one command buffer: 54–57 tok/s decode on the M4 Max
 (`docs/REDLITE_DEV21_GPU_ROUTED_DECODE.md`). Details, validation numbers and limits:
 `docs/REDLITE_DEV18_ENGINE.md`; regression suite: `scripts/regress_m4.sh MODEL.gguf`.
+The GGUF readers are fuzzed by `make native`, and `make sanitize` runs every model-free
+native test under ASan/UBSan; both also work on Linux
+(`docs/REDLITE_DEV26_ROBUSTNESS.md`).
 
 ## Requirements
 

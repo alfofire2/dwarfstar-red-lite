@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased (v0.3-streaming, after 0.3.0.dev21)
+
+Model-free robustness work, part of the dev26 scope. See
+`docs/REDLITE_DEV26_ROBUSTNESS.md`. Tested synthetically on Linux x86_64 only
+(cloud container, gcc 13.3 / clang 18.1). Not yet run on macOS or the M4 Max.
+Version unchanged.
+
+- Fixed the portable `make native` build (DeltaNet state/tail CLIs used Metal
+  telemetry outside `#ifdef __APPLE__`). The Linux build is now warning-clean
+  under gcc and clang.
+- Hardened both GGUF readers against corrupt files:
+  - directory, kv and tokenizer-array counts are bounded by the file size;
+  - expert-map tensor offsets beyond EOF are rejected (they could wrap
+    `data_base + offset`);
+  - out-of-range `token_type` values are rejected instead of converted with UB;
+  - nested arrays are rejected.
+- Added `redlite-gguf-fuzz` (truncations, boundary values and seeded mutations
+  against both readers; run by `make native`) and `make sanitize` (ASan + UBSan
+  build and run of every model-free test and the fuzz). `regress_m4.sh` gains
+  `selftest.gguf_fuzz` and `selftest.sanitize`.
+
 ## 0.3.0.dev21 — 2026-09-11
 
 GPU-routed decode with full expert residency on `v0.3-streaming`. See
