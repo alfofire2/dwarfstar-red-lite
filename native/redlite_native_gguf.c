@@ -102,6 +102,7 @@ static int skip_value(FILE *f, uint32_t type) {
         uint64_t count = 0;
         if (!read_u32(f, &subtype) || !read_u64(f, &count) || count > GGUF_MAX_ARRAY) return 0;
         const size_t sub_fixed = scalar_size(subtype);
+        if (subtype == GGUF_ARRAY) return 0; /* nested arrays are invalid GGUF, as in llama.cpp */
         if (sub_fixed) {
             if (count && count > UINT64_MAX / sub_fixed) return 0;
             return skip_bytes(f, count * sub_fixed);
@@ -235,7 +236,9 @@ int rl_native_build_expert_map(
         fclose(f);
         return 0;
     }
-    if (tensor_count > SIZE_MAX / sizeof(raw_tensor)) {
+    /* Each descriptor is at least name length (8) + rank (4) + type (4) + offset (8) bytes on disk,
+     * so a count the file cannot hold is corrupt; reject it before sizing any allocation from it. */
+    if (tensor_count > SIZE_MAX / sizeof(raw_tensor) || tensor_count > file_size / 24u) {
         set_error(error, error_cap, "GGUF tensor directory is too large");
         fclose(f);
         return 0;
@@ -291,6 +294,16 @@ int rl_native_build_expert_map(
         set_error(error, error_cap, "invalid GGUF aligned data offset");
         free_raw(raw, tensor_count);
         return 0;
+    }
+
+    /* Every payload must start inside the file; otherwise data_base + offset can wrap and the
+     * sorted spans stop describing real bytes (same rule as rl_gguf_model_open). */
+    for (uint64_t i = 0; i < tensor_count; ++i) {
+        if (raw[i].relative_offset > file_size - data_base) {
+            set_error(error, error_cap, "GGUF tensor offset beyond file");
+            free_raw(raw, tensor_count);
+            return 0;
+        }
     }
 
     qsort(raw, (size_t)tensor_count, sizeof(raw_tensor), tensor_offset_cmp);

@@ -88,6 +88,7 @@ static int skip_value(FILE *f, uint32_t type) {
         uint64_t count = 0;
         if (!read_u32(f, &subtype) || !read_u64(f, &count) || count > GGUF_MAX_ARRAY) return 0;
         const size_t sf = scalar_size(subtype);
+        if (subtype == GGUF_ARRAY) return 0; /* nested arrays are invalid GGUF, as in llama.cpp */
         if (sf) {
             if (count && count > UINT64_MAX / sf) return 0;
             return skip_bytes(f, count * sf);
@@ -136,10 +137,18 @@ static int bind_scalar(FILE *f, uint32_t type, const scalar_binding *b) {
     return 1;
 }
 
-static int read_string_array(FILE *f, char ***out, uint32_t *count_out) {
+/* Bytes between the stream position and EOF; bounds element counts read from the file
+ * before any allocation is sized from them. */
+static uint64_t bytes_left(FILE *f, uint64_t file_size) {
+    const off_t pos = ftello(f);
+    return pos >= 0 && (uint64_t)pos <= file_size ? file_size - (uint64_t)pos : 0u;
+}
+
+static int read_string_array(FILE *f, uint64_t file_size, char ***out, uint32_t *count_out) {
     uint32_t subtype = 0;
     uint64_t count = 0;
     if (!read_u32(f, &subtype) || !read_u64(f, &count) || subtype != GGUF_STRING || count > 0x7fffffffu) return 0;
+    if (count > bytes_left(f, file_size) / 8u) return 0; /* every string carries an 8-byte length */
     char **arr = (char **)calloc((size_t)count + 1u, sizeof(char *));
     if (!arr) return 0;
     for (uint64_t i = 0; i < count; ++i) {
@@ -154,17 +163,17 @@ static int read_string_array(FILE *f, char ***out, uint32_t *count_out) {
     return 1;
 }
 
-static int read_i32_array(FILE *f, int32_t **out, uint32_t *count_out) {
+static int read_i32_array(FILE *f, uint64_t file_size, int32_t **out, uint32_t *count_out) {
     uint32_t subtype = 0;
     uint64_t count = 0;
     if (!read_u32(f, &subtype) || !read_u64(f, &count) || count > 0x7fffffffu) return 0;
     const size_t sf = scalar_size(subtype);
-    if (!sf) return 0;
+    if (!sf || count > bytes_left(f, file_size) / sf) return 0;
     int32_t *arr = (int32_t *)calloc((size_t)count + 1u, sizeof(int32_t));
     if (!arr) return 0;
     for (uint64_t i = 0; i < count; ++i) {
         double v = 0.0;
-        if (!read_scalar_as_double(f, subtype, &v)) { free(arr); return 0; }
+        if (!read_scalar_as_double(f, subtype, &v) || !(v >= -2147483648.0 && v <= 2147483647.0)) { free(arr); return 0; }
         arr[i] = (int32_t)v;
     }
     *out = arr;
@@ -236,11 +245,11 @@ static int read_metadata(FILE *f, rl_gguf_model *m, char *error, size_t cap) {
         } else if (strcmp(key, "tokenizer.chat_template") == 0 && type == GGUF_STRING) {
             if (!read_string(f, &m->chat_template)) handled = 0;
         } else if (strcmp(key, "tokenizer.ggml.tokens") == 0 && type == GGUF_ARRAY) {
-            if (!read_string_array(f, &m->tokens, &m->vocab_count)) handled = 0;
+            if (!read_string_array(f, m->file_size, &m->tokens, &m->vocab_count)) handled = 0;
         } else if (strcmp(key, "tokenizer.ggml.merges") == 0 && type == GGUF_ARRAY) {
-            if (!read_string_array(f, &m->merges, &m->merge_count)) handled = 0;
+            if (!read_string_array(f, m->file_size, &m->merges, &m->merge_count)) handled = 0;
         } else if (strcmp(key, "tokenizer.ggml.token_type") == 0 && type == GGUF_ARRAY) {
-            if (!read_i32_array(f, &m->token_types, &token_type_count)) handled = 0;
+            if (!read_i32_array(f, m->file_size, &m->token_types, &token_type_count)) handled = 0;
         } else if (!skip_value(f, type)) {
             handled = 0;
         }
@@ -319,7 +328,9 @@ int rl_gguf_model_open(const char *path, rl_gguf_model *m, char *error, size_t c
     uint8_t magic[4];
     if (!read_exact(f, magic, 4) || memcmp(magic, "GGUF", 4) != 0 || !read_u32(f, &m->version) ||
         (m->version != 2u && m->version != 3u) || !read_u64(f, &m->tensor_count) || !read_u64(f, &m->kv_count) ||
-        m->tensor_count > (1ull << 24) || m->kv_count > (1ull << 24)) {
+        m->tensor_count > (1ull << 24) || m->kv_count > (1ull << 24) ||
+        /* smallest on-disk tensor descriptor: 8+4+4+8 bytes; smallest kv: 8+4+1 bytes */
+        m->tensor_count > m->file_size / 24u || m->kv_count > m->file_size / 13u) {
         fclose(f); set_error(error, cap, "invalid GGUF header"); rl_gguf_model_close(m); return 0;
     }
     if (!read_metadata(f, m, error, cap)) { fclose(f); rl_gguf_model_close(m); return 0; }
