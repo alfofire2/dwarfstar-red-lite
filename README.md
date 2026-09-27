@@ -97,11 +97,25 @@ redlite chat --stats
 ```
 
 Inside the chat use `/reset` to clear the conversation, `/help` for commands and
-`/quit` to exit. The friendly defaults are a 4096-position context, a 4096 MiB
-expert cache, 256 tokens per answer and temperature 0.7. Use `--temperature 0`
+`/quit` to exit; Ctrl-C stops the current answer (the conversation continues) and quits
+at the prompt. The defaults are a 4096-position context, 256 tokens per answer,
+temperature 0.7 and an expert cache chosen from RAM: 22528 MiB (every expert resident
+and preloaded) with 40 GiB or more, 4096 MiB otherwise. Use `--temperature 0`
 for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`,
-`--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`,
-`--no-stream` and `--stats`. Greedy output is token-identical to the pinned llama.cpp on the
+`--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`, `--batch`,
+`--no-stream`, `--stats` and `--json` (per-answer statistics as JSON on stderr).
+The RAM-based defaults, Ctrl-C handling and `--json` are new since dev21 and not yet
+validated on a Mac (`docs/REDLITE_DEV25_PRODUCT.md`).
+
+An OpenAI-compatible server on the same runtime (`POST /v1/chat/completions` with SSE
+streaming, `GET /v1/models`) starts with:
+
+```bash
+redlite serve --native models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --port 8080
+```
+
+It serves one request at a time and re-ingests the conversation on every request. Its
+protocol is tested with a fake engine; the real-model check is not yet run on a Mac. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. On an M4 Max / 48 GiB the same

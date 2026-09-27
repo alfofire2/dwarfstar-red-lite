@@ -50,6 +50,10 @@ also stopped building at some point after dev15, without anyone noticing.
     -fno-sanitize-recover=all` and runs them. It is also a new `regress_m4.sh`
     check, `selftest.sanitize`.
 
+Since then (dev25, `3060e9b`), `make sanitize` also builds `redlite-server-fake` with the
+sanitizers and runs `tests/test_native_server.py` against it. That covers the HTTP parser,
+the JSON request parser (including a 300-mutation body fuzz) and the SSE writer.
+
 ## Validation
 
 Machine: **Linux x86_64 cloud container** (Ubuntu 24.04, 4 vCPU, 15 GiB, gcc 13.3,
