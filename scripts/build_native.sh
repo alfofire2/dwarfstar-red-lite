@@ -210,12 +210,27 @@ else
     -o "$OUT/redlite-shared-exec-offline-test"
 fi
 
+# Model-free GGUF reader fuzz (both readers; truncations, boundary values, seeded mutations).
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  FUZZ_CC=(xcrun --sdk macosx clang -mcpu=native)
+else
+  FUZZ_CC=("$CC_BIN" -march=native)
+fi
+"${FUZZ_CC[@]}" \
+  -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+  -Wall -Wextra -Wpedantic -I"$ROOT/native" \
+  "$ROOT/native/redlite_native_gguf_fuzz.c" \
+  "$ROOT/native/redlite_native_gguf.c" \
+  "$ROOT/native/redlite_native_gguf_dir.c" \
+  -lm -o "$OUT/redlite-gguf-fuzz"
+
 "$OUT/redlite-native" selftest
 "$OUT/redlite-native-offline-test"
 "$OUT/redlite-router-audit" --help >/dev/null
 "$OUT/redlite-shared-audit" --help >/dev/null
 "$OUT/redlite-router-offline-test"
 "$OUT/redlite-shared-exec-offline-test"
+"$OUT/redlite-gguf-fuzz" --iterations 2000
 if [[ "$(uname -s)" == "Darwin" ]]; then
   "$OUT/redlite-router" --help >/dev/null
   "$OUT/redlite-shared" --help >/dev/null
@@ -226,6 +241,7 @@ fi
 echo "Built $OUT/redlite-native"
 echo "Built $OUT/redlite-router-audit"
 echo "Built $OUT/redlite-shared-audit"
+echo "Built $OUT/redlite-gguf-fuzz"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "Built $OUT/redlite-router"
   echo "Built $OUT/redlite-shared"

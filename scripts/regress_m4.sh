@@ -73,6 +73,8 @@ run selftest.router "$BIN/redlite-router-offline-test"
 run selftest.shared "$BIN/redlite-shared-exec-offline-test"
 run selftest.engine "$BIN/redlite-engine-offline-test"
 run selftest.attention "$BIN/redlite-attention" --selftest
+run selftest.gguf_fuzz "$BIN/redlite-gguf-fuzz" --iterations 20000
+run selftest.sanitize bash "$ROOT/scripts/sanitize_offline.sh"
 
 echo "== stage parity (real GGUF) =="
 expect_line topk.parity "parity match       : YES" "$BIN/redlite-native" topk-parity "$MODEL"
