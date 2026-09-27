@@ -189,7 +189,7 @@ def cmd_chat(args) -> int:
             str(model), args.context, cache_mib, args.max_tokens,
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
-            batch=args.batch,
+            batch=args.batch, json_stats=args.json,
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -323,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
     s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
     s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
+    s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")
     s.add_argument("--no-stream", action="store_true", help="Print each answer only when complete")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_chat)

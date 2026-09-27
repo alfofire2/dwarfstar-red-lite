@@ -63,8 +63,9 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
         self.assertIn("bounded 4 GiB", text)
 
     def test_explicit_cache_and_batch_win(self):
-        text = self._run(48, "--cache-mib", "1024", "--batch", "128")
+        text = self._run(48, "--cache-mib", "1024", "--batch", "128", "--json")
         self.assertIn("--cache-mib 1024", text)
+        self.assertIn("--json", text)
         self.assertIn("--batch 128", text)
         self.assertNotIn("full expert residency", text)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import signal
 import subprocess
 from typing import Iterable
 
@@ -50,6 +51,20 @@ def engine_status() -> dict[str, bool]:
     }
 
 
+def call_native_foreground(cmd: list[str]) -> int:
+    """Run a native binary that handles Ctrl-C itself (stop the answer / shut down cleanly).
+
+    subprocess.call would turn the terminal's SIGINT into a KeyboardInterrupt here and kill
+    the child, so the parent ignores SIGINT while the child runs with the default disposition.
+    """
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        proc = subprocess.Popen(cmd, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        return proc.wait()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def run_native_chat(
     model: str,
     context: int,
@@ -65,6 +80,7 @@ def run_native_chat(
     no_stream: bool = False,
     dry_run: bool = False,
     batch: int | None = None,
+    json_stats: bool = False,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -86,10 +102,12 @@ def run_native_chat(
         cmd.append("--no-stream")
     if batch is not None:
         cmd.extend(["--batch", str(batch)])
+    if json_stats:
+        cmd.append("--json")
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0
-    return subprocess.call(cmd)
+    return call_native_foreground(cmd)
 
 
 def run_native_server(
@@ -113,7 +131,7 @@ def run_native_server(
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0
-    return subprocess.call(cmd)
+    return call_native_foreground(cmd)
 
 
 def metal_common(model: str, plan: Plan) -> list[str]:
