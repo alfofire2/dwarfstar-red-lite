@@ -40,6 +40,8 @@ build redlite-engine-offline-test \
   "$N/redlite_native_engine_offline_test.c" "$N/redlite_native_gguf_dir.c" \
   "$N/redlite_native_quant_cpu.c" "$N/redlite_native_shared_exec.c" \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_sampler.c"
+build redlite-server-fake \
+  "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c"
 build redlite-gguf-fuzz \
   "$N/redlite_native_gguf_fuzz.c" "$N/redlite_native_gguf.c" "$N/redlite_native_gguf_dir.c"
 
@@ -54,5 +56,9 @@ if [[ "$(uname -s)" == "Darwin" ]]; then ASAN_OPTIONS="${ASAN_OPTIONS/detect_lea
 "$OUT/redlite-shared-exec-offline-test"
 "$OUT/redlite-engine-offline-test"
 "$OUT/redlite-gguf-fuzz" --iterations "${REDLITE_FUZZ_ITERATIONS:-2000}"
+"$OUT/redlite-server-fake" --selftest
+# OpenAI protocol tests against the sanitized HTTP server core (any report aborts the server and fails a test).
+REDLITE_SERVER_FAKE_BIN="$OUT/redlite-server-fake" PYTHONPATH="$ROOT" \
+  python3 -m unittest tests.test_native_server
 
 echo "Sanitized offline tests: OK ($OUT)"
