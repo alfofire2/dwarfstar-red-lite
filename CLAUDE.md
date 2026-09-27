@@ -33,7 +33,7 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (41 checks + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (43 checks with the llama.cpp oracle + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
 make sanitize                   # ASan+UBSan build and run of every model-free native test, the GGUF fuzz and the server protocol tests (macOS or Linux)
 bash scripts/build_server.sh    # redlite-server (OpenAI HTTP on rl_engine) + redlite-server-fake (echo backend for tests/test_native_server.py)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
@@ -61,6 +61,7 @@ RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time p
 .deps/redmetal/redlite-generate MODEL --prompt "..." --json   # machine-readable stats on stderr; Ctrl-C stops the answer (exit 130)
 .deps/redmetal/redlite-server MODEL --port 8080 --cache-mib 4096   # OpenAI /v1/chat/completions (SSE); `redlite serve --native MODEL` launches it
 python3 scripts/dev/server_check.py MODEL   # server greedy stream == redlite-generate greedy text, clean SIGINT
+bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py   # sampler distribution vs the pinned llama.cpp chain (needs only libllama, no model; macOS or Linux)
 .deps/redmetal/redlite-decoder-stack parity models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-attention-block parity MODEL --layer 3 --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-deltanet-layer  parity MODEL --layer 0

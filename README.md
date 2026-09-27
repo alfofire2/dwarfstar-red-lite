@@ -102,8 +102,11 @@ at the prompt. The defaults are a 4096-position context, 256 tokens per answer,
 temperature 0.7 and an expert cache chosen from RAM: 22528 MiB (every expert resident
 and preloaded) with 40 GiB or more, 4096 MiB otherwise. Use `--temperature 0`
 for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`,
-`--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`, `--batch`,
-`--no-stream`, `--stats` and `--json` (per-answer statistics as JSON on stderr).
+`--temperature`, `--top-k`, `--top-p`, `--min-p`, `--seed`, `--context`, `--cache-mib`,
+`--batch`, `--no-stream`, `--stats` and `--json` (per-answer statistics as JSON on stderr).
+The sampler applies llama.cpp's chain (top-k → top-p → min-p → temperature) with the same
+arithmetic, so the candidate distribution matches the pinned llama.cpp for equal parameters.
+min-p is off by default here and 0.05 in llama.cpp (`docs/REDLITE_DEV26_ROBUSTNESS.md`).
 The RAM-based defaults, Ctrl-C handling and `--json` are new since dev21 and not yet
 validated on a Mac (`docs/REDLITE_DEV25_PRODUCT.md`).
 

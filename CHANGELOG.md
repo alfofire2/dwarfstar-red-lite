@@ -27,6 +27,16 @@ macOS or the M4 Max. Version unchanged.
     tests the protocol without a model.
 - `regress_m4.sh` gains `server.stream_greedy`, `generate.json` and
   `generate.sigint`.
+- Sampler parity with the pinned llama.cpp:
+  - the native sampler gains min-p and follows llama.cpp's chain order and float
+    arithmetic (top-k → top-p → min-p → temperature → draw);
+  - `rl_sampler_distribution()` exposes the exact distribution;
+  - `--min-p` is exposed in `redlite-generate` and `redlite chat`, and `min_p` in
+    `redlite-server`; the default stays 0.
+- `scripts/dev/compare_sampler.py` compares `redlite-sampler-dist` against the
+  real pinned libllama chain (`redlite-ref-sampler`). On Linux the probabilities
+  are identical on every grid point; tie handling and the PRNG are documented
+  differences. `regress_m4.sh` gains `sampler.vs_llama`.
 
 - Fixed the portable `make native` build (DeltaNet state/tail CLIs used Metal
   telemetry outside `#ifdef __APPLE__`). The Linux build is now warning-clean
