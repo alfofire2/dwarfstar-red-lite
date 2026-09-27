@@ -60,6 +60,7 @@ def run_native_chat(
     stats: bool = False,
     no_stream: bool = False,
     dry_run: bool = False,
+    batch: int | None = None,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -79,6 +80,8 @@ def run_native_chat(
         cmd.append("--stats")
     if no_stream:
         cmd.append("--no-stream")
+    if batch is not None:
+        cmd.extend(["--batch", str(batch)])
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

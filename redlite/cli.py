@@ -11,7 +11,7 @@ import sys
 from . import __version__
 from .hardware import detect
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import plan_for
+from .planner import native_defaults, plan_for
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
@@ -179,11 +179,17 @@ def cmd_chat(args) -> int:
     model = Path(args.model).expanduser()
     if not model.is_file():
         _die(f"Model not found: {model}")
+    cache_mib = args.cache_mib
+    if cache_mib is None:
+        defaults = native_defaults(hw.ram_bytes)
+        cache_mib = defaults.cache_mib
+        print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     try:
         return run_native_chat(
-            str(model), args.context, args.cache_mib, args.max_tokens,
+            str(model), args.context, cache_mib, args.max_tokens,
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
+            batch=args.batch,
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -283,7 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-p", "--prompt", help="Optional first user message")
     s.add_argument("--system", help="Optional system prompt")
     s.add_argument("-c", "--context", type=int, default=4096, help="Context positions (default: 4096)")
-    s.add_argument("--cache-mib", type=int, default=4096, help="Routed-expert cache in MiB (default: 4096)")
+    s.add_argument(
+        "--cache-mib", type=int, default=None,
+        help="Routed-expert cache in MiB (default: 22528 = every expert resident and preloaded "
+             "when RAM >= 40 GiB, otherwise 4096)",
+    )
+    s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 512; 1 = token by token)")
     s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")
     s.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7; 0 = greedy)")
     s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")

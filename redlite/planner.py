@@ -168,3 +168,33 @@ def plan_for(hw: HardwareInfo, model_path: str | Path, context: int | None = Non
         safe=safe,
         reason=reason,
     )
+
+
+# Native runtime (redlite chat / redlite-generate) defaults. The full-residency cache holds
+# every routed expert of the reference IQ2_XXS GGUF (the engine preloads them at open when
+# the cache is >= 21 300 MiB, docs/REDLITE_DEV21_GPU_ROUTED_DECODE.md); it was validated on
+# the M4 Max 48 GiB. Below 40 GiB the field-validated 4 GiB bounded cache is used.
+NATIVE_FULL_RESIDENCY_MIN_RAM_GIB = 40.0
+NATIVE_FULL_RESIDENCY_CACHE_MIB = 22528
+NATIVE_BOUNDED_CACHE_MIB = 4096
+
+
+@dataclass(frozen=True)
+class NativeDefaults:
+    cache_mib: int
+    full_residency: bool
+    reason: str
+
+
+def native_defaults(ram_bytes: int) -> NativeDefaults:
+    ram_gib = ram_bytes / GIB
+    if ram_gib >= NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:
+        return NativeDefaults(
+            NATIVE_FULL_RESIDENCY_CACHE_MIB, True,
+            f"{ram_gib:.1f} GiB RAM >= {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB: "
+            "full expert residency, preloaded at open, GPU-routed decode",
+        )
+    return NativeDefaults(
+        NATIVE_BOUNDED_CACHE_MIB, False,
+        f"{ram_gib:.1f} GiB RAM < {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB: bounded 4 GiB expert cache",
+    )

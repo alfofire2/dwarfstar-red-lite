@@ -22,7 +22,8 @@ class CliTests(unittest.TestCase):
         a = self.p.parse_args(["chat"])
         self.assertTrue(a.model.endswith("models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"))
         self.assertEqual(a.context, 4096)
-        self.assertEqual(a.cache_mib, 4096)
+        self.assertIsNone(a.cache_mib)  # chosen from RAM at run time (redlite.planner.native_defaults)
+        self.assertIsNone(a.batch)
         self.assertEqual(a.max_tokens, 256)
         self.assertEqual(a.temperature, 0.7)
         self.assertEqual(a.top_k, 40)
@@ -37,8 +38,9 @@ class CliTests(unittest.TestCase):
             "chat", "x.gguf", "--prompt", "ciao", "--system", "Rispondi in italiano",
             "-c", "2048", "--cache-mib", "1024", "-n", "64",
             "--temperature", "0", "--top-k", "0", "--top-p", "1", "--seed", "42",
-            "--stats", "--no-stream", "--dry-run",
+            "--stats", "--no-stream", "--dry-run", "--batch", "64",
         ])
+        self.assertEqual(a.batch, 64)
         self.assertEqual(a.prompt, "ciao")
         self.assertEqual(a.system, "Rispondi in italiano")
         self.assertEqual(a.context, 2048)
