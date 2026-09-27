@@ -42,6 +42,8 @@ build redlite-engine-offline-test \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_sampler.c"
 build redlite-server-fake \
   "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c"
+build redlite-sampler-dist \
+  "$N/redlite_native_sampler_dist_cli.c" "$N/redlite_native_sampler.c"
 build redlite-gguf-fuzz \
   "$N/redlite_native_gguf_fuzz.c" "$N/redlite_native_gguf.c" "$N/redlite_native_gguf_dir.c"
 

@@ -55,8 +55,8 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     }
     char reply[4096];
     if (strcmp(last, "__params__") == 0) {
-        snprintf(reply, sizeof(reply), "temperature=%.2f top_p=%.2f top_k=%d max_tokens=%u seed=%s%llu",
-            (double)req->temperature, (double)req->top_p, (int)req->top_k, req->max_tokens,
+        snprintf(reply, sizeof(reply), "temperature=%.2f top_p=%.2f top_k=%d min_p=%.2f max_tokens=%u seed=%s%llu",
+            (double)req->temperature, (double)req->top_p, (int)req->top_k, (double)req->min_p, req->max_tokens,
             req->has_seed ? "" : "none/", (unsigned long long)req->seed);
     } else {
         snprintf(reply, sizeof(reply), "Echo: %s", last);

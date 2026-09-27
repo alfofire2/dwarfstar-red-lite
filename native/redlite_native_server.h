@@ -34,6 +34,7 @@ typedef struct {
     float temperature;     /* < 0 -> server default */
     float top_p;           /* < 0 -> server default */
     int32_t top_k;         /* < 0 -> server default (extension, not in the OpenAI schema) */
+    float min_p;           /* < 0 -> server default (extension, as in llama-server) */
     uint64_t seed;
     int has_seed;
     int stream;
@@ -65,6 +66,7 @@ typedef struct {
     float default_temperature;
     float default_top_p;
     uint32_t default_top_k;
+    float default_min_p;
     int read_timeout_s;         /* per-connection receive timeout (default 30) */
 } rl_server_config;
 

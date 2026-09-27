@@ -173,11 +173,11 @@ class NativeServerProtocolTests(unittest.TestCase):
     def test_server_defaults_and_overrides_reach_the_backend(self):
         _, data = self.server.request("POST", "/v1/chat/completions", user("__params__", max_tokens=200))
         self.assertEqual(json.loads(data)["choices"][0]["message"]["content"],
-                         "temperature=0.70 top_p=0.95 top_k=40 max_tokens=200 seed=none/0")
+                         "temperature=0.70 top_p=0.95 top_k=40 min_p=0.00 max_tokens=200 seed=none/0")
         _, data = self.server.request("POST", "/v1/chat/completions",
-                                      user("__params__", temperature=0, top_p=0.5, top_k=3, seed=9, max_tokens=200))
+                                      user("__params__", temperature=0, top_p=0.5, top_k=3, min_p=0.05, seed=9, max_tokens=200))
         self.assertEqual(json.loads(data)["choices"][0]["message"]["content"],
-                         "temperature=0.00 top_p=0.50 top_k=3 max_tokens=200 seed=9")
+                         "temperature=0.00 top_p=0.50 top_k=3 min_p=0.05 max_tokens=200 seed=9")
 
     def test_multi_turn_and_system_messages_build_chatml(self):
         body = {"messages": [

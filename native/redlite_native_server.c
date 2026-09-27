@@ -509,6 +509,13 @@ static int request_member(jp *j, const char *key, void *user) {
         req->top_k = (int32_t)v;
         return 1;
     }
+    if (strcmp(key, "min_p") == 0) {
+        if (!number_member(j, &v, key)) return 0;
+        if (isnan(v)) return 1;
+        if (v < 0.0 || v > 1.0) return jfail(j, "min_p must be between 0 and 1");
+        req->min_p = (float)v;
+        return 1;
+    }
     if (strcmp(key, "seed") == 0) {
         if (!number_member(j, &v, key)) return 0;
         if (isnan(v)) return 1;
@@ -547,6 +554,7 @@ int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, ch
     out->temperature = -1.0f;
     out->top_p = -1.0f;
     out->top_k = -1;
+    out->min_p = -1.0f;
     if (error && error_cap) error[0] = '\0';
     jp j = {body, body + len, 0, error, error_cap};
     int ok = jobject(&j, request_member, out);
@@ -800,6 +808,7 @@ static void handle_chat(int fd, const rl_server_config *cfg, const rl_server_bac
     if (req.temperature < 0.0f) req.temperature = cfg->default_temperature;
     if (req.top_p < 0.0f) req.top_p = cfg->default_top_p;
     if (req.top_k < 0) req.top_k = (int32_t)cfg->default_top_k;
+    if (req.min_p < 0.0f) req.min_p = cfg->default_min_p;
 
     char id[64];
     const long created = (long)time(NULL);
@@ -909,6 +918,7 @@ void rl_server_config_default(rl_server_config *cfg) {
     cfg->default_temperature = 0.7f;
     cfg->default_top_p = 0.95f;
     cfg->default_top_k = 40;
+    cfg->default_min_p = 0.0f;
     cfg->read_timeout_s = 30;
 }
 
@@ -984,7 +994,7 @@ static int expect_parse_error(const char *body, const char *needle, char *error,
 
 int rl_server_selftest(char *error, size_t cap) {
     const char *body =
-        "{\"model\":\"x\",\"stream\":true,\"max_tokens\":12,\"temperature\":0,\"top_p\":0.5,\"top_k\":3,\"seed\":7,"
+        "{\"model\":\"x\",\"stream\":true,\"max_tokens\":12,\"temperature\":0,\"top_p\":0.5,\"top_k\":3,\"min_p\":0.05,\"seed\":7,"
         "\"stream_options\":{\"include_usage\":true},\"stop\":null,"
         "\"messages\":[{\"role\":\"developer\",\"content\":\"Be brief.\"},"
         "{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Ciao \"},{\"type\":\"text\",\"text\":\"\\u00e8 \\ud83d\\ude00\\n\"}]},"
@@ -993,7 +1003,7 @@ int rl_server_selftest(char *error, size_t cap) {
     rl_chat_request r;
     char e[256] = {0};
     if (!rl_chat_request_parse(body, strlen(body), &r, e, sizeof(e))) { set_error(error, cap, "valid body rejected: %s", e); return 0; }
-    int ok = r.stream == 1 && r.max_tokens == 12u && r.temperature == 0.0f && r.top_p == 0.5f && r.top_k == 3 &&
+    int ok = r.stream == 1 && r.max_tokens == 12u && r.temperature == 0.0f && r.top_p == 0.5f && r.top_k == 3 && r.min_p == 0.05f &&
              r.has_seed && r.seed == 7u && r.message_count == 4u &&
              strcmp(r.messages[0].role, "system") == 0 &&
              strcmp(r.messages[1].content, "Ciao \xC3\xA8 \xF0\x9F\x98\x80\n") == 0 &&
@@ -1011,7 +1021,7 @@ int rl_server_selftest(char *error, size_t cap) {
     if (!rl_chat_request_parse(single, strlen(single), &r, e, sizeof(e))) { set_error(error, cap, "minimal body rejected: %s", e); return 0; }
     prompt = rl_server_chatml(&r);
     ok = prompt && strcmp(prompt, "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n") == 0 &&
-         r.stream == 0 && r.max_tokens == 0u && r.temperature < 0.0f && r.top_k < 0 && !r.has_seed;
+         r.stream == 0 && r.max_tokens == 0u && r.temperature < 0.0f && r.top_k < 0 && r.min_p < 0.0f && !r.has_seed;
     free(prompt);
     rl_chat_request_free(&r);
     if (!ok) { set_error(error, cap, "minimal request defaults or prompt are wrong"); return 0; }

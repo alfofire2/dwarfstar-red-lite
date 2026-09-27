@@ -77,6 +77,7 @@ static void usage(FILE *out) {
         "  --temperature T     0 = greedy (default 0)\n"
         "  --top-k K           top-k candidates when sampling (default 40, 0 = off)\n"
         "  --top-p P           nucleus probability when sampling (default 0.95)\n"
+        "  --min-p M           drop candidates below M x the top probability (default 0 = off; llama.cpp uses 0.05)\n"
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N       routed-expert cache budget in MiB (default 4096)\n"
@@ -302,6 +303,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--temperature") == 0) { if (!parse_f32(argv[++i], &sp.temperature)) return 2; }
         else if (strcmp(argv[i], "--top-k") == 0) { if (!parse_u32(argv[++i], &sp.top_k)) return 2; }
         else if (strcmp(argv[i], "--top-p") == 0) { if (!parse_f32(argv[++i], &sp.top_p)) return 2; }
+        else if (strcmp(argv[i], "--min-p") == 0) { if (!parse_f32(argv[++i], &sp.min_p) || sp.min_p < 0.0f || sp.min_p > 1.0f) return 2; }
         else if (strcmp(argv[i], "--seed") == 0) { char *end = NULL; sp.seed = strtoull(argv[++i], &end, 10); if (!end || *end) return 2; }
         else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
         else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }

@@ -81,6 +81,7 @@ def run_native_chat(
     dry_run: bool = False,
     batch: int | None = None,
     json_stats: bool = False,
+    min_p: float | None = None,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -104,6 +105,8 @@ def run_native_chat(
         cmd.extend(["--batch", str(batch)])
     if json_stats:
         cmd.append("--json")
+    if min_p is not None:
+        cmd.extend(["--min-p", str(min_p)])
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

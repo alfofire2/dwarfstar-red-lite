@@ -189,7 +189,7 @@ def cmd_chat(args) -> int:
             str(model), args.context, cache_mib, args.max_tokens,
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
-            batch=args.batch, json_stats=args.json,
+            batch=args.batch, json_stats=args.json, min_p=args.min_p,
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -321,6 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7; 0 = greedy)")
     s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
+    s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
     s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
     s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
     s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")

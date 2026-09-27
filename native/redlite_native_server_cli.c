@@ -71,6 +71,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     sp.temperature = req->temperature;
     sp.top_p = req->top_p;
     sp.top_k = (uint32_t)req->top_k;
+    sp.min_p = req->min_p;
     if (req->has_seed) sp.seed = req->seed;
     rl_sampler sampler;
     if (!rl_sampler_init(&sampler, &sp, c->info->vocab)) { free(ids); snprintf(error, cap, "sampler allocation failed"); return 0; }
@@ -121,6 +122,7 @@ static void usage(FILE *out) {
         "  --temperature T     default temperature (default 0.7)\n"
         "  --top-k K           default top-k (default 40)\n"
         "  --top-p P           default top-p (default 0.95)\n"
+        "  --min-p M           default min-p (default 0 = off)\n"
         "  --cpu               use the CPU oracle backend (slow; the only backend off macOS)\n\n"
         "Endpoints: POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health\n");
 }
@@ -170,6 +172,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--temperature") == 0) { if (!parse_f32(v, &scfg.default_temperature) || scfg.default_temperature < 0.0f) return 2; }
         else if (strcmp(argv[i - 1], "--top-k") == 0) { if (!parse_u32(v, &scfg.default_top_k)) return 2; }
         else if (strcmp(argv[i - 1], "--top-p") == 0) { if (!parse_f32(v, &scfg.default_top_p) || scfg.default_top_p <= 0.0f) return 2; }
+        else if (strcmp(argv[i - 1], "--min-p") == 0) { if (!parse_f32(v, &scfg.default_min_p) || scfg.default_min_p < 0.0f || scfg.default_min_p > 1.0f) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i - 1]); usage(stderr); return 2; }
     }
 #ifndef __APPLE__
