@@ -146,6 +146,8 @@ fi
 if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
   echo "== pinned llama.cpp oracle ($LLAMA_DIR) =="
   run build.ref env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_llama.sh"
+  run build.ref_sampler env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_sampler.sh"
+  expect_line sampler.vs_llama "SAMPLER PARITY: YES" python3 "$ROOT/scripts/dev/compare_sampler.py" --bin "$BIN" --draws 20000
   if [[ -x "$BIN/redlite-ref-llama" ]]; then
     REF_TOK="$("$BIN/redlite-ref-llama" "$MODEL" tokenize --text "$PROMPT" 2>/dev/null | head -1)"
     NAT_TOK="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" | head -1)"
