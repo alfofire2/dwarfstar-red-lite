@@ -443,6 +443,7 @@ static int run_parity(const char *model, uint32_t layer) {
         cpu_out[r] = (float)dot;
     }
     const double cpu_ms = now_ms() - c0;
+    double gpu_ms = 0.0;
 
 #ifdef __APPLE__
     rl_dn_tail_telemetry tel = {0};
@@ -452,6 +453,7 @@ static int run_parity(const char *model, uint32_t layer) {
         free(norm_w); free(q4); free(core); free(z); free(cpu_ng); free(gpu_ng); free(cpu_out); free(gpu_out);
         return 2;
     }
+    gpu_ms = tel.compute_ms;
 #else
     fprintf(stderr, "parity requires macOS Metal\n");
     free(norm_w); free(q4); free(core); free(z); free(cpu_ng); free(gpu_ng); free(cpu_out); free(gpu_out);
@@ -474,7 +476,7 @@ static int run_parity(const char *model, uint32_t layer) {
     printf("read               : %.3f ms / %llu calls / %.3f MiB\n", read_ms,
         (unsigned long long)read_calls, (double)(norm_bytes + out_bytes) / (1024.0 * 1024.0));
     printf("SSD during compute : 0 bytes / 0 calls\n");
-    printf("CPU / GPU compute  : %.3f / %.3f ms\n", cpu_ms, tel.compute_ms);
+    printf("CPU / GPU compute  : %.3f / %.3f ms\n", cpu_ms, gpu_ms);
     printf("norm+gate abs/rel  : %.6g / %.6g parity=%s\n", ne.max_abs, ne.max_rel, n_ok ? "YES" : "NO");
     printf("Q4_K out abs/rel   : %.6g / %.6g parity=%s\n", oe.max_abs, oe.max_rel, o_ok ? "YES" : "NO");
     printf("tail parity        : %s\n", ok ? "YES" : "NO");

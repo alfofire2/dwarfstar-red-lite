@@ -142,7 +142,10 @@ static int read_metadata(FILE *f, uint64_t count, dn_meta *m) {
 }
 
 static uint64_t round_up_u64(uint64_t v, uint64_t a) {
-    if (!a) return v; const uint64_t r = v % a; if (!r) return v; return v > UINT64_MAX - (a-r) ? 0 : v + a-r;
+    if (!a) return v;
+    const uint64_t r = v % a;
+    if (!r) return v;
+    return v > UINT64_MAX - (a-r) ? 0 : v + a-r;
 }
 
 static int tensor_cmp(const void *a, const void *b) {
@@ -151,7 +154,9 @@ static int tensor_cmp(const void *a, const void *b) {
 }
 
 static void free_raw(raw_tensor *raw, uint64_t count) {
-    if (!raw) return; for (uint64_t i = 0; i < count; ++i) free(raw[i].name); free(raw);
+    if (!raw) return;
+    for (uint64_t i = 0; i < count; ++i) free(raw[i].name);
+    free(raw);
 }
 
 static const char *kind_name(rl_dn_prestate_kind k) {

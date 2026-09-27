@@ -241,6 +241,7 @@ static int run_parity(const char *model_path, uint32_t layer) {
     const double c0 = now_ms();
     cpu_state_update(q, k, v, gate, beta, prev, S, HK, HV, cpu_delta, cpu_state, cpu_out);
     const double cpu_ms = now_ms() - c0;
+    double gpu_ms = 0.0;
 
 #ifdef __APPLE__
     rl_dn_state_telemetry tel = {0};
@@ -252,6 +253,7 @@ static int run_parity(const char *model_path, uint32_t layer) {
         free(gpu_delta); free(gpu_state); free(gpu_out);
         return 2;
     }
+    gpu_ms = tel.compute_ms;
 #else
     fprintf(stderr, "parity requires macOS Metal\n");
     free(q); free(k); free(v); free(gate); free(beta); free(prev); free(cpu_delta); free(cpu_state); free(cpu_out);
@@ -273,7 +275,7 @@ static int run_parity(const char *model_path, uint32_t layer) {
     printf("Q/K broadcast      : value_head / (value_heads/key_heads) (0,0,1,1,...,15,15)\n");
     printf("state layout       : transposed M[j][i] = S[i][j]\n");
     printf("state payload      : %.3f MiB\n", (double)(state_count * sizeof(float)) / (1024.0 * 1024.0));
-    printf("CPU / GPU compute  : %.3f / %.3f ms\n", cpu_ms, tel.compute_ms);
+    printf("CPU / GPU compute  : %.3f / %.3f ms\n", cpu_ms, gpu_ms);
     printf("delta max abs/rel  : %.6g / %.6g parity=%s\n", de.max_abs, de.max_rel, d_ok ? "YES" : "NO");
     printf("state max abs/rel  : %.6g / %.6g parity=%s\n", se.max_abs, se.max_rel, s_ok ? "YES" : "NO");
     printf("output max abs/rel : %.6g / %.6g parity=%s\n", oe.max_abs, oe.max_rel, o_ok ? "YES" : "NO");
