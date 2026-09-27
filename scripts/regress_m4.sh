@@ -119,6 +119,23 @@ expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,1288
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
 expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
+expect_line generate.json '"batch":512,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
+# Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
+"$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
+  --cache-mib 2048 --json >"$LOG/generate.sigint.log" 2>&1 &
+SIGINT_PID=$!
+for _ in $(seq 1 240); do
+  [[ $(wc -c <"$LOG/generate.sigint.log") -gt 200 ]] && break
+  kill -0 "$SIGINT_PID" 2>/dev/null || break
+  sleep 0.5
+done
+kill -INT "$SIGINT_PID" 2>/dev/null
+wait "$SIGINT_PID"; SIGINT_RC=$?
+if [[ "$SIGINT_RC" == 130 ]] && grep -q '"finish":"interrupted"' "$LOG/generate.sigint.log"; then
+  echo "PASS  generate.sigint"; PASS=$((PASS + 1))
+else
+  echo "FAIL  generate.sigint  (exit $SIGINT_RC; see $LOG/generate.sigint.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.sigint)
+fi
 # an empty prompt must be refused instead of sampling from uninitialised logits
 if "$BIN/redlite-generate" "$MODEL" --prompt "" --raw --max-tokens 4 --cache-mib 256 >"$LOG/generate.empty.log" 2>&1; then
   echo "FAIL  generate.empty_prompt (exit 0; see $LOG/generate.empty.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.empty_prompt)
