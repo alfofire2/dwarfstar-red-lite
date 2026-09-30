@@ -515,7 +515,7 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
     pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
-    pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
+        pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
     pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
@@ -658,6 +658,13 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
     { const char *at = getenv("RL_PREFILL_ATTN_TILE"); pf->attn_tiled = (!at || atoi(at) != 0) && in->head_dim == 256u; }
     pf->profile = getenv("RL_PREFILL_PROFILE") != NULL;
+    if (m->engine_rs) {
+        if (@available(macOS 15.0, *)) {
+            id<MTLResidencySet> rs = (id<MTLResidencySet>)m->engine_rs;
+            for (id<MTLBuffer> b in pf->keep) [rs addAllocation:b];
+            [rs commit];
+        }
+    }
     { const char *gt = getenv("RL_PREFILL_GEMM_TG"); pf->gemm_tg = !gt || atoi(gt) != 0; }
     { const char *ss = getenv("RL_PREFILL_STATE_SG"); pf->state_sg = (!ss || atoi(ss) != 0) && in->d_state == 128u; }
     return pf;
@@ -1172,7 +1179,16 @@ int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *to
     if (!e || !m || !tokens || !count) { set_error(error, cap, "invalid prefill request"); return 0; }
     const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
     if (!m->pf || m->pf->cap < batch) {
-        if (m->pf) { rl_metal_prefill_destroy(m->pf); m->pf = NULL; }
+        if (m->pf) {
+            if (m->engine_rs) {
+                if (@available(macOS 15.0, *)) {
+                    id<MTLResidencySet> rs = (id<MTLResidencySet>)m->engine_rs;
+                    for (id<MTLBuffer> b in m->pf->keep) [rs removeAllocation:b];
+                    [rs commit];
+                }
+            }
+            rl_metal_prefill_destroy(m->pf); m->pf = NULL;
+        }
         m->pf = prefill_create(e, m, batch, error, cap);
         if (!m->pf) return 0;
     }

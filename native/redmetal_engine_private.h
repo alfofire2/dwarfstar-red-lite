@@ -52,6 +52,8 @@ struct rl_metal_engine {
     uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
     double last_read_ms;
     struct rl_metal_prefill *pf;   /* batched prefill state (dev20), created on first use */
+    id engine_rs;                  /* dev30: MTLResidencySet (macOS 15+) of every engine buffer, attached to the queue;
+                                    * RL_ENGINE_RESIDENCY=0 leaves residency to each command buffer */
     /* dev21: GPU-routed decode */
     int spec_enabled;              /* RL_ENGINE_SPECULATIVE != 0 and residency table available */
     uint64_t misses_seen;          /* pool cache misses observed so far (to know whether the last token missed) */

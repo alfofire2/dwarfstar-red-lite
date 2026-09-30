@@ -812,6 +812,26 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             id<MTLResidencySet> rs = (__bridge id<MTLResidencySet>)redmetal_topk_pool_slab_residency_set(rl_native_metal_pool_handle(m->experts));
             if (rs) [m->queue addResidencySet:rs];
         }
+        /* dev30: the dense weights are no-copy windows of the mmap; without a residency set every command buffer
+         * re-establishes their residency (~3.8 ms per batched-prefill layer measured on the M4 Max) */
+        {
+            const char *re = getenv("RL_ENGINE_RESIDENCY");
+            if (!re || atoi(re) != 0) {
+                if (@available(macOS 15.0, *)) {
+                    MTLResidencySetDescriptor *rd = [[MTLResidencySetDescriptor alloc] init];
+                    rd.label = @"redlite_engine";
+                    rd.initialCapacity = m->keep.count + 64u;
+                    NSError *rerr = nil;
+                    id<MTLResidencySet> rs = [m->dev newResidencySetWithDescriptor:rd error:&rerr];
+                    if (rs) {
+                        for (id<MTLBuffer> b in m->keep) [rs addAllocation:b];
+                        [rs commit];
+                        [m->queue addResidencySet:rs];
+                        m->engine_rs = rs;
+                    }
+                }
+            }
+        }
         /* dev21/dev23: GPU-routed decode (residency table, per-layer plans, early-out) */
         const char *spec_env = getenv("RL_ENGINE_SPECULATIVE");
         m->spec_enabled = (!spec_env || atoi(spec_env) != 0) && !m->profile && in->n_expert <= 512u && in->top_k <= 64u;
@@ -876,6 +896,10 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     rl_metal_engine_profile_report(m);
     if (m->experts) rl_native_metal_destroy(m->experts);
     if (m->pf) rl_metal_prefill_destroy(m->pf);
+    if (m->engine_rs) {
+        if (@available(macOS 15.0, *)) { [m->queue removeResidencySet:(id<MTLResidencySet>)m->engine_rs]; [(id<MTLResidencySet>)m->engine_rs removeAllAllocations]; }
+        m->engine_rs = nil;
+    }
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
     m->p_route = nil; m->plan_slots = m->plan_weights = m->plan_ids = m->plan_miss = m->layer_out_gpu = nil;
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
