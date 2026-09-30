@@ -293,9 +293,10 @@ int main(int argc, char **argv) {
             }
             printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, chunk, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
             printf("prefill split: dense wall %.1f (rec %.1f attn %.1f) dense GPU %.1f | router select %.1f | experts wall %.1f "
-                   "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u\n",
+                   "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u | expert loads %llu (%.0f MiB read)\n",
                 st.recurrent_ms + st.attention_ms, st.recurrent_ms, st.attention_ms, st.gpu_ms, st.router_ms, st.routed_ms,
-                st.prep_lru_ms, st.prep_load_ms, st.prep_commit_ms, st.routed_gpu_ms, st.expert_wait_ms, st.prefetch_ms, st.expert_plans);
+                st.prep_lru_ms, st.prep_load_ms, st.prep_commit_ms, st.routed_gpu_ms, st.expert_wait_ms, st.prefetch_ms, st.expert_plans,
+                (unsigned long long)st.expert_loads, (double)st.ssd_bytes / (1024.0 * 1024.0));
             first = n;
         }
         for (uint32_t i = first; i < token_count; ++i) {
