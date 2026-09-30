@@ -276,6 +276,28 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    state[idx] = s;\n"
 "}\n"
+/* dev30: same recurrence, one simdgroup per (value head, state row j), four state columns per lane: the
+ * per-token dot products are simd_sum reductions with no threadgroup barrier (state_size == 128) */
+"kernel void dn_state_seq_sg(device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    constant uint &ntok [[buffer(10)]], constant uint &qk_stride [[buffer(11)]], constant uint &v_stride [[buffer(12)]], constant uint &out_stride [[buffer(13)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    const uint row = tg * 4u + uint(sg); const uint h = row / state_size; const uint j = row - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint i0 = uint(lane) * 4u;\n"
+"    device float4 *sp = (device float4 *)(state + (ulong(h) * state_size + j) * state_size + i0);\n"
+"    float4 s = *sp; const float norm = 1.0f / sqrt((float)state_size);\n"
+"    for (uint t = 0; t < ntok; ++t) {\n"
+"        s *= exp(gate[t * value_heads + h]);\n"
+"        const float4 kv = *(device const float4 *)(k + t * qk_stride + kh * state_size + i0);\n"
+"        const float sum = simd_sum(dot(s, kv));\n"
+"        const float delta = (v[t * v_stride + h * state_size + j] - sum) * beta[t * value_heads + h];\n"
+"        s += kv * delta;\n"
+"        const float o = simd_sum(dot(s, *(device const float4 *)(q + t * qk_stride + kh * state_size + i0)));\n"
+"        if (lane == 0) out[t * out_stride + h * state_size + j] = o * norm;\n"
+"    }\n"
+"    *sp = s;\n"
+"}\n"
 "kernel void dn_tail_norm_b(device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -447,9 +469,12 @@ struct rl_metal_prefill {
     uint64_t *exp_gate_bytes, *exp_up_bytes, *exp_down_bytes;   /* per-expert stride */
     uint32_t *exp_type;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_tail;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_state_sg, p_dn_tail;
+    int state_sg;            /* dev30: simdgroup-per-row DeltaNet recurrence (RL_PREFILL_STATE_SG=0 -> dn_state_seq) */
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_attn_fa, p_sh_scalar, p_sh_silu;
     int attn_tiled;          /* dev30: tiled attention (RL_PREFILL_ATTN_TILE=0 -> the dev20 per-(token, head) kernel) */
+    int profile;             /* dev30: RL_PREFILL_PROFILE=1 commits at every stage boundary and sums GPU time per stage */
+    double prof_ms[10];
     id<MTLBuffer> xb, normed, branch, resid, ffn_in;
     id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, core, ng;
     id<MTLBuffer> qgate_raw, k_raw, value, query_rope, agate, gated;
@@ -462,7 +487,7 @@ struct rl_metal_prefill {
 void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
-    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_tail = nil;
+    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
     pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
     pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = nil; pf->wdq = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
@@ -556,7 +581,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         {&pf->p_rowsb_q5k, @"rl_rowsb_q5k"}, {&pf->p_rowsb_q6k, @"rl_rowsb_q6k"}, {&pf->p_rowsb_iq2xxs, @"rl_rowsb_iq2xxs"},
         {&pf->p_rms, @"rl_rms_b"}, {&pf->p_resid_rms, @"rl_resid_rms_b"}, {&pf->p_scale_add, @"rl_scale_add_b"},
         {&pf->p_dn_ba, @"dn_ba_params_b"}, {&pf->p_dn_conv, @"dn_conv_seq"}, {&pf->p_dn_l2, @"dn_qk_l2_b"},
-        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
+        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_state_sg, @"dn_state_seq_sg"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
         {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"}, {&pf->p_attn_fa, @"attn_fa_b"},
         {&pf->p_sh_scalar, @"sh_scalar_gate_b"}, {&pf->p_sh_silu, @"sh_silu_mul_b"},
         {&pf->p_dq_q8, @"rl_dq_q8"}, {&pf->p_dq_q4k, @"rl_dq_q4k"}, {&pf->p_dq_q5k, @"rl_dq_q5k"}, {&pf->p_dq_q6k, @"rl_dq_q6k"},
@@ -605,7 +630,21 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
      * layer's whole expert window (~350 MB) for every command buffer (~3.3 s per 48-layer chunk). */
     if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
     { const char *at = getenv("RL_PREFILL_ATTN_TILE"); pf->attn_tiled = (!at || atoi(at) != 0) && in->head_dim == 256u; }
+    pf->profile = getenv("RL_PREFILL_PROFILE") != NULL;
+    { const char *ss = getenv("RL_PREFILL_STATE_SG"); pf->state_sg = (!ss || atoi(ss) != 0) && in->d_state == 128u; }
     return pf;
+}
+
+/* dev30 prefill stage profile (development only: every boundary becomes a commit + wait) */
+enum { PF_NORM, PF_REC_IN, PF_REC_CORE, PF_REC_OUT, PF_ATT_IN, PF_ATT_CORE, PF_ATT_OUT, PF_RESID, PF_ROUTER, PF_SHARED, PF_NSTAGE };
+static const char *const kPfStage[PF_NSTAGE] = {"norm", "rec qkv/z/ba", "rec conv/state/tail", "rec ssm_out", "attn q/k/v",
+                                                "attn rope+gqa", "attn o", "resid+norm", "router(+pred)", "shared expert"};
+static void pf_split(rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp, int stage) {
+    if (!pf->profile) return;
+    [*cbp commit];
+    [*cbp waitUntilCompleted];
+    pf->prof_ms[stage] += ((*cbp).GPUEndTime - (*cbp).GPUStartTime) * 1000.0;
+    *cbp = [m->queue commandBuffer];
 }
 
 static id<MTLComputePipelineState> rowsb_pipe(struct rl_metal_prefill *pf, uint32_t type) {
@@ -696,8 +735,9 @@ static void enc_tg_norm(id<MTLCommandBuffer> cb, id<MTLComputePipelineState> p, 
     [enc endEncoding];
 }
 
-static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCommandBuffer> cb,
+static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp,
                             const rl_layer_tensors *t, const mlayer *w, uint32_t ntok) {
+    id<MTLCommandBuffer> cb = *cbp;
     const rl_engine_info *in = &e->info;
     const uint32_t r = t->recurrent_index;
     const uint32_t channels = in->channels, dconv = in->d_conv, rank = in->dt_rank, groups = in->n_group, S = in->d_state;
@@ -707,6 +747,7 @@ static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     enc_gemm(m, pf, cb, &w->qkv, pf->normed, pf->qkv, ntok);
     enc_gemm(m, pf, cb, &w->z, pf->normed, pf->z, ntok);
     enc_gemm(m, pf, cb, &w->ba, pf->normed, pf->ba, ntok);
+    pf_split(m, pf, cbp, PF_REC_IN); cb = *cbp;
 
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_dn_ba];
@@ -729,24 +770,29 @@ static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
 
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_dn_state];
+    [enc setComputePipelineState:pf->state_sg ? pf->p_dn_state_sg : pf->p_dn_state];
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:pf->q offset:0 atIndex:1]; [enc setBuffer:pf->k offset:0 atIndex:2];
     [enc setBuffer:pf->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:pf->gate offset:0 atIndex:4]; [enc setBuffer:pf->beta offset:0 atIndex:5];
     [enc setBuffer:pf->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
     [enc setBytes:&ntok length:4 atIndex:10]; [enc setBytes:&qk_each length:4 atIndex:11]; [enc setBytes:&channels length:4 atIndex:12]; [enc setBytes:&d_inner length:4 atIndex:13];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; [enc endEncoding];
+    if (pf->state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / 4u, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_dn_tail];
     [enc setBuffer:pf->core offset:0 atIndex:0]; [enc setBuffer:pf->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
     [enc setBuffer:pf->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
     [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)]; [enc endEncoding];
+    pf_split(m, pf, cbp, PF_REC_CORE); cb = *cbp;
 
     enc_gemm(m, pf, cb, &w->ssm_out, pf->ng, pf->branch, ntok);
+    pf_split(m, pf, cbp, PF_REC_OUT);
 }
 
-static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCommandBuffer> cb,
+static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp,
                             const rl_layer_tensors *t, const mlayer *w, uint32_t position0, uint32_t ntok) {
+    id<MTLCommandBuffer> cb = *cbp;
     const rl_engine_info *in = &e->info;
     const uint32_t a = t->attention_index;
     const uint32_t head_dim = in->head_dim, qheads = in->n_head, kvheads = in->n_head_kv, rope_dims = in->rope_dims;
@@ -754,6 +800,7 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     enc_gemm(m, pf, cb, &w->q, pf->normed, pf->qgate_raw, ntok);
     enc_gemm(m, pf, cb, &w->k, pf->normed, pf->k_raw, ntok);
     enc_gemm(m, pf, cb, &w->v, pf->normed, pf->value, ntok);
+    pf_split(m, pf, cbp, PF_ATT_IN); cb = *cbp;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_attn_prep];
     [enc setBuffer:pf->qgate_raw offset:0 atIndex:0]; [enc setBuffer:pf->k_raw offset:0 atIndex:1]; [enc setBuffer:pf->value offset:0 atIndex:2];
@@ -778,8 +825,10 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
         [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)qheads * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     }
     [enc endEncoding];
+    pf_split(m, pf, cbp, PF_ATT_CORE); cb = *cbp;
 
     enc_gemm(m, pf, cb, &w->o, pf->gated, pf->branch, ntok);
+    pf_split(m, pf, cbp, PF_ATT_OUT);
 }
 
 /* experts per plan: bounded by the plan table and by half the cache so a group never evicts its own experts */
@@ -901,8 +950,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             const double l0 = rl_engine_now_ms();
             id<MTLCommandBuffer> cb = [m->queue commandBuffer];
             enc_tg_norm(cb, pf->p_rms, pf->xb, &w->attn_norm, pf->normed, hidden, eps, B);
-            if (t->kind == RL_LAYER_MAP_RECURRENT) enc_recurrent_b(e, m, pf, cb, t, w, B);
-            else enc_attention_b(e, m, pf, cb, t, w, p0, B);
+            pf_split(m, pf, &cb, PF_NORM);
+            if (t->kind == RL_LAYER_MAP_RECURRENT) enc_recurrent_b(e, m, pf, &cb, t, w, B);
+            else enc_attention_b(e, m, pf, &cb, t, w, p0, B);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pf->p_resid_rms];
@@ -912,10 +962,12 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                 [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
                 [enc dispatchThreadgroups:MTLSizeMake(B, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
+            pf_split(m, pf, &cb, PF_RESID);
             enc_gemm(m, pf, cb, &w->router, pf->ffn_in, pf->router_logits, B);
             /* dev24 pre-gating: layer l+1's router on layer l's FFN input predicts the experts to load during experts_l */
             const int predict = m->prefetch && !pf->mapped && l + 1u < in->n_layer;
             if (predict) enc_gemm(m, pf, cb, &m->layers[l + 1u].router, pf->ffn_in, pf->pred_logits[l & 1u], B);
+            pf_split(m, pf, &cb, PF_ROUTER);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pf->p_sh_scalar];
@@ -933,7 +985,11 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                 [enc setBytes:&count length:4 atIndex:3]; enc_1d(enc, pf->p_sh_silu, count, 64u); [enc endEncoding];
             }
             enc_gemm(m, pf, cb, &w->sh_down, pf->sh_act, pf->sh_out, B);
-            if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
+            if (pf->profile) {
+                const double g0 = stats->gpu_ms;
+                if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
+                pf->prof_ms[PF_SHARED] += stats->gpu_ms - g0;
+            } else if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
 
@@ -1095,6 +1151,10 @@ int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *to
         const int last = done + B == count;
         if (!prefill_chunk(e, m, m->pf, tokens + done, B, last && logits != NULL, last ? logits : NULL, stats, error, cap)) return 0;
         done += B;
+    }
+    if (m->pf->profile) {
+        fprintf(stderr, "--- prefill GPU stage profile (cumulative ms, RL_PREFILL_PROFILE) ---\n");
+        for (int i = 0; i < PF_NSTAGE; ++i) fprintf(stderr, "  %-20s %9.1f ms\n", kPfStage[i], m->pf->prof_ms[i]);
     }
     if (error && cap) error[0] = '\0';
     return 1;
