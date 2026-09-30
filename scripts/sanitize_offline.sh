@@ -24,10 +24,18 @@ build() {
   "${CC_CMD[@]}" "${FLAGS[@]}" "$@" -lm -o "$OUT/$name"
 }
 
-build redlite-native \
-  "$N/redlite_native_main.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c" \
-  "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c" \
-  "$N/redlite_native_router.c"
+NATIVE_MAIN=("$N/redlite_native_main.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c"
+  "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c"
+  "$N/redlite_native_router.c")
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  # the macOS redlite-native also carries the Metal top-k path (as in build_native.sh)
+  "${CC_CMD[@]}" "${FLAGS[@]}" -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
+    -fobjc-arc "${NATIVE_MAIN[@]}" \
+    "$N/redlite_native_metal.c" "$N/redmetal_topk.m" \
+    -framework Foundation -framework Metal -lm -o "$OUT/redlite-native"
+else
+  build redlite-native "${NATIVE_MAIN[@]}"
+fi
 build redlite-native-offline-test \
   "$N/redlite_native_offline_test.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c" \
   "$N/redlite_native_model.c" "$N/redlite_native_router.c"
@@ -60,7 +68,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then ASAN_OPTIONS="${ASAN_OPTIONS/detect_lea
 "$OUT/redlite-gguf-fuzz" --iterations "${REDLITE_FUZZ_ITERATIONS:-2000}"
 "$OUT/redlite-server-fake" --selftest
 # OpenAI protocol tests against the sanitized HTTP server core (any report aborts the server and fails a test).
-REDLITE_SERVER_FAKE_BIN="$OUT/redlite-server-fake" PYTHONPATH="$ROOT" \
-  python3 -m unittest tests.test_native_server
+(cd "$ROOT" && REDLITE_SERVER_FAKE_BIN="$OUT/redlite-server-fake" PYTHONPATH="$ROOT" \
+  python3 -m unittest discover -s tests -p test_native_server.py)
 
 echo "Sanitized offline tests: OK ($OUT)"
