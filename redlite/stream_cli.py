@@ -9,7 +9,7 @@ from .streaming import make_streaming_plan, probe_streaming
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="redlite-stream",
-        description="Experimental Qwen3-Next expert residency tools",
+        description="Experimental Qwen3-Next expert residency tools. Legacy (0.3.0): the frozen dev1-dev8 Python oracle, kept for reference; the native runtime is .deps/redmetal/redlite-engine / redlite-generate.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

@@ -28,7 +28,7 @@ def _parse_floats(value: str) -> list[float]:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="redlite-topk",
-        description="Red Metal routed top-k layer validation tools",
+        description="Red Metal routed top-k layer validation tools. Legacy (0.3.0): the frozen dev1-dev8 Python oracle, kept for reference; the native runtime is .deps/redmetal/redlite-engine / redlite-generate.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     parity = sub.add_parser(

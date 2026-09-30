@@ -9,7 +9,7 @@ from .redmetal_ffn_parity import expert_ffn_parity_probe
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="redlite-ffn",
-        description="Red Metal resident single-expert FFN validation tools",
+        description="Red Metal resident single-expert FFN validation tools. Legacy (0.3.0): the frozen dev1-dev8 Python oracle, kept for reference; the native runtime is .deps/redmetal/redlite-engine / redlite-generate.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     parity = sub.add_parser("parity", help="Run gate+up->SiLU*up->down parity from one resident expert slot")

@@ -86,7 +86,7 @@ static uint32_t argmax(const float *v, uint32_t n) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-engine 0.3.0.dev21\n\n"
+        "redlite-engine 0.3.0\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
