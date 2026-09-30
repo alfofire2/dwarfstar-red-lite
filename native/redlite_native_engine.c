@@ -320,7 +320,7 @@ static void stats_accumulate(rl_engine_step_stats *acc, const rl_engine_step_sta
     acc->expert_loads = one->expert_loads; acc->cache_hits = one->cache_hits; acc->cache_misses = one->cache_misses;
     acc->ssd_bytes = one->ssd_bytes; acc->ssd_reads = one->ssd_reads; acc->resident_slots = one->resident_slots;
     acc->slot_capacity = one->slot_capacity; acc->expert_plans += one->expert_plans;
-    acc->prep_lru_ms += one->prep_lru_ms; acc->prep_load_ms += one->prep_load_ms; acc->prep_commit_ms += one->prep_commit_ms; acc->expert_wait_ms += one->expert_wait_ms;
+    acc->prep_lru_ms += one->prep_lru_ms; acc->prep_load_ms += one->prep_load_ms; acc->prep_commit_ms += one->prep_commit_ms; acc->expert_wait_ms += one->expert_wait_ms; acc->prefetch_ms += one->prefetch_ms;
     acc->speculative += one->speculative; acc->speculative_fallback += one->speculative_fallback;
 }
 

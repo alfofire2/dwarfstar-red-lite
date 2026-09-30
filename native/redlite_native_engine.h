@@ -77,6 +77,7 @@ typedef struct {
     uint32_t slot_capacity;
     uint32_t expert_plans;   /* batched prefill: expert plans (groups) executed */
     double prep_lru_ms, prep_load_ms, prep_commit_ms, expert_wait_ms;   /* prefill expert phase wall split */
+    double prefetch_ms;                                                  /* dev24 prefill: predicted-expert loads overlapped with the GPU */
     uint32_t speculative;          /* dev21: token decoded by the GPU-routed single-command-buffer path */
     uint32_t speculative_fallback; /* dev23: per-layer early-outs of a GPU-routed token (layers whose experts were loaded by the CPU) */
 } rl_engine_step_stats;

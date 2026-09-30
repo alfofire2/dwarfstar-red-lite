@@ -390,6 +390,8 @@ struct rl_metal_prefill {
     id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, core, ng;
     id<MTLBuffer> qgate_raw, k_raw, value, query_rope, agate, gated;
     id<MTLBuffer> router_logits, sh_gate, sh_up, sh_act, sh_out, scalar, routed;
+    id<MTLBuffer> pred_logits[2];   /* dev24: the next layer's router on this layer's FFN input, by layer parity (the
+                                     * prefetch thread reads one while the next dense pass writes the other) */
     NSMutableArray *keep;
 };
 
@@ -402,6 +404,7 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
     pf->router_logits = pf->sh_gate = pf->sh_up = pf->sh_act = pf->sh_out = pf->scalar = pf->routed = nil;
+    pf->pred_logits[0] = pf->pred_logits[1] = nil;
     pf->keep = nil; pf->lib = nil;
     free(pf->exp_gate); free(pf->exp_up); free(pf->exp_down);
     free(pf->exp_gate_addr0); free(pf->exp_up_addr0); free(pf->exp_down_addr0);
@@ -524,11 +527,13 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     pf->qgate_raw = pf_buf(m, pf, (size_t)2u * qcount * 4u * B); pf->k_raw = pf_buf(m, pf, (size_t)kvcount * 4u * B); pf->value = pf_buf(m, pf, (size_t)kvcount * 4u * B);
     pf->query_rope = pf_buf(m, pf, (size_t)qcount * 4u * B); pf->agate = pf_buf(m, pf, (size_t)qcount * 4u * B); pf->gated = pf_buf(m, pf, (size_t)qcount * 4u * B);
     pf->router_logits = pf_buf(m, pf, (size_t)in->n_expert * 4u * B);
+    pf->pred_logits[0] = pf_buf(m, pf, (size_t)in->n_expert * 4u * B);
+    pf->pred_logits[1] = pf_buf(m, pf, (size_t)in->n_expert * 4u * B);
     pf->sh_gate = pf_buf(m, pf, (size_t)ffn_sh * 4u * B); pf->sh_up = pf_buf(m, pf, (size_t)ffn_sh * 4u * B); pf->sh_act = pf_buf(m, pf, (size_t)ffn_sh * 4u * B);
     pf->sh_out = pf_buf(m, pf, hb); pf->scalar = pf_buf(m, pf, 4u * B); pf->routed = pf_buf(m, pf, hb);
     if (!pf->wdq || !pf->xb || !pf->normed || !pf->branch || !pf->resid || !pf->ffn_in || !pf->qkv || !pf->z || !pf->ba || !pf->beta || !pf->gate ||
         !pf->conv_silu || !pf->q || !pf->k || !pf->core || !pf->ng || !pf->qgate_raw || !pf->k_raw || !pf->value || !pf->query_rope ||
-        !pf->agate || !pf->gated || !pf->router_logits || !pf->sh_gate || !pf->sh_up || !pf->sh_act || !pf->sh_out || !pf->scalar || !pf->routed) {
+        !pf->agate || !pf->gated || !pf->router_logits || !pf->pred_logits[0] || !pf->pred_logits[1] || !pf->sh_gate || !pf->sh_up || !pf->sh_act || !pf->sh_out || !pf->scalar || !pf->routed) {
         set_error(error, ecap, "Metal prefill scratch allocation failed"); rl_metal_prefill_destroy(pf); return NULL;
     }
     /* Opt-in only: reading the experts in place from the mmap is numerically identical but measured 4-10x
@@ -712,6 +717,65 @@ static uint32_t prefill_plan_limit(rl_metal_engine *m) {
     return limit < 10u ? 10u : limit;
 }
 
+/* dev24: softmax top-k selection of B tokens' router logits, spread over the CPU cores (tokens are independent;
+ * each selection is the unchanged single-token routine) */
+static int route_tokens(const float *logits, uint32_t B, uint32_t experts, uint32_t topk, uint32_t *ids, float *weights, char *error, size_t cap) {
+    if (experts > 1024u) { set_error(error, cap, "batched router selection supports at most 1024 experts"); return 0; }
+    enum { RL_ROUTE_STRIDE = 32 };
+    const size_t n_blocks = ((size_t)B + RL_ROUTE_STRIDE - 1u) / RL_ROUTE_STRIDE;
+    uint8_t *bad = (uint8_t *)calloc(n_blocks, 1);
+    if (!bad) { set_error(error, cap, "router selection scratch allocation failed"); return 0; }
+    dispatch_apply(n_blocks, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t blk) {
+        float probs[1024];
+        const uint32_t t0 = (uint32_t)(blk * RL_ROUTE_STRIDE), t1 = t0 + RL_ROUTE_STRIDE < B ? t0 + RL_ROUTE_STRIDE : B;
+        for (uint32_t tk = t0; tk < t1; ++tk) {
+            if (!rl_native_router_select_softmax_topk(logits + (size_t)tk * experts, experts, topk,
+                    ids + (size_t)tk * RL_ENGINE_MAX_TOPK, weights + (size_t)tk * RL_ENGINE_MAX_TOPK, probs, NULL, 0)) { bad[blk] = 1; return; }
+        }
+    });
+    int ok = 1;
+    for (size_t blk = 0; blk < n_blocks && ok; ++blk) {
+        if (!bad[blk]) continue;
+        /* repeat the failing block serially for its error message */
+        float probs[1024];
+        for (uint32_t tk = (uint32_t)(blk * RL_ROUTE_STRIDE); tk < B && ok; ++tk)
+            ok = rl_native_router_select_softmax_topk(logits + (size_t)tk * experts, experts, topk,
+                    ids + (size_t)tk * RL_ENGINE_MAX_TOPK, weights + (size_t)tk * RL_ENGINE_MAX_TOPK, probs, error, cap);
+        if (ok) { set_error(error, cap, "batched router selection failed"); ok = 0; }
+    }
+    free(bad);
+    return ok;
+}
+
+/* dev24: loads (prepare, then immediate release) the union of the experts layer l_next is predicted to select
+ * for the chunk, while the current layer's experts run. Skipped when the cache cannot hold both sets. */
+static int prefill_prefetch(rl_engine *e, rl_metal_engine *m, const float *pred_logits, uint32_t l_next, uint32_t B, uint32_t in_flight,
+                            uint32_t *ids, float *weights, uint16_t *umap, uint32_t *uid, float *zero_w, char *error, size_t cap) {
+    const uint32_t experts = e->info.n_expert, topk = e->info.top_k;
+    uint32_t U = 0;
+    if (!route_tokens(pred_logits, B, experts, topk, ids, weights, error, cap)) return 0;
+    for (uint32_t tk = 0; tk < B; ++tk) {
+        const uint32_t *tid = ids + (size_t)tk * RL_ENGINE_MAX_TOPK;
+        for (uint32_t k = 0; k < topk; ++k) if (umap[tid[k]] == UINT16_MAX) { umap[tid[k]] = (uint16_t)U; uid[U++] = tid[k]; }
+    }
+    for (uint32_t u = 0; u < U; ++u) { umap[uid[u]] = UINT16_MAX; zero_w[u] = 0.0f; }
+    if ((uint64_t)in_flight + U + topk > rl_native_metal_slot_capacity(m->experts)) return 1;
+    rl_native_topk_plan pplan;
+    memset(&pplan, 0, sizeof(pplan));
+    return rl_native_metal_prepare_topk(m->experts, &e->expert_map, l_next, uid, zero_w, U, &pplan, error, cap) &&
+           rl_native_metal_release_topk(m->experts, &pplan, NULL, error, cap);
+}
+
+/* waits for the background prefetch, then releases the previous layer's deferred expert plan */
+static int join_prefetch(dispatch_group_t group, int *pending, const int *prefetch_ok, const char *prefetch_error, rl_native_topk_plan *plan,
+                         rl_metal_engine *m, rl_engine_step_stats *stats, const double *prefetch_ms, char *error, size_t cap) {
+    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    *pending = 0;
+    stats->prefetch_ms += *prefetch_ms;
+    if (!*prefetch_ok) { snprintf(error, cap, "prefill expert prefetch failed: %s", prefetch_error); return 0; }
+    return rl_native_metal_release_topk(m->experts, plan, NULL, error, cap);
+}
+
 static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, const uint32_t *tokens, uint32_t B,
                          int want_logits, float *logits, rl_engine_step_stats *stats, char *error, size_t cap) {
     rl_backend_state *s = &e->gpu;
@@ -742,7 +806,15 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
     memset(&plan, 0, sizeof(plan));
     rl_native_metal_telemetry tel;
     memset(&tel, 0, sizeof(tel));
+    dispatch_group_t prefetch_group = dispatch_group_create();
+    __block int prefetch_ok = 1;
+    __block double prefetch_ms = 0.0;
+    char prefetch_error[256] = { 0 };
+    int prefetch_pending = 0;
     int ok = 0;
+    const double read_before = m->last_read_ms;
+    double p_lru0, p_load0, p_commit0;
+    rl_native_metal_prepare_profile(m->experts, &p_lru0, &p_load0, &p_commit0);
     @autoreleasepool {
         for (uint32_t t = 0; t < B; ++t) {
             if (!rl_engine_embed_token(e, tokens[t], (float *)pf->xb.contents + (size_t)t * hidden, error, cap)) goto done;
@@ -768,6 +840,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                 [enc dispatchThreadgroups:MTLSizeMake(B, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
             enc_gemm(m, pf, cb, &w->router, pf->ffn_in, pf->router_logits, B);
+            /* dev24 pre-gating: layer l+1's router on layer l's FFN input predicts the experts to load during experts_l */
+            const int predict = m->prefetch && !pf->mapped && l + 1u < in->n_layer;
+            if (predict) enc_gemm(m, pf, cb, &m->layers[l + 1u].router, pf->ffn_in, pf->pred_logits[l & 1u], B);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pf->p_sh_scalar];
@@ -789,11 +864,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
 
+            if (prefetch_pending && !join_prefetch(prefetch_group, &prefetch_pending, &prefetch_ok, prefetch_error, &plan, m, stats, &prefetch_ms, error, cap)) goto done;
             /* routing: every token of the chunk */
-            for (uint32_t tk = 0; tk < B; ++tk) {
-                if (!rl_native_router_select_softmax_topk((const float *)pf->router_logits.contents + (size_t)tk * experts, experts, topk,
-                        ids + (size_t)tk * RL_ENGINE_MAX_TOPK, weights + (size_t)tk * RL_ENGINE_MAX_TOPK, probs, error, cap)) goto done;
-            }
+            if (!route_tokens((const float *)pf->router_logits.contents, B, experts, topk, ids, weights, error, cap)) goto done;
             memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids + (size_t)(B - 1u) * RL_ENGINE_MAX_TOPK, (size_t)topk * sizeof(uint32_t));
             const double l2 = rl_engine_now_ms();
             stats->router_ms += l2 - l1;
@@ -801,9 +874,6 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             /* routed experts (dev20b): the chunk's tokens are split into consecutive groups whose union of
              * selected experts fits one pool plan; each group runs three batched dispatches (gate/up, down,
              * per-token weighted sum). The residual add of the whole chunk is encoded after the last group. */
-            const double read_before = m->last_read_ms;
-            double p_lru0, p_load0, p_commit0;
-            rl_native_metal_prepare_profile(m->experts, &p_lru0, &p_load0, &p_commit0);
             const uint32_t plan_limit = pf->mapped ? (experts < 512u ? experts : 512u) : prefill_plan_limit(m);
             for (uint32_t g0 = 0; g0 < B;) {
                 uint32_t g1 = g0, U = 0;
@@ -860,9 +930,30 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                     enc_1d(enc, pf->p_scale_add, (NSUInteger)hidden * B, 64u); [enc endEncoding];
                 }
                 const double w0 = rl_engine_now_ms();
-                if (!commit_wait(cb, "prefill routed experts", &stats->routed_gpu_ms, error, cap)) goto done;
+                if (predict && g1 == B) {
+                    /* the experts run on the GPU while the CPU loads the next layer's predicted union */
+                    [cb commit];
+                    /* ... and on through the next layer's dense pass: the prefetch is joined before that layer routes.
+                     * This layer's plan stays pinned (release deferred) so the prefetch can never evict it. */
+                    const uint32_t l_next = l + 1u, in_flight = U;
+                    uint32_t *p_ids = ids; float *p_w = weights, *p_zero = dummy_w;
+                    const float *p_pred = (const float *)pf->pred_logits[l & 1u].contents; uint16_t *p_umap = umap; uint32_t *p_uid = uid;
+                    char *p_err = prefetch_error;
+                    prefetch_pending = 1;
+                    dispatch_group_async(prefetch_group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                        const double p0 = rl_engine_now_ms();
+                        prefetch_ok = prefill_prefetch(e, m, p_pred, l_next, B, in_flight, p_ids, p_w, p_umap, p_uid, p_zero, p_err, 256);
+                        prefetch_ms = rl_engine_now_ms() - p0;
+                    });
+                    [cb waitUntilCompleted];
+                    if (cb.status != MTLCommandBufferStatusCompleted || cb.error) {
+                        snprintf(error, cap, "prefill routed experts command buffer failed: %s", cb.error.localizedDescription.UTF8String ?: "unknown");
+                        goto done;
+                    }
+                    stats->routed_gpu_ms += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+                } else if (!commit_wait(cb, "prefill routed experts", &stats->routed_gpu_ms, error, cap)) goto done;
                 stats->expert_wait_ms += rl_engine_now_ms() - w0;
-                if (!pf->mapped) {
+                if (!pf->mapped && !prefetch_pending) {
                     const int last_plan = l + 1u == in->n_layer && g1 == B;
                     if (!rl_native_metal_release_topk(m->experts, &plan, last_plan ? &tel : NULL, error, cap)) goto done;
                 }
@@ -871,19 +962,19 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             }
             const double l3 = rl_engine_now_ms();
             stats->routed_ms += l3 - l2;
-            {
-                double p_lru1, p_load1, p_commit1;
-                rl_native_metal_prepare_profile(m->experts, &p_lru1, &p_load1, &p_commit1);
-                stats->prep_lru_ms += p_lru1 - p_lru0; stats->prep_load_ms += p_load1 - p_load0; stats->prep_commit_ms += p_commit1 - p_commit0;
-            }
-            {
-                const double read_now = rl_native_metal_read_ms(m->experts);
-                stats->routed_load_ms += read_now - read_before;
-                m->last_read_ms = read_now;
-            }
             memcpy(s->layer_out + (size_t)l * hidden, (const float *)pf->xb.contents + (size_t)(B - 1u) * hidden, hb);
         }
         stats->layers_ms += rl_engine_now_ms() - start - stats->embed_ms;
+        {
+            /* pool counters are read per chunk, after every prefetch has joined (the prefetch thread updates them);
+             * they include the prefetch's own lookups and loads */
+            double p_lru1, p_load1, p_commit1;
+            rl_native_metal_prepare_profile(m->experts, &p_lru1, &p_load1, &p_commit1);
+            stats->prep_lru_ms += p_lru1 - p_lru0; stats->prep_load_ms += p_load1 - p_load0; stats->prep_commit_ms += p_commit1 - p_commit0;
+            const double read_now = rl_native_metal_read_ms(m->experts);
+            stats->routed_load_ms += read_now - read_before;
+            m->last_read_ms = read_now;
+        }
 
         /* output head on the last token of the chunk; m->x keeps that hidden state like a decode step would */
         const double o0 = rl_engine_now_ms();
@@ -902,6 +993,10 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
         ok = 1;
     }
 done:
+    if (prefetch_pending) {
+        dispatch_group_wait(prefetch_group, DISPATCH_TIME_FOREVER);
+        prefetch_pending = 0;
+    }
     if (plan.active) {
         id<MTLCommandBuffer> drain = [m->queue commandBuffer];
         [drain commit];
