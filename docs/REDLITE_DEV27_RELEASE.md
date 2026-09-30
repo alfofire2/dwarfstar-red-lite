@@ -67,4 +67,5 @@ The regression includes, among others:
   presets come from the M4 Pro and are unchanged.
 - **Not in this release.** Multi-sequence batching, concurrent server requests, GGUFs with
   other routed-expert quantizations, and an optimized batched-prefill attention.
-- **Not done here.** The pull request is opened, not merged. Nothing was pushed to `main`.
+- **Merge.** Not part of this milestone's work: the maintainer merged the pull request into
+  `main` afterwards (#1, `3cd58a7`).
