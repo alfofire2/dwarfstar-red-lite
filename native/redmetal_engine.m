@@ -749,7 +749,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         /* states */
         const size_t conv_bytes = rl_engine_conv_count(e) * sizeof(float);
         const size_t rec_bytes = rl_engine_rec_count(e) * sizeof(float);
-        const size_t kv_bytes = rl_engine_kv_row_count(e) * (size_t)in->context * sizeof(float);
+        /* + RL_ENGINE_KV_PAD positions: the dev30 tiled prefill attention reads whole 32-position key blocks */
+        const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
         m->conv_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         m->rec_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         m->kcache = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_attention ? in->n_attention : 1u, sizeof(id));

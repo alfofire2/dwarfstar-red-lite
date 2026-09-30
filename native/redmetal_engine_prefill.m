@@ -355,6 +355,69 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    if (tid < head_dim) gated[qbase + tid] = (acc / l) / (1.0f + exp(-gate[qbase + tid]));\n"
 "}\n"
+/* dev30: tiled causal GQA for the batched prefill (flash-attention style, f32 simdgroup matrices).
+ * Threadgroup = (query head, 8 consecutive tokens), 4 simdgroups. Key blocks of 32 positions:
+ * S = Q K^T (each simdgroup one 8x8 block of positions), online softmax by simdgroup 0 (lane = position),
+ * O = diag(alpha) O + P V (each simdgroup 64 of the 256 head dimensions). head_dim == 256 only. */
+"kernel void attn_fa_b(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
+"    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &position0 [[buffer(8)]], constant uint &ntok [[buffer(9)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float qs[8 * 256]; threadgroup float ss[8 * 32]; threadgroup float dg[64]; threadgroup float mrow[8]; threadgroup float lrow[8];\n"
+"    const uint head = tg.x; const uint t0 = tg.y * 8u; const uint qcount = query_heads * head_dim;\n"
+"    const uint kvh = head / (query_heads / kv_heads); const uint kstride = kv_heads * head_dim; const float scale = rsqrt(float(head_dim));\n"
+"    for (uint i = tid; i < 8u * 256u; i += 128u) { const uint r = i >> 8; const uint d = i & 255u;\n"
+"        qs[i] = t0 + r < ntok ? query[ulong(t0 + r) * qcount + head * 256u + d] * scale : 0.0f; }\n"
+"    if (tid < 64u) dg[tid] = 0.0f;\n"
+"    if (tid < 8u) { mrow[tid] = -INFINITY; lrow[tid] = 0.0f; }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    simdgroup_float8x8 o[8]; for (uint i = 0; i < 8u; ++i) o[i] = simdgroup_float8x8(0.0f);\n"
+"    const uint last = position0 + min(t0 + 8u, ntok) - 1u;   /* last key position any row of the tile sees */\n"
+"    for (uint kb = 0; kb <= last; kb += 32u) {\n"
+"        {   /* S block: 8 tokens x positions kb + sg*8 .. +8 */\n"
+"            simdgroup_float8x8 acc = simdgroup_float8x8(0.0f), a, b;\n"
+"            device const float *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
+"            for (uint k = 0; k < 256u; k += 8u) {\n"
+"                simdgroup_load(a, qs + k, 256);\n"
+"                simdgroup_load(b, kp + k, kstride, ulong2(0, 0), true);\n"
+"                simdgroup_multiply_accumulate(acc, a, b, acc);\n"
+"            }\n"
+"            simdgroup_store(acc, ss + uint(sg) * 8u, 32);\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        if (sg == 0) {\n"
+"            const uint pos = kb + uint(simd_lane);\n"
+"            for (uint r = 0; r < 8u; ++r) {\n"
+"                const bool valid = t0 + r < ntok && pos <= position0 + t0 + r;\n"
+"                const float s = valid ? ss[r * 32u + simd_lane] : -INFINITY;\n"
+"                const float mx = simd_max(s); const float m_old = mrow[r]; const float m_new = max(m_old, mx);\n"
+"                const float p = valid ? exp(s - m_new) : 0.0f;\n"
+"                const float sum = simd_sum(p);\n"
+"                const float alpha = m_old == -INFINITY ? 0.0f : exp(m_old - m_new);\n"
+"                ss[r * 32u + simd_lane] = p;\n"
+"                if (simd_lane == 0) { lrow[r] = lrow[r] * alpha + sum; mrow[r] = m_new; dg[r * 9u] = alpha; }\n"
+"            }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        {\n"
+"            simdgroup_float8x8 d, p, v;\n"
+"            simdgroup_load(d, dg, 8);\n"
+"            for (uint i = 0; i < 8u; ++i) simdgroup_multiply(o[i], d, o[i]);\n"
+"            for (uint kk = 0; kk < 4u; ++kk) {\n"
+"                simdgroup_load(p, ss + kk * 8u, 32);\n"
+"                device const float *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
+"                for (uint i = 0; i < 8u; ++i) { simdgroup_load(v, vp + i * 8u, kstride); simdgroup_multiply_accumulate(o[i], p, v, o[i]); }\n"
+"            }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    for (uint i = 0; i < 8u; ++i) simdgroup_store(o[i], qs + uint(sg) * 64u + i * 8u, 256);\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    for (uint i = tid; i < 8u * 256u; i += 128u) { const uint r = i >> 8; const uint d = i & 255u; if (t0 + r >= ntok) continue;\n"
+"        const ulong idx = ulong(t0 + r) * qcount + head * 256u + d;\n"
+"        gated[idx] = (qs[i] / lrow[r]) / (1.0f + exp(-gate[idx])); }\n"
+"}\n"
 /* ---- shared expert: per-token scalar gate ---- */
 "kernel void sh_scalar_gate_b(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
 "    constant uint &hidden [[buffer(3)]], uint t [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -385,7 +448,8 @@ struct rl_metal_prefill {
     uint32_t *exp_type;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_tail;
-    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_sh_scalar, p_sh_silu;
+    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_attn_fa, p_sh_scalar, p_sh_silu;
+    int attn_tiled;          /* dev30: tiled attention (RL_PREFILL_ATTN_TILE=0 -> the dev20 per-(token, head) kernel) */
     id<MTLBuffer> xb, normed, branch, resid, ffn_in;
     id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, core, ng;
     id<MTLBuffer> qgate_raw, k_raw, value, query_rope, agate, gated;
@@ -399,7 +463,7 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
     pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_tail = nil;
-    pf->p_attn_prep = pf->p_attn_gqa = pf->p_sh_scalar = pf->p_sh_silu = nil;
+    pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
     pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = nil; pf->wdq = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
@@ -493,7 +557,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         {&pf->p_rms, @"rl_rms_b"}, {&pf->p_resid_rms, @"rl_resid_rms_b"}, {&pf->p_scale_add, @"rl_scale_add_b"},
         {&pf->p_dn_ba, @"dn_ba_params_b"}, {&pf->p_dn_conv, @"dn_conv_seq"}, {&pf->p_dn_l2, @"dn_qk_l2_b"},
         {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
-        {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"},
+        {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"}, {&pf->p_attn_fa, @"attn_fa_b"},
         {&pf->p_sh_scalar, @"sh_scalar_gate_b"}, {&pf->p_sh_silu, @"sh_silu_mul_b"},
         {&pf->p_dq_q8, @"rl_dq_q8"}, {&pf->p_dq_q4k, @"rl_dq_q4k"}, {&pf->p_dq_q5k, @"rl_dq_q5k"}, {&pf->p_dq_q6k, @"rl_dq_q6k"},
         {&pf->p_dq_iq2xxs, @"rl_dq_iq2xxs"}, {&pf->p_gemm, @"rl_gemm_wt"},
@@ -540,6 +604,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
      * slower than the slot pool on macOS 26 / M4 Max, because Metal re-establishes residency of each
      * layer's whole expert window (~350 MB) for every command buffer (~3.3 s per 48-layer chunk). */
     if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
+    { const char *at = getenv("RL_PREFILL_ATTN_TILE"); pf->attn_tiled = (!at || atoi(at) != 0) && in->head_dim == 256u; }
     return pf;
 }
 
@@ -700,11 +765,19 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)(qheads + kvheads) * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)]; [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_attn_gqa];
+    [enc setComputePipelineState:pf->attn_tiled ? pf->p_attn_fa : pf->p_attn_gqa];
     [enc setBuffer:pf->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
     [enc setBuffer:pf->agate offset:0 atIndex:3]; [enc setBuffer:pf->gated offset:0 atIndex:4];
     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&position0 length:4 atIndex:8];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)qheads * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+    if (pf->attn_tiled) {
+        /* dev30: (head, 8-token tile) threadgroups; key blocks of 32 may read up to 31 positions past the last
+         * token, which the KV cache allocation pads (RL_ENGINE_KV_PAD) and whose weights are zero */
+        [enc setBytes:&ntok length:4 atIndex:9];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, (ntok + 7u) / 8u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    } else {
+        [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)qheads * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    }
+    [enc endEncoding];
 
     enc_gemm(m, pf, cb, &w->o, pf->gated, pf->branch, ntok);
 }

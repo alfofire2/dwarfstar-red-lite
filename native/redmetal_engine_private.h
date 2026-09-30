@@ -5,6 +5,8 @@
 #include "redlite_native_engine_internal.h"
 #include "redlite_native_metal.h"
 
+#define RL_ENGINE_KV_PAD 32u   /* KV cache positions allocated past the context (tiled prefill attention) */
+
 typedef struct {
     __unsafe_unretained id<MTLBuffer> buf;
     NSUInteger off;
