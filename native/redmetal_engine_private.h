@@ -30,6 +30,9 @@ struct rl_metal_engine {
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
+    id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
+    id<MTLBuffer> attn_ml, attn_acc;                          /* per (head, 256-position block) partials */
+    int attn_split;
     id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;
     id<MTLBuffer> grid;
     mlayer *layers;
@@ -72,6 +75,7 @@ id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max);
 uint32_t lanes_for(uint32_t type, uint32_t ncols);
 void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out);
+id<MTLLibrary> rl_metal_engine_library(id<MTLDevice> dev, NSError **err);
 void emit_rows(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out);
 void emit_rms(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps);
 void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps);

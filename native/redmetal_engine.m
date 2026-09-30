@@ -401,6 +401,55 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    }\n"
 "    if (tid < head_dim) gated[qbase + tid] = (acc / l) / (1.0f + exp(-gate[qbase + tid]));\n"
 "}\n"
+/* ---- dev26: split-K decode attention (flash decoding) ----
+ * attn_gqa_split: one threadgroup per (query head, block of up to 256 positions). Scores are simdgroup-cooperative
+ * dot products (lanes stride the head dimension: coalesced key reads); the block's max, exp-sum and unnormalized
+ * value accumulation are written as a partial. attn_gqa_merge combines a head's partials with the online-softmax
+ * algebra of attn_gqa (rescale by exp(m_b - M)), normalizes and applies the output gate. head_dim <= 256. */
+"kernel void attn_gqa_split(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
+"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    threadgroup float scores[256]; threadgroup float qv[256]; threadgroup float red[8];\n"
+"    const uint block = tg.x, head = tg.y, nblocks = (seq_len + 255u) / 256u;\n"
+"    if (head >= query_heads || block >= nblocks) return;\n"
+"    const uint start = block * 256u, len = min(256u, seq_len - start);\n"
+"    const uint kv_head = head / (query_heads / kv_heads); const float scale = rsqrt(float(head_dim));\n"
+"    if (tid < head_dim) qv[tid] = query[head * head_dim + tid];\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    for (uint p = simd_id; p < len; p += 8u) {\n"
+"        device const float *kr = key_cache + ulong((start + p) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
+"        for (uint i = simd_lane; i < head_dim; i += 32u) dot = fma(qv[i], kr[i], dot);\n"
+"        dot = simd_sum(dot); if (simd_lane == 0) scores[p] = dot * scale;\n"
+"    }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float bm = tid < len ? scores[tid] : -INFINITY;\n"
+"    bm = simd_max(bm); if (simd_lane == 0) red[simd_id] = bm; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    bm = red[0]; for (uint k = 1; k < 8u; ++k) bm = max(bm, red[k]);\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float e = 0.0f; if (tid < len) { e = exp(scores[tid] - bm); scores[tid] = e; }\n"
+"    e = simd_sum(e); if (simd_lane == 0) red[simd_id] = e; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    const ulong part = ulong(head) * nblocks + block;\n"
+"    if (tid == 0u) { float bl = 0.0f; for (uint k = 0; k < 8u; ++k) bl += red[k]; part_ml[part] = float2(bm, bl); }\n"
+"    if (tid < head_dim) {\n"
+"        device const float *vc = value_cache + ulong(start * kv_heads + kv_head) * head_dim + tid; const ulong stride = ulong(kv_heads) * head_dim;\n"
+"        float acc = 0.0f; for (uint p = 0; p < len; ++p) acc = fma(scores[p], vc[ulong(p) * stride], acc);\n"
+"        part_acc[part * head_dim + tid] = acc;\n"
+"    }\n"
+"}\n"
+"kernel void attn_gqa_merge(device uint *rl_abort [[buffer(30)]], device const float2 *part_ml [[buffer(0)]], device const float *part_acc [[buffer(1)]],\n"
+"    device const float *gate [[buffer(2)]], device float *gated [[buffer(3)]], constant uint &head_dim [[buffer(4)]], constant uint &seq_len [[buffer(5)]],\n"
+"    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint nblocks = (seq_len + 255u) / 256u; if (tid >= head_dim || seq_len == 0u) return;\n"
+"    device const float2 *ml = part_ml + ulong(head) * nblocks;\n"
+"    float M = -INFINITY; for (uint b = 0; b < nblocks; ++b) M = max(M, ml[b].x);\n"
+"    float l = 0.0f, acc = 0.0f;\n"
+"    for (uint b = 0; b < nblocks; ++b) { const float w = exp(ml[b].x - M); l = fma(ml[b].y, w, l); acc = fma(part_acc[(ulong(head) * nblocks + b) * head_dim + tid], w, acc); }\n"
+"    const uint o = head * head_dim + tid; gated[o] = (acc / l) / (1.0f + exp(-gate[o]));\n"
+"}\n"
 /* ---- dev21: router selection on the GPU ----
  * Same selection as rl_native_router_select_softmax_topk: top_k experts by probability, ties to the
  * lower index (softmax is monotone, so the logits order the candidates exactly); weights are the
@@ -463,6 +512,11 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (rl_abort[0] != 0u) return;\n"
 "    if (gid < count) dst[gid] = src[gid];\n"
 "}\n";
+
+/* the engine's kernel library (also compiled by the model-free kernel self-test, redmetal_engine_selftest.m) */
+id<MTLLibrary> rl_metal_engine_library(id<MTLDevice> dev, NSError **err) {
+    return [dev newLibraryWithSource:kEngineSource options:nil error:err];
+}
 
 id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
     id<MTLFunction> fn = [lib newFunctionWithName:name];
@@ -638,7 +692,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         if (!m->dev || !m->dev.hasUnifiedMemory) { set_error(error, cap, "Apple unified-memory Metal device required"); rl_metal_engine_destroy(m); return NULL; }
         m->queue = [m->dev newCommandQueue];
         NSError *le = nil;
-        m->lib = [m->dev newLibraryWithSource:kEngineSource options:nil error:&le];
+        m->lib = rl_metal_engine_library(m->dev, &le);
         if (!m->queue || !m->lib) {
             snprintf(error, cap, "Metal engine library compile failed: %s", le.localizedDescription.UTF8String ?: "unknown");
             rl_metal_engine_destroy(m); return NULL;
@@ -652,6 +706,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
             {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
             {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"},
+            {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
             *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -710,6 +765,14 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             m->kcache[a] = new_buf(m, kv_bytes);
             m->vcache[a] = new_buf(m, kv_bytes);
             if (!m->kcache[a] || !m->vcache[a]) { set_error(error, cap, "KV cache allocation failed"); rl_metal_engine_destroy(m); return NULL; }
+        }
+        /* dev26 split-K decode attention partials, sized for the whole context; RL_ENGINE_ATTN_SPLIT=0 for A/B runs */
+        { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
+        if (m->attn_split) {
+            const size_t nblocks = ((size_t)in->context + 255u) / 256u;
+            m->attn_ml = new_buf(m, (size_t)in->n_head * nblocks * 2u * sizeof(float));
+            m->attn_acc = new_buf(m, (size_t)in->n_head * nblocks * in->head_dim * sizeof(float));
+            if (!m->attn_ml || !m->attn_acc) { set_error(error, cap, "attention partial allocation failed"); rl_metal_engine_destroy(m); return NULL; }
         }
 
         /* scratch */
@@ -821,6 +884,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = nil;
     m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
+    m->p_attn_split = m->p_attn_merge = nil; m->attn_ml = m->attn_acc = nil;
     m->keep = nil; m->dev = nil; m->queue = nil; m->lib = nil;
     free(m);
 }
@@ -962,11 +1026,27 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     em_stage(em, 6);
 
     enc = em_enc(em);
-    [enc setComputePipelineState:m->p_attn_gqa];
-    [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
-    [enc setBuffer:m->agate offset:0 atIndex:3]; [enc setBuffer:m->gated offset:0 atIndex:4];
-    [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
-    [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    if (m->attn_split && seq_len > 256u) {
+        /* dev26: one threadgroup per (head, 256-position block), then a per-head merge. Up to one block the
+         * single-threadgroup kernel has the same parallelism without the merge dispatch, and measured faster. */
+        const uint32_t nblocks = (seq_len + 255u) / 256u;
+        [enc setComputePipelineState:m->p_attn_split];
+        [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
+        [enc setBuffer:m->attn_ml offset:0 atIndex:3]; [enc setBuffer:m->attn_acc offset:0 atIndex:4];
+        [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
+        [enc dispatchThreadgroups:MTLSizeMake(nblocks, qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [enc setComputePipelineState:m->p_attn_merge];
+        [enc setBuffer:m->attn_ml offset:0 atIndex:0]; [enc setBuffer:m->attn_acc offset:0 atIndex:1];
+        [enc setBuffer:m->agate offset:0 atIndex:2]; [enc setBuffer:m->gated offset:0 atIndex:3];
+        [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
+    } else {
+        [enc setComputePipelineState:m->p_attn_gqa];
+        [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
+        [enc setBuffer:m->agate offset:0 atIndex:3]; [enc setBuffer:m->gated offset:0 atIndex:4];
+        [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    }
     em_stage(em, 7);
 
     emit_rows(m, em_enc(em), &w->o, m->gated, m->branch);
