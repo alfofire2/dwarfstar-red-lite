@@ -1002,7 +1002,8 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             pf_split(m, pf, &cb, PF_RESID);
             enc_gemm(m, pf, cb, &w->router, pf->ffn_in, pf->router_logits, B);
             /* dev24 pre-gating: layer l+1's router on layer l's FFN input predicts the experts to load during experts_l */
-            const int predict = m->prefetch && !pf->mapped && l + 1u < in->n_layer;
+            /* dev30: with every expert preloaded there is nothing to prefetch (no predictor GEMM, no loader thread) */
+            const int predict = m->prefetch && !m->preloaded && !pf->mapped && l + 1u < in->n_layer;
             if (predict) enc_gemm(m, pf, cb, &m->layers[l + 1u].router, pf->ffn_in, pf->pred_logits[l & 1u], B);
             pf_split(m, pf, &cb, PF_ROUTER);
             {
