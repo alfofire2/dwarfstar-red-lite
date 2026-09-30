@@ -59,8 +59,8 @@ the three binaries is built by `scripts/package_release.sh`.
   sized from the file's expert payload (21,312 MiB for IQ2_XXS, 29,376 MiB for IQ3_XXS;
   `--cache-mib full` in the binaries); tokens are then routed on the GPU in one command
   buffer. Otherwise 4096 MiB.
-- Prompts are ingested by a batched prefill in chunks of 2048 tokens with every expert
-  resident, 512 otherwise (`--batch`).
+- Prompts are ingested by a batched prefill in chunks of 2048 tokens (`--batch`); with a
+  bounded cache a larger chunk means fewer expert reloads (dev34).
 
 **Sampler.** It follows llama.cpp's chain (top-k → top-p → min-p → temperature) with the
 same arithmetic. min-p is off by default here and 0.05 in llama.cpp.

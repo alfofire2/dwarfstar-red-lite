@@ -2,6 +2,14 @@
 
 ## Unreleased (after 0.4.0, branch `dev/iq3-kernels`)
 
+### dev34 — bounded-cache prefill: 2048-token chunks (M4 Max 48 GiB)
+
+- With a bounded cache each chunk reloads nearly every expert: 8192 tokens at 4 GiB loaded
+  161 GB of experts in chunks of 512, 49 GB in chunks of 2048. The default chunk is now 2048
+  for every cache (+571 MiB footprint at 4 GiB).
+- IQ2_XXS, 4 GiB cache, cooled A/B: prefill 1100 tokens 540 → 795 tok/s, 8192 tokens
+  640 → 886 tok/s. Not measured on a 24 GiB Mac. See `docs/REDLITE_DEV34_BOUNDED_PREFILL.md`.
+
 ### dev33 — faster IQ kernels (M4 Max 48 GiB)
 
 - Sub-block IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS dots for decode, a faster 8-value IQ3 decoder for
