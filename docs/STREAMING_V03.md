@@ -1,6 +1,7 @@
 # Red Lite v0.3 streaming runtime
 
-Status: experimental (`v0.3-streaming` branch)
+Status: historical design note. It was written on the `v0.3-streaming` branch, which was merged
+into `main` with release 0.3.0.
 
 ## Design direction
 

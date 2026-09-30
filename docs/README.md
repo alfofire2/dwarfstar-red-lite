@@ -17,7 +17,9 @@ machine). "Tested synthetically" means model-free tests only.
 | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
 | [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
 
-## Native runtime milestones (v0.3, `v0.3-streaming`, released as 0.3.0)
+## Native runtime milestones (v0.3, released as 0.3.0)
+
+Developed on the `v0.3-streaming` branch, which was merged into `main` with release 0.3.0.
 
 dev9–dev17 built and validated one graph stage each. Their parity CLIs are now regression
 tools, and `redlite-engine` (dev18 onward) supersedes them for inference. dev22–dev26 are
