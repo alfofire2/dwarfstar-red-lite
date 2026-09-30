@@ -58,10 +58,10 @@ Real-model parity tools all follow the same shape and only work on macOS with th
 .deps/redmetal/redlite-engine prefill MODEL --tokens 9707,11,1879 --batch 8 [--cpu]            # dev20 batched prefill vs token-by-token Metal (and CPU oracle)
 .deps/redmetal/redlite-generate MODEL --prompt "..." --batch 512   # prompt chunk size for the batched prefill (default 512; 1 = token by token)
 RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time profile (disables the GPU-routed path; commits every stage)
-scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill]   # median decode/prefill tok/s on this Mac
+scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill] [--cool S]   # median decode/prefill tok/s on this Mac (use --cool 90 for prefill: back-to-back runs throttle the GPU)
 scripts/dev/quick_parity.sh MODEL [--long --batch N]   # parity gate for kernel/path changes (engine parity, gpu_routed, logits and greedy vs llama.cpp)
 RL_ENGINE_ROWS2=0 ...   # dev22 A/B: decode GEMV back to the dev18 block kernels
-RL_ENGINE_PREFETCH=0 ...   # dev23 A/B: no pre-gated expert prefetch in the synchronous decode
+RL_ENGINE_PREFETCH=0 ...   # dev23/dev24 A/B: no pre-gated expert prefetch (synchronous decode and batched prefill)
 .deps/redmetal/redlite-generate MODEL --prompt "..." --json   # machine-readable stats on stderr; Ctrl-C stops the answer (exit 130)
 .deps/redmetal/redlite-server MODEL --port 8080 --cache-mib 4096   # OpenAI /v1/chat/completions (SSE); `redlite serve --native MODEL` launches it
 python3 scripts/dev/server_check.py MODEL   # server greedy stream == redlite-generate greedy text, clean SIGINT

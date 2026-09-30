@@ -2,6 +2,28 @@
 
 ## Unreleased (v0.3-streaming, after 0.3.0.dev21)
 
+### dev24 — prefill: pre-gated expert prefetch and parallel routing (M4 Max 48 GiB)
+
+Prefill of 1100 tokens with a 4 GiB cache, in the default 512-token chunks, rose from
+261.7 to **314.3 tok/s** (target ≥ 300; cooled medians). Parity with llama.cpp on
+the 1100-token prompt holds at chunks 96/256/512/1100. Not measured on the M4 Pro. See
+`docs/REDLITE_DEV24_PREFILL_OVERLAP.md`.
+
+- **Pre-gated prefetch in the batched prefill.** Layer *l+1*'s router is applied to
+  layer *l*'s FFN input. A background thread loads the predicted union of experts
+  while layer *l*'s experts and layer *l+1*'s dense pass run on the GPU. Layer *l*'s
+  plan stays pinned until the join. `RL_ENGINE_PREFETCH=0` disables it
+  (cooled medians: 271.6 off vs 314.3 on).
+- **Parallel router selection.** The chunk's softmax top-10 runs on all CPU cores
+  (`dispatch_apply`), bit-identical per token: ~180 → ~39 ms per 1100 tokens.
+- **`redlite-engine logits`** prints a `prefill split:` line.
+- **Dev tooling.** `quick_parity.sh` deletes its outputs before running (it compared a
+  stale dump after a crash). `bench_m4.sh --cool S` pauses before each run, because
+  back-to-back prefill runs throttle the GPU on this machine (311 → 133 tok/s over five
+  runs). Earlier prefill figures were taken without a pause.
+- **Race fixed before release.** The predicted logits are double-buffered by layer
+  parity, because the prefetch thread reads them while the next dense pass runs.
+
 ### dev23 — per-layer early-out and pre-gated prefetch (M4 Max 48 GiB)
 
 Decode with a 4 GiB cache rose from 44.7 to **50.1 tok/s** (target ≥ 45). Decode with full

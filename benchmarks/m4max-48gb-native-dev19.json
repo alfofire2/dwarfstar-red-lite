@@ -316,5 +316,40 @@
     "per_layer_miss_rate_4gib": "0.45-0.87 per layer, 31.7 of 48 layers per token (215 tokens)",
     "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
     "note": "M4 Max only, GGUF warm in the page cache; not measured on the M4 Pro 24 GiB"
+  },
+  "dev24_prefill_overlap": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --only prefill --reps 3 --cool 90 (medians; first 1100 tokens of tests/fixtures/long_context_prompt.txt, chunk 512, --cache-mib 4096)",
+    "dev23_cooled_prefill_1100_4gib_tps": [
+      258.4,
+      262.6,
+      261.7
+    ],
+    "dev24_prefetch_off_prefill_1100_4gib_tps": [
+      271.6,
+      271.9,
+      271.0
+    ],
+    "dev24_prefill_1100_4gib_tps": [
+      314.3,
+      314.6,
+      313.8
+    ],
+    "dev24_prefill_1100_4gib_median_tps": 314.3,
+    "dev24_chunk1100_single_run_tps": 326.6,
+    "router_select_ms_per_1100_tokens": {
+      "before": 180,
+      "after": 39
+    },
+    "throttling_consecutive_runs_no_pause_tps": [
+      311.0,
+      186.6,
+      168.2,
+      147.0,
+      132.8
+    ],
+    "parity": "quick_parity.sh PASS; logits.long_context_vs_llama PASS at chunks 96/256/512/1100",
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only, GGUF warm in the page cache, GPU cooled 90 s before each run; earlier dev22/dev23 prefill figures (248.5/252.3) were taken without a pause; not measured on the M4 Pro 24 GiB"
   }
 }
