@@ -24,6 +24,7 @@
 
 #include "redmetal_engine_private.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_router_exec.h"
 #include "redmetal_topk.h"
 
@@ -174,6 +175,31 @@ RL_DQ_KERNEL("rl_dq_q4k", "256", "144", "dq_q4k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_q5k", "256", "176", "dq_q5k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_q6k", "256", "210", "dq_q6k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device const uchar *grid [[buffer(4)]]")
+/* dev31: IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS: dequantize one 8-value group per thread; batched rows (GEMM fallback) */
+"kernel void rl_dq_iq3(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device float *out [[buffer(2)]],\n"
+"    constant uint &nrows [[buffer(3)]], constant uint &type [[buffer(5)]], uint2 gid [[thread_position_in_grid]]) {\n"
+"    const uint row = gid.y; const uint gi = gid.x; const uint groups = ncols / 8u; if (row >= nrows || gi >= groups) return;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint b = gi >> 5;\n"
+"    device const uchar *bp = weights + ulong(row) * ulong(ncols / 256u) * bb + ulong(b) * bb;\n"
+"    float4 v0, v1; rl_iq3_group8(type, bp, gi & 31u, v0, v1);\n"
+"    device float4 *o = (device float4 *)(out + ulong(row) * ncols + gi * 8u); o[0] = v0; o[1] = v1;\n"
+"}\n"
+"kernel void rl_rowsb_iq3(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]], constant uint &ntok [[buffer(6)]],\n"
+"    constant uint &type [[buffer(8)]], uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * bb;\n"
+"    device const uchar *rp = weights + ulong(active ? row : 0u) * row_bytes;\n"
+"    for (uint t0 = 0; t0 < ntok; t0 += 8u) {\n"
+"        float a[8]; for (uint n = 0; n < 8u; ++n) a[n] = 0.0f;\n"
+"        if (active) { for (uint i = lane; i < blocks * 32u; i += lanes) { const uint b = i >> 5; const uint g = i & 31u; float4 v0, v1;\n"
+"            rl_iq3_group8(type, rp + ulong(b) * bb, g, v0, v1);\n"
+"            for (uint n = 0; n < 8u; ++n) { const uint t = min(t0 + n, ntok - 1u); device const float *xc = x + ulong(t) * ncols + i * 8u;\n"
+"                a[n] += dot(*(device const float4 *)xc, v0) + dot(*(device const float4 *)(xc + 4u), v1); } } }\n"
+"        for (uint n = 0; n < 8u; ++n) { float v = a[n]; for (uint off = lanes >> 1; off > 0u; off >>= 1) v += simd_shuffle_xor(v, ushort(off));\n"
+"            if (active && lane == 0u && t0 + n < ntok) out[(t0 + n) * nrows + row] = v; }\n"
+"    }\n"
+"}\n"
 /* out[t][row] = sum_k X[t][k] * W[row][k]: 32 rows x 32 tokens per threadgroup, four simdgroups of 8 rows, f32 simdgroup matrices */
 "kernel void rl_gemm_wt(device const float *W [[buffer(0)]], device const float *X [[buffer(1)]], device float *out [[buffer(2)]],\n"
 "    constant uint &rows [[buffer(3)]], constant uint &K [[buffer(4)]], constant uint &ntok_pad [[buffer(5)]],\n"
@@ -484,7 +510,7 @@ struct rl_metal_prefill {
     uint32_t cap;
     id<MTLLibrary> lib;
     uint32_t cap_pad;        /* token capacity rounded up to the 32-token GEMM tile */
-    id<MTLComputePipelineState> p_rowsb_f32, p_rowsb_q8, p_rowsb_q4k, p_rowsb_q5k, p_rowsb_q6k, p_rowsb_iq2xxs;
+    id<MTLComputePipelineState> p_rowsb_f32, p_rowsb_q8, p_rowsb_q4k, p_rowsb_q5k, p_rowsb_q6k, p_rowsb_iq2xxs, p_rowsb_iq3, p_dq_iq3;
     id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm, p_gemm_tg;
     int gemm_tg;             /* dev30: threadgroup-staged dense GEMM (RL_PREFILL_GEMM_TG=0 -> rl_gemm_wt) */
     id<MTLBuffer> wdq;       /* dequantized f32 copy of the current dense matrix */
@@ -513,7 +539,7 @@ struct rl_metal_prefill {
 
 void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
-    pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
+    pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = pf->p_rowsb_iq3 = pf->p_dq_iq3 = nil;
     pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
         pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
     pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil;
@@ -571,7 +597,7 @@ static void prefill_map_experts(rl_engine *e, rl_metal_engine *m, struct rl_meta
         rl_expert_layout first, last;
         if (!rl_native_expert_layout(&e->expert_map, l, 0u, &first, err, sizeof(err)) ||
             !rl_native_expert_layout(&e->expert_map, l, E - 1u, &last, err, sizeof(err))) return;
-        if (first.ggml_type != 17u && first.ggml_type != 29u) return;
+        if ((first.ggml_type != 17u && first.ggml_type != 29u) || first.down_type != first.ggml_type) return;
         /* per-expert strides from consecutive experts; contiguous tensors give stride == bytes */
         rl_expert_layout second;
         if (E > 1u && !rl_native_expert_layout(&e->expert_map, l, 1u, &second, err, sizeof(err))) return;
@@ -598,7 +624,11 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     pf->cap_pad = (cap + 31u) & ~31u;
     pf->keep = [NSMutableArray array];
     NSError *le = nil;
-    pf->lib = [m->dev newLibraryWithSource:kPrefillSource options:nil error:&le];
+    char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
+    if (!iq3) { set_error(error, ecap, "IQ3 Metal source allocation failed"); rl_metal_prefill_destroy(pf); return NULL; }
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kPrefillSource];
+    free(iq3);
+    pf->lib = [m->dev newLibraryWithSource:src options:nil error:&le];
     if (!pf->lib) {
         snprintf(error, ecap, "Metal prefill library compile failed: %s", le.localizedDescription.UTF8String ?: "unknown");
         rl_metal_prefill_destroy(pf); return NULL;
@@ -606,6 +636,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
         {&pf->p_rowsb_f32, @"rl_rowsb_f32"}, {&pf->p_rowsb_q8, @"rl_rowsb_q8"}, {&pf->p_rowsb_q4k, @"rl_rowsb_q4k"},
         {&pf->p_rowsb_q5k, @"rl_rowsb_q5k"}, {&pf->p_rowsb_q6k, @"rl_rowsb_q6k"}, {&pf->p_rowsb_iq2xxs, @"rl_rowsb_iq2xxs"},
+        {&pf->p_rowsb_iq3, @"rl_rowsb_iq3"}, {&pf->p_dq_iq3, @"rl_dq_iq3"},
         {&pf->p_rms, @"rl_rms_b"}, {&pf->p_resid_rms, @"rl_resid_rms_b"}, {&pf->p_scale_add, @"rl_scale_add_b"},
         {&pf->p_dn_ba, @"dn_ba_params_b"}, {&pf->p_dn_conv, @"dn_conv_seq"}, {&pf->p_dn_l2, @"dn_qk_l2_b"},
         {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_state_sg, @"dn_state_seq_sg"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
@@ -690,6 +721,7 @@ static id<MTLComputePipelineState> rowsb_pipe(struct rl_metal_prefill *pf, uint3
         case 13: return pf->p_rowsb_q5k;
         case 14: return pf->p_rowsb_q6k;
         case 16: return pf->p_rowsb_iq2xxs;
+        case 18: case 21: case 22: case 23: return pf->p_rowsb_iq3;   /* dev31 */
         default: return nil;
     }
 }
@@ -708,6 +740,7 @@ static void enc_rowsb(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCom
     [enc setBytes:&lanes length:sizeof(lanes) atIndex:5];
     [enc setBytes:&ntok length:sizeof(ntok) atIndex:6];
     if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:7];
+    if (rl_iq3_supported(w->type)) [enc setBytes:&w->type length:4 atIndex:8];
     const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
     [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
@@ -720,6 +753,7 @@ static id<MTLComputePipelineState> dq_pipe(struct rl_metal_prefill *pf, uint32_t
         case 13: return pf->p_dq_q5k;
         case 14: return pf->p_dq_q6k;
         case 16: return pf->p_dq_iq2xxs;
+        case 18: case 21: case 22: case 23: return pf->p_dq_iq3;   /* dev31 */
         default: return nil;
     }
 }
@@ -743,8 +777,13 @@ static void enc_gemm(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLComm
         [enc setBuffer:pf->wdq offset:0 atIndex:2];
         [enc setBytes:&w->rows length:4 atIndex:3];
         if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:4];
-        const NSUInteger tgx = blocks < 32u ? blocks : 32u;
-        [enc dispatchThreads:MTLSizeMake(blocks, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(tgx, 256u / tgx, 1)];
+        if (rl_iq3_supported(w->type)) {   /* dev31: one thread per 8-value group */
+            [enc setBytes:&w->type length:4 atIndex:5];
+            [enc dispatchThreads:MTLSizeMake(w->cols / 8u, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+        } else {
+            const NSUInteger tgx = blocks < 32u ? blocks : 32u;
+            [enc dispatchThreads:MTLSizeMake(blocks, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(tgx, 256u / tgx, 1)];
+        }
         [enc endEncoding];
         wbuf = pf->wdq; woff = 0;
     }

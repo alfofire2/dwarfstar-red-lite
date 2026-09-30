@@ -247,6 +247,7 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
 
     if (!audit_layers(e, error, cap)) { rl_engine_close(e); return NULL; }
     if (!rl_native_build_expert_map(model_path, in->n_expert, &e->expert_map, error, cap)) { rl_engine_close(e); return NULL; }
+    if (e->cfg.cache_mib == RL_ENGINE_CACHE_FULL) e->cfg.cache_mib = rl_engine_full_residency_mib(e);   /* dev31 */
     if (!e->expert_map.all_slice_safe || e->expert_map.layer_count != in->n_layer) {
         set_error(error, cap, "routed expert map is not slice-safe for every layer"); rl_engine_close(e); return NULL;
     }
@@ -402,6 +403,23 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *e, rl_engine_backend 
 }
 
 double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
+
+uint64_t rl_engine_full_residency_mib(const rl_engine *e) {
+    if (!e || !e->expert_map.max_expert_triplet_bytes) return 0;
+    const uint64_t slot = (e->expert_map.max_expert_triplet_bytes + 4095u) & ~(uint64_t)4095u;   /* redmetal_topk slot alignment */
+    const uint64_t bytes = slot * e->expert_map.layer_count * e->expert_map.expert_count;
+    return (bytes + (1024u * 1024u) - 1u) / (1024u * 1024u);
+}
+
+int rl_engine_parse_cache_mib(const char *text, uint64_t *out) {
+    if (!text || !out || !*text) return 0;
+    if (strcmp(text, "full") == 0) { *out = RL_ENGINE_CACHE_FULL; return 1; }
+    char *end = NULL;
+    const unsigned long long v = strtoull(text, &end, 10);
+    if (!end || *end || !v || v > 1048576ull) return 0;
+    *out = (uint64_t)v;
+    return 1;
+}
 
 uint32_t rl_engine_prefill_batch(const rl_engine *e) {
     if (!e) return 512u;

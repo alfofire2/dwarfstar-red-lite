@@ -13,6 +13,7 @@ COMMON=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
+  "$ROOT/native/redlite_native_iq3.c"
   "$ROOT/native/redlite_native_router.c"
 )
 OFFLINE_TEST=(
@@ -49,6 +50,7 @@ ROUTER_PARITY_COMMON=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
+  "$ROOT/native/redlite_native_iq3.c"
 )
 SHARED_PARITY_COMMON=(
   "$ROOT/native/redlite_native_shared_parity_cli.c"
@@ -74,6 +76,7 @@ FFN_PARITY_COMMON=(
   "$ROOT/native/redlite_native_model.c"
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
+  "$ROOT/native/redlite_native_iq3.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then

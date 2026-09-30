@@ -29,7 +29,7 @@ struct rl_metal_engine {
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
+    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */

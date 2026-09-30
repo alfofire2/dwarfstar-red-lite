@@ -40,6 +40,9 @@ int rl_iq3_dequant_row(uint32_t ggml_type, const uint8_t *row, uint32_t ncols, f
 /* sum_i row[i] * x[i] in double over the dequantized f32 values */
 int rl_iq3_row_dot(uint32_t ggml_type, const uint8_t *row, const float *x, uint32_t ncols, double *out);
 
+/* same with a double input vector (the routed-expert down projection of the CPU oracle) */
+int rl_iq3_row_dot_d(uint32_t ggml_type, const uint8_t *row, const double *x, uint32_t ncols, double *out);
+
 /* Metal source text declaring the codebooks as `constant` arrays (rl_iq3xxs_grid, rl_iq3s_grid,
  * rl_iq2s_grid, rl_kvalues_iq4nl) and the rl_iq3_group8 decoder for device memory; malloc'd. */
 char *rl_iq3_metal_source(void);

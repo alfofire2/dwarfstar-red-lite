@@ -28,7 +28,7 @@ xcrun --sdk macosx clang \
   "$ROOT/native/redlite_native_cache.c" \
   "$ROOT/native/redlite_native_model.c" \
   "$ROOT/native/redlite_native_tables.c" \
-  "$ROOT/native/redlite_native_reference.c" \
+  "$ROOT/native/redlite_native_reference.c" "$ROOT/native/redlite_native_iq3.c" \
   "$ROOT/native/redlite_native_metal.c" \
   "$ROOT/native/redmetal_topk.m" \
   "$ROOT/native/redmetal_router.m" \

@@ -47,7 +47,8 @@ typedef struct {
 typedef struct {
     uint32_t layer;
     uint32_t expert;
-    uint32_t ggml_type;
+    uint32_t ggml_type;     /* gate and up (always the same type) */
+    uint32_t down_type;     /* dev31: down may differ (IQ3_XXS GGUF: IQ3_S in some layers) */
     uint64_t gate_offset;
     uint64_t gate_bytes;
     uint64_t up_offset;

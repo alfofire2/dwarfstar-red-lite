@@ -1,6 +1,5 @@
 #include "redlite_native_iq3.h"
 #include "redlite_native_iq3_tables.h"
-#include "redlite_native_quant_cpu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +10,20 @@
 static const uint8_t kmask_iq2xs[8] = {1, 2, 4, 8, 16, 32, 64, 128};
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)p[0] | ((uint16_t)p[1] << 8); }
+
+/* IEEE half -> float (exact), as ggml's GGML_FP16_TO_FP32 */
+static float f16_to_f32(uint16_t h) {
+    const uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    uint32_t exp = (h >> 10) & 0x1fu, mant = h & 0x03ffu, bits;
+    if (exp == 0) {
+        if (!mant) bits = sign;
+        else { int shift = 0; while ((mant & 0x0400u) == 0) { mant <<= 1; ++shift; } mant &= 0x03ffu; bits = sign | ((uint32_t)(127 - 14 - shift) << 23) | (mant << 13); }
+    } else if (exp == 31u) bits = sign | 0x7f800000u | (mant << 13);
+    else bits = sign | ((exp + 112u) << 23) | (mant << 13);
+    float out;
+    memcpy(&out, &bits, sizeof(out));
+    return out;
+}
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 /* ksigns_iq2xs[i] of ggml-common.h: the 7 stored sign bits plus an odd-parity eighth bit */
 static uint8_t ksign(uint32_t s7) { return (uint8_t)(s7 | ((uint32_t)(__builtin_popcount(s7) & 1) << 7)); }
@@ -34,7 +47,7 @@ size_t rl_iq3_row_bytes(uint32_t t, uint32_t ncols) {
 }
 
 void rl_iq3_group8(uint32_t t, const uint8_t *bp, uint32_t g, float out[8]) {
-    const float d = rl_quant_f16_to_f32(rd16(bp));
+    const float d = f16_to_f32(rd16(bp));
     const uint32_t ib32 = g / 4u, l = g % 4u;
     if (t == RL_GGML_IQ3_XXS) {
         const uint8_t *qs = bp + 2u + 8u * ib32;
@@ -94,6 +107,21 @@ int rl_iq3_row_dot(uint32_t t, const uint8_t *row, const float *x, uint32_t ncol
             rl_iq3_group8(t, row + (size_t)b * bb, g, v);
             const float *xc = x + (size_t)b * QK_K + 8u * g;
             for (uint32_t j = 0; j < 8u; ++j) acc += (double)v[j] * (double)xc[j];
+        }
+    *out = acc;
+    return 1;
+}
+
+int rl_iq3_row_dot_d(uint32_t t, const uint8_t *row, const double *x, uint32_t ncols, double *out) {
+    const uint32_t bb = rl_iq3_block_bytes(t);
+    if (!row || !x || !out || !bb || !ncols || ncols % QK_K) return 0;
+    double acc = 0.0;
+    float v[8];
+    for (uint32_t b = 0; b < ncols / QK_K; ++b)
+        for (uint32_t g = 0; g < 32u; ++g) {
+            rl_iq3_group8(t, row + (size_t)b * bb, g, v);
+            const double *xc = x + (size_t)b * QK_K + 8u * g;
+            for (uint32_t j = 0; j < 8u; ++j) acc += (double)v[j] * xc[j];
         }
     *out = acc;
     return 1;

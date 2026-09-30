@@ -25,7 +25,7 @@ build() {
 }
 
 NATIVE_MAIN=("$N/redlite_native_main.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c"
-  "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c"
+  "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c" "$N/redlite_native_iq3.c"
   "$N/redlite_native_router.c")
 if [[ "$(uname -s)" == "Darwin" ]]; then
   # the macOS redlite-native also carries the Metal top-k path (as in build_native.sh)

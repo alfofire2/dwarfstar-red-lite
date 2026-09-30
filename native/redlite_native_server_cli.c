@@ -149,7 +149,7 @@ static void usage(FILE *out) {
         "  --host H            bind address (default 127.0.0.1)\n"
         "  --port P            TCP port (default 8080; 0 = ephemeral)\n"
         "  --context N         KV cache positions per request (default 4096)\n"
-        "  --cache-mib N       routed-expert cache in MiB (default 4096; >= 21300 preloads every expert)\n"
+        "  --cache-mib N|full  routed-expert cache in MiB (default 4096); full = every expert of the file (preloaded)\n"
         "  --batch N           prompt tokens per batched prefill chunk (default 2048 with every expert preloaded, else 512)\n"
         "  --max-tokens N      default max_tokens when a request omits it (default 256)\n"
         "  --temperature T     default temperature (default 0.7)\n"
@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i - 1], "--host") == 0) scfg.host = v;
         else if (strcmp(argv[i - 1], "--port") == 0) { if (!parse_u32(v, &u) || u > 65535u) return 2; scfg.port = (uint16_t)u; }
         else if (strcmp(argv[i - 1], "--context") == 0) { if (!parse_u32(v, &cfg.context)) return 2; }
-        else if (strcmp(argv[i - 1], "--cache-mib") == 0) { if (!parse_u32(v, &u)) return 2; cfg.cache_mib = u; }
+        else if (strcmp(argv[i - 1], "--cache-mib") == 0) { if (!rl_engine_parse_cache_mib(v, &cfg.cache_mib)) return 2; }
         else if (strcmp(argv[i - 1], "--batch") == 0) { if (!parse_u32(v, &cfg.prefill_batch)) return 2; }
         else if (strcmp(argv[i - 1], "--max-tokens") == 0) { if (!parse_u32(v, &scfg.default_max_tokens) || !scfg.default_max_tokens) return 2; }
         else if (strcmp(argv[i - 1], "--temperature") == 0) { if (!parse_f32(v, &scfg.default_temperature) || scfg.default_temperature < 0.0f) return 2; }
@@ -244,7 +244,8 @@ int main(int argc, char **argv) {
     double preload_ms = 0.0;
     const int preloaded = rl_engine_experts_preloaded(e, &preload_ms);
     fprintf(stderr, "[redlite-server] engine ready in %.1f s (%s backend, cache %llu MiB%s, context %u)\n",
-        (now_ms() - t_open) / 1000.0, use_cpu ? "CPU oracle" : "Metal", (unsigned long long)cfg.cache_mib,
+        (now_ms() - t_open) / 1000.0, use_cpu ? "CPU oracle" : "Metal",
+        (unsigned long long)(cfg.cache_mib == RL_ENGINE_CACHE_FULL ? rl_engine_full_residency_mib(e) : cfg.cache_mib),
         preloaded ? ", every expert preloaded" : "", rl_engine_info_get(e)->context);
 
     engine_ctx ctx;

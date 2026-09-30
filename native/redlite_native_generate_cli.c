@@ -80,7 +80,8 @@ static void usage(FILE *out) {
         "  --min-p M           drop candidates below M x the top probability (default 0 = off; llama.cpp uses 0.05)\n"
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
-        "  --cache-mib N       routed-expert cache budget in MiB (default 4096)\n"
+        "  --cache-mib N|full  routed-expert cache budget in MiB (default 4096); full = every expert of the file,\n"
+        "                      computed from its expert payload (redlite-engine info prints it)\n"
         "  --batch N           prompt tokens per batched Metal prefill chunk (default 2048 when every expert is\n"
         "                      preloaded, else 512; 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
@@ -307,7 +308,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--min-p") == 0) { if (!parse_f32(argv[++i], &sp.min_p) || sp.min_p < 0.0f || sp.min_p > 1.0f) return 2; }
         else if (strcmp(argv[i], "--seed") == 0) { char *end = NULL; sp.seed = strtoull(argv[++i], &end, 10); if (!end || *end) return 2; }
         else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
-        else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }
+        else if (strcmp(argv[i], "--cache-mib") == 0) { if (!rl_engine_parse_cache_mib(argv[++i], &cfg.cache_mib)) return 2; }
         else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &cfg.prefill_batch)) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); usage(stderr); return 2; }
     }
@@ -462,7 +463,7 @@ int main(int argc, char **argv) {
             spec_tokens, spec_fallbacks, (unsigned long long)hits, (unsigned long long)misses,
             (unsigned long long)(st.expert_loads - loads_start), (double)(st.ssd_bytes - ssd_start) / (1024.0 * 1024.0),
             (double)peak_rss_bytes() / (1024.0 * 1024.0), (double)phys_footprint_bytes() / (1024.0 * 1024.0),
-            (unsigned long long)cfg.cache_mib, in->context, rl_engine_prefill_batch(e),
+            (unsigned long long)(cfg.cache_mib == RL_ENGINE_CACHE_FULL ? rl_engine_full_residency_mib(e) : cfg.cache_mib), in->context, rl_engine_prefill_batch(e),
             interrupted ? "interrupted" : stopped_on_eog ? "stop" : "length");
     }
     rl_sampler_free(&sampler);

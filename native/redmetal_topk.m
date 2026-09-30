@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include "redlite_native_iq3.h"
 
 #include "redmetal_topk.h"
 
@@ -33,6 +34,17 @@
 #define REDMETAL_TOPK_ABI_VERSION 1u
 #define GGML_TYPE_IQ2_XS 17u
 #define GGML_TYPE_IQ1_M 29u
+/* dev31 type words (see rm_gate_type / rm_down_type in the kernel source) */
+static uint32_t tw_gate(uint32_t tw) { return tw & 255u; }
+static uint32_t tw_down(uint32_t tw) { return (tw >> 8) ? (tw >> 8) : (tw & 255u); }
+static uint64_t tw_block_bytes(uint32_t t) { return t == GGML_TYPE_IQ2_XS ? 74u : t == GGML_TYPE_IQ1_M ? 56u : rl_iq3_block_bytes(t); }
+static int tw_ok(uint32_t tw) {
+    const uint32_t g = tw_gate(tw), d = tw_down(tw);
+    if (tw >> 16 || !tw_block_bytes(g) || !tw_block_bytes(d)) return 0;
+    /* one grid buffer serves every dispatch of a plan: two different legacy grids cannot be mixed */
+    const int lg = g == GGML_TYPE_IQ2_XS || g == GGML_TYPE_IQ1_M, ld = d == GGML_TYPE_IQ2_XS || d == GGML_TYPE_IQ1_M;
+    return !(lg && ld && g != d);
+}
 #define QK_IQ 256u
 #define REDMETAL_TOPK_SLICE 4u   /* must match RM_S in the kernel source */
 #define REDMETAL_TOPK_MM_SLICE 16u  /* pairs per tile of the dev30 matrix kernels (their xs[16 * 32]) */
@@ -110,6 +122,11 @@ static NSString * const kTopKSource = @
 "    sign7 &= 127u;\n"
 "    return sign7 | ((popcount(sign7) & 1u) << 7);\n"
 "}\n"
+/* dev31: the type argument is a type word: gate/up type in bits 0-7, the down type in bits 8-15 when it differs
+ * (the IQ3_XXS GGUF has IQ3_S down projections in some layers); IQ3 types decode through rl_iq3_group8 */
+"inline uint rm_gate_type(uint tw) { return tw & 255u; }\n"
+"inline uint rm_down_type(uint tw) { return (tw >> 8) != 0u ? (tw >> 8) : (tw & 255u); }\n"
+"inline ulong rm_block_bytes(uint t) { return t == 17u ? 74ul : t == 29u ? 56ul : ulong(rl_iq3_block_bytes(t)); }\n"
 "\n"
 /* one IQ2_XS 256-value block dot (validated dev10 arithmetic) */
 "inline float redmetal_topk_iq2_xs_block(device const uchar *bp, device const float *x, device const char *grid, uint part, uint nparts) {\n"
@@ -163,8 +180,18 @@ static NSString * const kTopKSource = @
 "    return acc;\n"
 "}\n"
 "\n"
+"inline float redmetal_topk_iq3_block(uint type, device const uchar *bp, device const float *x, uint part, uint nparts) {\n"
+"    const uint gper = 32u / nparts; float acc = 0.0f;\n"
+"    for (uint g = part * gper; g < (part + 1u) * gper; ++g) {\n"
+"        float4 v0, v1; rl_iq3_group8(type, bp, g, v0, v1);\n"
+"        acc += dot(*(device const float4 *)(x + g * 8u), v0) + dot(*(device const float4 *)(x + g * 8u + 4u), v1);\n"
+"    }\n"
+"    return acc;\n"
+"}\n"
 "inline float redmetal_topk_block(uint type, device const uchar *bp, device const float *x, device const char *grid, uint part, uint nparts) {\n"
-"    return type == 17u ? redmetal_topk_iq2_xs_block(bp, x, grid, part, nparts) : redmetal_topk_iq1_m_block(bp, x, grid, part, nparts);\n"
+"    if (type == 17u) return redmetal_topk_iq2_xs_block(bp, x, grid, part, nparts);\n"
+"    if (type == 29u) return redmetal_topk_iq1_m_block(bp, x, grid, part, nparts);\n"
+"    return redmetal_topk_iq3_block(type, bp, x, part, nparts);\n"
 "}\n"
 "\n"
 /* act[e][row] = SiLU(gate_e[row].x) * up_e[row].x for every selected expert; lanes_per_row lanes per row */
@@ -187,8 +214,8 @@ static NSString * const kTopKSource = @
 "    const uint row = tid.x / lanes_per_row;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
 "    const bool active = expert < top_k && row < rows;\n"
-"    const uint blocks = ncols / 256u;\n"
-"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const uint blocks = ncols / 256u; const uint gt = rm_gate_type(type);\n"
+"    const ulong block_bytes = rm_block_bytes(gt);\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
@@ -198,8 +225,8 @@ static NSString * const kTopKSource = @
 "        device const uchar *grow = slot + ulong(row) * row_bytes;\n"
 "        device const uchar *urow = slot + up_offset + ulong(row) * row_bytes;\n"
 "        for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
-"            g += redmetal_topk_block(type, grow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
-"            u += redmetal_topk_block(type, urow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
+"            g += redmetal_topk_block(gt, grow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
+"            u += redmetal_topk_block(gt, urow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
 "        }\n"
 "    }\n"
 "    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
@@ -227,8 +254,8 @@ static NSString * const kTopKSource = @
 "    const uint r = tid.x / lanes_per_row;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
 "    const bool active = expert < top_k && r < row_count;\n"
-"    const uint blocks = ncols / 256u;\n"
-"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const uint blocks = ncols / 256u; const uint dt = rm_down_type(type);\n"
+"    const ulong block_bytes = rm_block_bytes(dt);\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
@@ -236,7 +263,7 @@ static NSString * const kTopKSource = @
 "    if (active) {\n"
 "        device const uchar *drow = slots.slot[expert] + down_offset + ulong(row_start + r) * row_bytes;\n"
 "        device const float *xe = act + expert * ncols;\n"
-"        for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(type, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts);\n"
+"        for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(dt, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts);\n"
 "    }\n"
 "    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
 "    if (active && lane == 0u) tmp[expert * row_count + r] = acc;\n"
@@ -247,6 +274,7 @@ static NSString * const kTopKSource = @
  * arithmetic as redmetal_topk_iq2_xs_block / redmetal_topk_iq1_m_block, one 8-value group at a time
  * so several rows can be decoded in lockstep and share the activation loads. */
 "inline void rm_group8(uint type, device const uchar *bp, uint gi, device const char *grid, thread float4 &v0, thread float4 &v1) {\n"
+"    if (type != 17u && type != 29u) { rl_iq3_group8(type, bp, gi, v0, v1); return; }\n"
 "    float v[8];\n"
 "    if (type == 17u) {\n"
 "        const uint g = gi >> 1; const uint half_ = gi & 1u;\n"
@@ -306,7 +334,7 @@ static NSString * const kTopKSource = @
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
 "    const bool active = sl < n_slices && cnt > 0u && expert < n_expert && row0 < rows;\n"
 "    const uint blocks = ncols / 256u;\n"
-"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong block_bytes = rm_block_bytes(rm_gate_type(type));\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
@@ -330,8 +358,8 @@ static NSString * const kTopKSource = @
 "                    for (uint n = 0; n < RM_S; ++n) { x0[n] = *(device const float4 *)(xs[n] + col); x1[n] = *(device const float4 *)(xs[n] + col + 4u); }\n"
 "                    for (uint r = 0; r < nrows; ++r) {\n"
 "                        float4 v0, v1;\n"
-"                        rm_group8(type, gb + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) ag[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
-"                        rm_group8(type, ub + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) au[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                        rm_group8(rm_gate_type(type), gb + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) ag[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                        rm_group8(rm_gate_type(type), ub + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) au[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
 "                    }\n"
 "                }\n"
 "            }\n"
@@ -373,7 +401,7 @@ static NSString * const kTopKSource = @
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
 "    const bool active = sl < n_slices && cnt > 0u && expert < n_expert && row0 < row_count;\n"
 "    const uint blocks = ncols / 256u;\n"
-"    const ulong block_bytes = type == 17u ? 74ul : 56ul;\n"
+"    const ulong block_bytes = rm_block_bytes(rm_down_type(type));\n"
 "    const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint nparts = max(1u, lanes_per_row / blocks); const uint part = lane % nparts; const uint lane_block = lane / nparts;\n"
 "    const uint block_lanes = max(1u, lanes_per_row / nparts);\n"
@@ -394,7 +422,7 @@ static NSString * const kTopKSource = @
 "                    for (uint n = 0; n < RM_S; ++n) { x0[n] = *(device const float4 *)(xs[n] + col); x1[n] = *(device const float4 *)(xs[n] + col + 4u); }\n"
 "                    for (uint r = 0; r < nrows; ++r) {\n"
 "                        float4 v0, v1;\n"
-"                        rm_group8(type, db + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) a[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
+"                        rm_group8(rm_down_type(type), db + ulong(r) * row_bytes, gi, grid, v0, v1); for (uint n = 0; n < RM_S; ++n) a[r][n] += rm_dot8(x0[n], x1[n], v0, v1);\n"
 "                    }\n"
 "                }\n"
 "            }\n"
@@ -424,7 +452,7 @@ static NSString * const kTopKSource = @
 "    threadgroup float xs[16 * 32]; threadgroup float wg[32 * 32]; threadgroup float wu[32 * 32]; threadgroup float og[32 * 16]; threadgroup float ou[32 * 16];\n"
 "    const uint row0 = tg.x * 32u; const uint p0 = slice_first[tg.y]; const uint cnt = slice_count[tg.y];\n"
 "    const uint expert = pair_expert[p0];\n"
-"    const uint blocks = ncols / 256u; const ulong block_bytes = type == 17u ? 74ul : 56ul; const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint blocks = ncols / 256u; const ulong block_bytes = rm_block_bytes(rm_gate_type(type)); const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint wr = tid >> 2; const uint wq = tid & 3u;          /* decoder: weight row wr, 8-column group wq of the K step */\n"
 "    const uint xr = tid >> 3; const uint xq = (tid & 7u) * 4u;    /* loader: pair xr, 4 columns */\n"
 "    device const uchar *grow = slots.gate[expert] + ulong(row0 + wr) * row_bytes;\n"
@@ -434,9 +462,9 @@ static NSString * const kTopKSource = @
 "    for (uint k0 = 0; k0 < ncols; k0 += 32u) {\n"
 "        const uint b = k0 >> 8; const uint gi = ((k0 & 255u) >> 3) + wq;\n"
 "        float4 v0, v1;\n"
-"        rm_group8(type, grow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        rm_group8(rm_gate_type(type), grow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
 "        *(threadgroup float4 *)(wg + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wg + wr * 32u + wq * 8u + 4u) = v1;\n"
-"        rm_group8(type, urow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        rm_group8(rm_gate_type(type), urow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
 "        *(threadgroup float4 *)(wu + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wu + wr * 32u + wq * 8u + 4u) = v1;\n"
 "        *(threadgroup float4 *)(xs + xr * 32u + xq) = xr < cnt ? *(device const float4 *)(xrow + k0 + xq) : float4(0.0f);\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -472,7 +500,7 @@ static NSString * const kTopKSource = @
 "    threadgroup float xs[16 * 32]; threadgroup float wd[32 * 32]; threadgroup float od[32 * 16];\n"
 "    const uint row0 = tg.x * 32u; const uint p0 = slice_first[tg.y]; const uint cnt = slice_count[tg.y];\n"
 "    const uint expert = pair_expert[p0];\n"
-"    const uint blocks = ncols / 256u; const ulong block_bytes = type == 17u ? 74ul : 56ul; const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint blocks = ncols / 256u; const ulong block_bytes = rm_block_bytes(rm_down_type(type)); const ulong row_bytes = ulong(blocks) * block_bytes;\n"
 "    const uint wr = tid >> 2; const uint wq = tid & 3u; const uint xr = tid >> 3; const uint xq = (tid & 7u) * 4u;\n"
 "    device const uchar *drow = slots.down[expert] + ulong(row0 + wr) * row_bytes;\n"
 "    device const float *xrow = act + ulong(p0 + min(xr, cnt - 1u)) * ncols;\n"
@@ -480,7 +508,7 @@ static NSString * const kTopKSource = @
 "    for (uint k0 = 0; k0 < ncols; k0 += 32u) {\n"
 "        const uint b = k0 >> 8; const uint gi = ((k0 & 255u) >> 3) + wq;\n"
 "        float4 v0, v1;\n"
-"        rm_group8(type, drow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        rm_group8(rm_down_type(type), drow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
 "        *(threadgroup float4 *)(wd + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wd + wr * 32u + wq * 8u + 4u) = v1;\n"
 "        *(threadgroup float4 *)(xs + xr * 32u + xq) = xr < cnt ? *(device const float4 *)(xrow + k0 + xq) : float4(0.0f);\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -637,7 +665,11 @@ static NSString * const kTopKSource = @
     }
 
     NSError *libraryError = nil;
-    id<MTLLibrary> library = [_device newLibraryWithSource:kTopKSource options:nil error:&libraryError];
+    char *iq3 = rl_iq3_metal_source();   /* dev31: IQ3_XXS / IQ3_S codebooks and decoder */
+    if (!iq3) { topk_set_error("IQ3 Metal source allocation failed"); return nil; }
+    NSString *source = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kTopKSource];
+    free(iq3);
+    id<MTLLibrary> library = [_device newLibraryWithSource:source options:nil error:&libraryError];
     if (!library) {
         topk_set_error("failed to compile top-k kernels: %s",
             libraryError.localizedDescription.UTF8String ?: "unknown Metal error");
@@ -859,10 +891,11 @@ static int topk_has_residency_set(RMTopKPool *p) {
 }
 
 static id<MTLBuffer> topk_grid_for_type(RMTopKPool *p, uint32_t type) {
-    if (type == GGML_TYPE_IQ2_XS) return p->_iq2Grid;
-    if (type == GGML_TYPE_IQ1_M) return p->_iq1Grid;
-    topk_set_error("unsupported top-k GGML type %u", type);
-    return nil;
+    if (!tw_ok(type)) { topk_set_error("unsupported top-k GGML type word 0x%x", type); return nil; }
+    const uint32_t g = tw_gate(type), d = tw_down(type);
+    if (g == GGML_TYPE_IQ2_XS || d == GGML_TYPE_IQ2_XS) return p->_iq2Grid;
+    if (g == GGML_TYPE_IQ1_M || d == GGML_TYPE_IQ1_M) return p->_iq1Grid;
+    return p->_iq2Grid;   /* IQ3 types use constant codebooks; any buffer satisfies the grid argument */
 }
 
 static void mark_slots(RMTopKPool *p, const uint32_t *slot_ids, uint32_t top_k, int delta) {
@@ -1061,9 +1094,8 @@ static int topk_validate(RMTopKPool *p, const uint32_t *slot_ids, const uint64_t
             }
         }
     }
-    const uint64_t blockBytes = ggml_type == GGML_TYPE_IQ2_XS ? 74u : 56u;
-    const uint64_t gateRowBytes = (uint64_t)(hidden_size / QK_IQ) * blockBytes;
-    const uint64_t downRowBytes = (uint64_t)(ffn_size / QK_IQ) * blockBytes;
+    const uint64_t gateRowBytes = (uint64_t)(hidden_size / QK_IQ) * tw_block_bytes(tw_gate(ggml_type));
+    const uint64_t downRowBytes = (uint64_t)(ffn_size / QK_IQ) * tw_block_bytes(tw_down(ggml_type));
     const uint64_t expectedGate = (uint64_t)ffn_size * gateRowBytes;
     const uint64_t expectedDown = (uint64_t)hidden_size * downRowBytes;
     for (uint32_t i = 0; i < top_k; ++i) {
@@ -1529,7 +1561,7 @@ int redmetal_topk_pool_encode_device(
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
         if (!p || !mtl_command_buffer || !slot_table_buffer || !weight_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
-        if (!top_k || top_k > REDMETAL_TOPK_MAX || (ggml_type != 17u && ggml_type != 29u) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
+        if (!top_k || top_k > REDMETAL_TOPK_MAX || !tw_ok(ggml_type) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
             topk_set_error("invalid device-driven top-k request"); return 0;
         }
         if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
@@ -1610,7 +1642,7 @@ int redmetal_topk_pool_encode_device_into(
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
         if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
-        if (!top_k || top_k > REDMETAL_TOPK_MAX || (ggml_type != 17u && ggml_type != 29u) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
+        if (!top_k || top_k > REDMETAL_TOPK_MAX || !tw_ok(ggml_type) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
             topk_set_error("invalid device-driven top-k request"); return 0;
         }
         if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;

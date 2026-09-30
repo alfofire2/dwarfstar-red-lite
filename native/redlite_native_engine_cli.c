@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
             token_count = parse_tokens(argv[++i], tokens, RL_CLI_MAX_TOKENS);
             if (!token_count) { fprintf(stderr, "invalid --tokens list\n"); return 2; }
         } else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
-        else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }
+        else if (strcmp(argv[i], "--cache-mib") == 0) { if (!rl_engine_parse_cache_mib(argv[++i], &cfg.cache_mib)) return 2; }
         else if (strcmp(argv[i], "--threads") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cpu_threads = (int)v; }
         else if (strcmp(argv[i], "--backend") == 0) backend_name = argv[++i];
         else if (strcmp(argv[i], "--out") == 0) out_path = argv[++i];
@@ -212,6 +212,7 @@ int main(int argc, char **argv) {
         if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
         printf("runtime              : native Qwen3-Next persistent engine\n");
         print_info(rl_engine_info_get(e));
+        printf("full residency cache : %llu MiB (--cache-mib full)\n", (unsigned long long)rl_engine_full_residency_mib(e));
         rl_engine_close(e);
         return 0;
     }

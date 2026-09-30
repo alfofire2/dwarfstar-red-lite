@@ -27,6 +27,7 @@
 #include "redmetal_engine_private.h"
 #include "redlite_native_metal.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_router_exec.h"
 #include "redmetal_topk.h"
 #include "redlite_native_model.h"
@@ -252,6 +253,21 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 RL_ROWS_SUB_KERNEL("rl_rows2_q4k", "256", "144", "8", "32", "rl_q4k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_q6k", "256", "210", "16", "16", "rl_q6k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp, s, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
+/* dev31: IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS rows: one lane per 32-value item (4 groups of rl_iq3_group8) */
+"kernel void rl_rows_iq3(device uint *rl_abort [[buffer(30)]], device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]], constant uint &type [[buffer(7)]],\n"
+"    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint blocks = ncols / 256u; const uint items = blocks * 8u; const ulong row_bytes = ulong(blocks) * bb; float acc = 0.0f;\n"
+"    if (active) { device const uchar *rp = weights + ulong(row) * row_bytes;\n"
+"        for (uint i = lane; i < items; i += lanes) { const uint b = i >> 3; const uint s = i & 7u; device const uchar *bp = rp + ulong(b) * bb;\n"
+"            device const float *xc = x + b * 256u + s * 32u;\n"
+"            for (uint q = 0; q < 4u; ++q) { float4 v0, v1; rl_iq3_group8(type, bp, s * 4u + q, v0, v1);\n"
+"                acc += dot(*(device const float4 *)(xc + q * 8u), v0) + dot(*(device const float4 *)(xc + q * 8u + 4u), v1); } } }\n"
+"    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
+"    if (active && lane == 0u) out[row] = acc;\n"
+"}\n"
 "kernel void rl_rows2_f32(device uint *rl_abort [[buffer(30)]], device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]],\n"
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
@@ -515,7 +531,11 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 
 /* the engine's kernel library (also compiled by the model-free kernel self-test, redmetal_engine_selftest.m) */
 id<MTLLibrary> rl_metal_engine_library(id<MTLDevice> dev, NSError **err) {
-    return [dev newLibraryWithSource:kEngineSource options:nil error:err];
+    char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
+    if (!iq3) return nil;
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kEngineSource];
+    free(iq3);
+    return [dev newLibraryWithSource:src options:nil error:err];
 }
 
 id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSString *name, char *error, size_t cap) {
@@ -571,6 +591,7 @@ id<MTLComputePipelineState> rows_pipe(rl_metal_engine *m, uint32_t type) {
         case 13: return m->p_rows_q5k;
         case 14: return m->p_rows_q6k;
         case 16: return m->p_rows_iq2xxs;
+        case 18: case 21: case 22: case 23: return m->p_rows_iq3;   /* dev31 */
         default: return nil;
     }
 }
@@ -604,6 +625,7 @@ static id<MTLComputePipelineState> rows2_pipe(rl_metal_engine *m, uint32_t type,
         case 12: p = m->p_rows2_q4k;    items = (ncols / 256u) * 8u; break;
         case 14: p = m->p_rows2_q6k;    items = (ncols / 256u) * 16u; break;
         case 16: p = m->p_rows2_iq2xxs; items = (ncols / 256u) * 8u; break;
+        case 18: case 21: case 22: case 23: p = m->p_rows_iq3; items = (ncols / 256u) * 8u; break;   /* dev31: already sub-block */
         default: return nil;
     }
     if (!m->rows2 || (type == 0u && ncols % 4u)) return nil;
@@ -625,6 +647,7 @@ void emit_rows(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, const mweig
     [enc setBytes:&w->rows length:sizeof(w->rows) atIndex:4];
     [enc setBytes:&lanes length:sizeof(lanes) atIndex:5];
     if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:6];
+    if (rl_iq3_supported(w->type)) [enc setBytes:&w->type length:sizeof(w->type) atIndex:7];
     const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
     [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
 }
@@ -700,7 +723,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
             {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"},
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
-            {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"},
+            {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
             {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
@@ -906,7 +929,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
-    m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = nil;
+    m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
     m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
     m->p_attn_split = m->p_attn_merge = nil; m->attn_ml = m->attn_acc = nil;
@@ -1156,7 +1179,7 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
         if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
             !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
         if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
-                (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, li.ggml_type,
+                (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
                 li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
                 (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
             snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); return 0;

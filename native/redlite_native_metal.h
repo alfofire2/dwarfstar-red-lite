@@ -66,10 +66,16 @@ int rl_native_metal_execute_topk(
  *              (dev23: per-slot load generations; loads into other slots, e.g. a
  *              prefetch, are allowed while the plan is in flight)
  */
+/* dev31: routed-expert "type word" passed to the Metal expert kernels: gate/up type in bits 0-7 and, when the down
+ * projection has another type (IQ3_XXS GGUF: IQ3_S in some layers), the down type in bits 8-15 */
+static inline uint32_t rl_native_expert_type_word(uint32_t gate_up_type, uint32_t down_type) {
+    return gate_up_type | (down_type != gate_up_type ? (down_type << 8) : 0u);
+}
+
 typedef struct {
     uint32_t layer;
     uint32_t top_k;
-    uint32_t ggml_type;
+    uint32_t ggml_type;   /* type word (rl_native_expert_type_word) */
     uint32_t hidden;
     uint32_t ffn;
     uint32_t slots[512];
