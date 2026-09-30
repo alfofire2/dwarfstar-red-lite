@@ -1,7 +1,10 @@
 # Red Lite dev27 — release 0.3.0
 
-Status: **released as 0.3.0** on the `v0.3-streaming` branch (2026-09-30). A pull request to
-`main` is open and not merged. Merging is the maintainer's decision.
+Status: **released as 0.3.0** (2026-09-30).
+- The release was prepared on the `v0.3-streaming` branch and tagged `v0.3.0` at `6c1f650`.
+- The maintainer merged it into `main` through pull request #1 (merge commit `3cd58a7`),
+  and the branch was then deleted.
+- The GitHub Release is `v0.3.0`.
 
 ## What the release changes
 

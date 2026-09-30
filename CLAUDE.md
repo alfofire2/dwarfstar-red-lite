@@ -10,14 +10,18 @@ memory. It is not a generic model runner. The reference GGUF is the Bartowski
 `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (~17.97 GiB), normally kept in
 `models/` (gitignored).
 
-Two branches matter:
+Everything lives on `main` (release 0.3.0, tag `v0.3.0`), which holds two runtimes:
 
-- `main` — the stable v0.2.x **launcher**: a Python control plane that picks a memory
+- the **launcher** (the v0.2.x path): a Python control plane that picks a memory
   policy and shells out to pinned upstream engines (llama.cpp Metal, or a CPU mmap
-  "oversized MoE runtime").
-- `v0.3-streaming` — the experimental **native Red Metal runtime**: a from-scratch C /
-  Objective-C / Metal implementation of the Qwen3-Next graph, built up one validated
-  stage at a time. Most active work lives here.
+  "oversized MoE runtime");
+- the **native Red Metal runtime**: a from-scratch C / Objective-C / Metal
+  implementation of the Qwen3-Next graph, built up one validated stage at a time.
+
+The native runtime was developed on the `v0.3-streaming` branch, which was merged into
+`main` with release 0.3.0 and then deleted. Milestone docs and the CHANGELOG still name
+it as history. The first streaming prototype is kept under the tag `archive/v0.3-alpha`.
+Start new work on a branch from `main`.
 
 Version is duplicated in `VERSION`, `pyproject.toml` and `redlite/__init__.py`; bump all three.
 
