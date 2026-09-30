@@ -12,10 +12,16 @@ machine). "Tested synthetically" means model-free tests only.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Design goal and architecture of the v0.2 launcher (sparse 80B on a 24 GiB Mac) |
 | [MEMORY.md](MEMORY.md) | Memory policy and headroom formula for 24 GiB Macs |
 | [BENCHMARK.md](BENCHMARK.md) | v0.2 benchmark protocol and context-depth sweep |
+| [../README.md](../README.md) | Release 0.3.0: the two runtimes, measured performance per machine, correctness, limits, tool status |
+| [../CHANGELOG.md](../CHANGELOG.md) | 0.3.0 release summary and milestone targets, then every dev milestone |
 | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
 | [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
 
-## Native runtime milestones (v0.3, `v0.3-streaming`)
+## Native runtime milestones (v0.3, `v0.3-streaming`, released as 0.3.0)
+
+dev9–dev17 built and validated one graph stage each. Their parity CLIs are now regression
+tools, and `redlite-engine` (dev18 onward) supersedes them for inference. dev22–dev26 are
+the 0.3.0 performance and robustness work.
 
 | Milestone | Document |
 |---|---|
@@ -39,11 +45,12 @@ machine). "Tested synthetically" means model-free tests only.
 | dev25 (partial) product surface: chat defaults, native server | [REDLITE_DEV25_PRODUCT.md](REDLITE_DEV25_PRODUCT.md) |
 | dev26 robustness: GGUF fuzz, sanitizers, sampler parity | [REDLITE_DEV26_ROBUSTNESS.md](REDLITE_DEV26_ROBUSTNESS.md) |
 | dev26 completion: 4096/8192 positions, sanitized chat turn, kernel self-test, split-K attention | [REDLITE_DEV26_LONG_CONTEXT.md](REDLITE_DEV26_LONG_CONTEXT.md) |
+| dev27 release 0.3.0: milestone results, final validation | [REDLITE_DEV27_RELEASE.md](REDLITE_DEV27_RELEASE.md) |
 
 ## Background and plans
 
 | Document | What it covers |
 |---|---|
-| [STREAMING_V03.md](STREAMING_V03.md), [V0.3_STREAMING_DEV.md](V0.3_STREAMING_DEV.md) | v0.3 streaming design direction and dev1–dev8 notes |
+| [STREAMING_V03.md](STREAMING_V03.md), [V0.3_STREAMING_DEV.md](V0.3_STREAMING_DEV.md) | v0.3 streaming design direction and dev1–dev8 notes (**legacy**: the Python streaming oracle `redlite-stream` / `redlite-ffn` / `redlite-topk` is frozen as a numerical reference) |
 | [METAL_STREAMING_ROADMAP.md](METAL_STREAMING_ROADMAP.md) | Native Metal + SSD expert streaming roadmap |
 | [DS4_ADAPTATION.md](DS4_ADAPTATION.md) | Mapping from DwarfStar / DS4 ideas to Red Lite |

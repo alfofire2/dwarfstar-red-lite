@@ -1,6 +1,59 @@
 # Changelog
 
-## Unreleased (v0.3-streaming, after 0.3.0.dev21)
+## 0.3.0 — 2026-09-30
+
+First release of the **native runtime**: Red Lite's own C11 / Objective-C / Metal
+implementation of the Qwen3-Next-80B-A3B graph. At inference time it uses neither
+llama.cpp nor Python. It is the work of the 0.3.0.dev3–dev26 entries below. The 0.2
+launcher (pinned llama.cpp / CPU mmap runtime) is unchanged and remains the
+field-validated path on the M4 Pro 24 GiB.
+
+**What 0.3.0 contains**
+
+- **Engine** (dev18). The dense weights are mapped in place, and the routed experts go
+  through a bounded Metal-visible LRU. There are two independent backends: a CPU oracle
+  and Metal.
+- **Tokenizer, sampler and chat template** (dev18–dev26). The sampler follows llama.cpp's
+  chain with the same arithmetic.
+- **Batched prefill** (dev20, dev24) and **GPU-routed decode** with full residency
+  (dev21, dev23).
+- **Decode kernels:**
+  - dev22: sub-block GEMV, one encoder per token;
+  - dev23: per-layer early-out and pre-gated expert prefetch;
+  - dev26: split-K decode attention.
+- **Surfaces:** `redlite chat`, `redlite serve --native` / `redlite-server` (OpenAI
+  `/v1/chat/completions` with SSE), `redlite-generate`.
+- **Validation tooling.** `scripts/regress_m4.sh` has 46 checks: the llama.cpp oracle,
+  the CPU oracle, the GGUF fuzz, ASan/UBSan on the model-free tests and on a real chat
+  turn, and the model-free kernel self-test.
+
+**Measured, M4 Max 48 GiB** (the README table has the ranges and sources):
+
+| | tok/s |
+|---|---:|
+| Decode, short context, 22 GiB cache (all experts resident) | 69.8–72.7 |
+| Decode, short context, 4 GiB cache | 46.5–50.1 |
+| Decode at ~8192 positions, 22 GiB / 4 GiB cache | 56.3–57.4 / 38.8–39.2 |
+| Prefill of 1100 tokens, 4 GiB cache | 314.3 |
+
+Greedy output is token-identical to the pinned llama.cpp on the regression prompts.
+**Not measured on the M4 Pro 24 GiB since dev18** (27.8 tok/s decode with a 4 GiB cache on
+the dev18 build).
+
+**Milestone targets of the 0.3.0 cycle** (M4 Max):
+
+| Milestone | Target | Result |
+|---|---|---|
+| dev22 | decode ≥ 62 tok/s at 22 GiB | reached (66.2) |
+| dev23 | decode ≥ 45 tok/s at 4 GiB | reached (50.1) |
+| dev24 | prefill ≥ 300 tok/s on 1100 tokens at 4 GiB | reached (314.3) |
+| dev26 | parity and benchmarks at 4096/8192, sanitized chat turn, model-free kernel tests | done |
+
+**Legacy.** The Python streaming oracle (`redlite-stream`, `redlite-ffn` and `redlite-topk`
+from Python, dev1–dev8) is frozen. It is kept as a numerical reference and its `--help`
+says so. The native stage parity CLIs (dev9–dev17) are regression tools; `redlite-engine`
+supersedes them.
+
 
 ### dev26 (completion) — long positions, sanitized chat turn, kernel self-test, split-K attention (M4 Max 48 GiB)
 

@@ -124,6 +124,8 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
    dev20 batched prefill: `redmetal_engine_prefill.m` + `redmetal_engine_private.h`,
    dev21 GPU-routed decode: `rl_route` kernel + residency table in the pool; dev23 per-layer early-out (`step_routed`,
    flag at buffer index 30 of every decode kernel) and pre-gated prefetch in `rl_metal_engine_step_sync`;
+   dev24 prefill prefetch thread + parallel router selection in `redmetal_engine_prefill.m`; dev26 split-K decode
+   attention (`attn_gqa_split`/`attn_gqa_merge`, above 256 positions) and the model-free `redmetal_engine_selftest.m`;
    `redlite_native_tokenizer.[ch]`, `redlite_native_sampler.[ch]`,
    `redlite_native_generate_cli.c`). `rl_engine` owns the mmap'd GGUF
    (`redlite_native_gguf_dir.[ch]`), the audited per-layer tensor table and two

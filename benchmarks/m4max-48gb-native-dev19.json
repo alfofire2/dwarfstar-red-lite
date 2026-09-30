@@ -455,5 +455,60 @@
     "kernel_selftest": "redlite-engine kernel-selftest: rows/rows2 16 shapes worst rel 1.1e-7; guard; copy; rl_route 64 cases; attention 6 lengths worst abs 8.2e-8",
     "regression": "46/46 after rm -rf .deps/redmetal && make native (0 warnings)",
     "note": "M4 Max only; not measured on the M4 Pro 24 GiB"
+  },
+  "release_0_3_0": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "version": "0.3.0",
+    "date": "2026-09-30",
+    "summary_tok_s": {
+      "decode_short_22gib": [
+        69.83,
+        72.72
+      ],
+      "decode_short_4gib": [
+        46.51,
+        50.11
+      ],
+      "decode_p4096_22gib": [
+        63.84,
+        65.51
+      ],
+      "decode_p4096_4gib": [
+        42.29,
+        43.56
+      ],
+      "decode_p8192_22gib": [
+        56.31,
+        57.36
+      ],
+      "decode_p8192_4gib": [
+        38.81,
+        39.23
+      ],
+      "prefill_1100_4gib_median_cooled": 314.3
+    },
+    "milestones": {
+      "dev22": {
+        "target": "decode >= 62 @ 22 GiB",
+        "result": 66.23,
+        "reached": true
+      },
+      "dev23": {
+        "target": "decode >= 45 @ 4 GiB",
+        "result": 50.11,
+        "reached": true
+      },
+      "dev24": {
+        "target": "prefill >= 300 @ 1100 tok, 4 GiB",
+        "result": 314.3,
+        "reached": true
+      },
+      "dev26": {
+        "target": "parity+bench 4096/8192, sanitized chat turn, model-free kernel tests",
+        "reached": true
+      }
+    },
+    "final_validation": "make test 57 OK; ruff clean; make redmetal / make native / make sanitize rc 0, 0 warnings; regress_m4.sh 46/46 after rm -rf .deps/redmetal",
+    "note": "ranges are two measurements of the same code the same night; not measured on the M4 Pro 24 GiB"
   }
 }
