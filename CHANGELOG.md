@@ -2,6 +2,27 @@
 
 ## Unreleased (v0.3-streaming, after 0.3.0.dev21)
 
+### dev22 — decode kernels (M4 Max 48 GiB)
+
+Decode with full expert residency rose from 57.6 to **66.2 tok/s** (target ≥ 62;
+llama.cpp fully resident: 68). Decode with a 4 GiB cache rose from 39.9 to 44.7 tok/s.
+See `docs/REDLITE_DEV22_DECODE_KERNELS.md`.
+
+- **One compute encoder per token** on the GPU-routed path and one per layer on the
+  synchronous path. The layer bodies became shared emitters; the in-token blits became
+  an `rl_copy_f32` dispatch; `redmetal_topk_pool_encode_device_into` appends the routed
+  experts to the caller's encoder. Worth +1.9% on its own.
+- **Sub-block decode GEMV.** For Q4_K, IQ2_XXS, Q6_K and F32 (`rl_rows2_*`), one lane
+  handles one 32- or 16-value sub-block, with up to 32 lanes per row and `float4` loads.
+  This is the main gain. `RL_ENGINE_ROWS2=0` restores the block kernels.
+- **Validation.** Parity with the CPU oracle improved (worst layer abs 5.3e-05 →
+  1.5e-05, 0 router mismatches). Greedy output is identical to llama.cpp.
+  `regress_m4.sh` passes 44/44 after a clean build with 0 warnings.
+- **New dev tools.** `scripts/dev/bench_m4.sh` (median decode/prefill benchmark) and
+  `scripts/dev/quick_parity.sh` (the parity gate used for every kernel change).
+
+### PR #2 content (dev25/dev26 model-free work, merged 3e2257e)
+
 Product surface (part of the dev25 scope) and model-free robustness work (part
 of the dev26 scope). See `docs/REDLITE_DEV25_PRODUCT.md` and
 `docs/REDLITE_DEV26_ROBUSTNESS.md`. Implemented and tested model-free on Linux

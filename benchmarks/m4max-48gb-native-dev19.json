@@ -243,5 +243,34 @@
     },
     "first_attempt_without_residency_set_tps": 11.1,
     "llama_cpp_tg64_tps": 68.0
+  },
+  "dev22_decode_kernels": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3 (median; 256 greedy tokens, fixed rainbow prompt; prefill = first 1100 tokens of tests/fixtures/long_context_prompt.txt, chunks of 512)",
+    "baseline_commit": "3e2257e",
+    "baseline": {
+      "decode_22gib_tps": 57.57,
+      "decode_4gib_tps": 39.85,
+      "prefill_1100_4gib_tps": 240.1
+    },
+    "one_encoder_per_token": {
+      "decode_22gib_tps": 58.65,
+      "decode_4gib_tps": 40.17
+    },
+    "dev22": {
+      "decode_22gib_tps": 66.23,
+      "decode_4gib_tps": 44.7,
+      "prefill_1100_4gib_tps": 248.5,
+      "gpu_routed_tokens": "255/255"
+    },
+    "ab_same_build_RL_ENGINE_ROWS2_0_decode_22gib_tps": 59.87,
+    "parity": {
+      "gpu_routed_worst_layer_abs": 1.53e-05,
+      "router_mismatches": 0,
+      "greedy_vs_llama_cpp": "identical (24 tokens)"
+    },
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "llama_cpp_tg64_tps": 68.0,
+    "note": "single machine, idle, medians of 3 runs; not measured on the M4 Pro 24 GiB (the 22 GiB configuration needs >= 40 GiB RAM)"
   }
 }
