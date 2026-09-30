@@ -175,8 +175,51 @@ def plan_for(hw: HardwareInfo, model_path: str | Path, context: int | None = Non
 # the cache is >= 21 300 MiB, docs/REDLITE_DEV21_GPU_ROUTED_DECODE.md); it was validated on
 # the M4 Max 48 GiB. Below 40 GiB the field-validated 4 GiB bounded cache is used.
 NATIVE_FULL_RESIDENCY_MIN_RAM_GIB = 40.0
-NATIVE_FULL_RESIDENCY_CACHE_MIB = 22528
 NATIVE_BOUNDED_CACHE_MIB = 4096
+# Metal's recommendedMaxWorkingSetSize is ~78% of RAM on Apple Silicon (37.44 GiB on the M4 Max 48 GiB):
+# a full-residency cache plus the mapped dense weights must stay below this fraction of RAM.
+NATIVE_WORKING_SET_FRACTION = 0.75
+NATIVE_SLOT_ALIGNMENT = 4096
+# dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
+# first one present whose full residency fits, else the 24 GiB reference file
+NATIVE_MODEL_PREFERENCE = (
+    "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+    "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+)
+NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
+
+
+@dataclass(frozen=True)
+class NativeResidency:
+    cache_mib: int          # expert cache that holds every routed expert of the file
+    dense_bytes: int        # everything else in the file (mapped dense weights, embeddings, head)
+
+
+def native_residency(model_path: str | Path) -> NativeResidency | None:
+    """Full-residency cache of a GGUF from its real expert payload (dev31).
+
+    Same formula as rl_engine_full_residency_mib() in the native engine: layers x experts pool slots of the largest
+    gate+up+down expert triplet, rounded up to 4 KiB. None when the file is not a readable Qwen3-Next MoE GGUF.
+    """
+    from .expert_map import build_expert_map
+
+    try:
+        emap = build_expert_map(model_path)
+    except (OSError, ValueError):
+        return None
+    if not emap.all_slice_safe or not emap.expert_tensors:
+        return None
+    triplets: dict[int, int] = {}
+    for t in emap.expert_tensors:
+        triplets[t.layer] = triplets.get(t.layer, 0) + t.expert_stride_bytes
+    slot = -(-max(triplets.values()) // NATIVE_SLOT_ALIGNMENT) * NATIVE_SLOT_ALIGNMENT
+    total = slot * len(triplets) * emap.expert_count
+    size = Path(model_path).stat().st_size
+    return NativeResidency(-(-total // (1024 * 1024)), max(0, size - emap.total_routed_payload_bytes))
+
+
+def native_full_residency_fits(ram_bytes: int, residency: NativeResidency) -> bool:
+    return residency.cache_mib * 1024 * 1024 + residency.dense_bytes <= ram_bytes * NATIVE_WORKING_SET_FRACTION
 
 
 @dataclass(frozen=True)
@@ -186,15 +229,44 @@ class NativeDefaults:
     reason: str
 
 
-def native_defaults(ram_bytes: int) -> NativeDefaults:
+def native_defaults(ram_bytes: int, model_path: str | Path | None = None) -> NativeDefaults:
     ram_gib = ram_bytes / GIB
+    if ram_gib >= NATIVE_FULL_RESIDENCY_MIN_RAM_GIB and model_path is not None:
+        res = native_residency(model_path)
+        if res is None:
+            reason = f"{ram_gib:.1f} GiB RAM, but the expert payload of {Path(model_path).name} could not be read"
+        elif native_full_residency_fits(ram_bytes, res):
+            return NativeDefaults(
+                res.cache_mib, True,
+                f"{ram_gib:.1f} GiB RAM >= {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB: full expert residency "
+                f"({res.cache_mib} MiB from the file's expert payload), preloaded at open, GPU-routed decode",
+            )
+        else:
+            reason = (f"{ram_gib:.1f} GiB RAM: full residency of {Path(model_path).name} needs {res.cache_mib} MiB + "
+                      f"{res.dense_bytes / GIB:.1f} GiB dense, above {NATIVE_WORKING_SET_FRACTION:.0%} of RAM")
+        return NativeDefaults(NATIVE_BOUNDED_CACHE_MIB, False, reason + "; bounded 4 GiB expert cache")
     if ram_gib >= NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:
-        return NativeDefaults(
-            NATIVE_FULL_RESIDENCY_CACHE_MIB, True,
-            f"{ram_gib:.1f} GiB RAM >= {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB: "
-            "full expert residency, preloaded at open, GPU-routed decode",
-        )
+        return NativeDefaults(NATIVE_BOUNDED_CACHE_MIB, False, f"{ram_gib:.1f} GiB RAM, no model to size: bounded 4 GiB expert cache")
     return NativeDefaults(
         NATIVE_BOUNDED_CACHE_MIB, False,
         f"{ram_gib:.1f} GiB RAM < {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB: bounded 4 GiB expert cache",
     )
+
+
+def select_native_model(models_dir: str | Path, ram_bytes: int) -> Path | None:
+    """dev31: the best native model present in models_dir for this machine.
+
+    With >= 40 GiB of RAM the first file of NATIVE_MODEL_PREFERENCE whose full residency fits is chosen; otherwise
+    (or when none fits) the 24 GiB reference file, else the first known file present.
+    """
+    d = Path(models_dir)
+    present = [d / name for name in NATIVE_MODEL_PREFERENCE if (d / name).is_file()]
+    if not present:
+        return None
+    if ram_bytes / GIB >= NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:
+        for p in present:
+            res = native_residency(p)
+            if res is not None and native_full_residency_fits(ram_bytes, res):
+                return p
+    ref = d / NATIVE_REFERENCE_MODEL
+    return ref if ref.is_file() else present[-1]

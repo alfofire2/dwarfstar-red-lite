@@ -20,7 +20,7 @@ class CliTests(unittest.TestCase):
 
     def test_native_chat_defaults(self):
         a = self.p.parse_args(["chat"])
-        self.assertTrue(a.model.endswith("models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"))
+        self.assertIsNone(a.model)  # dev31: chosen at run time among models/ (redlite.planner.select_native_model)
         self.assertEqual(a.context, 4096)
         self.assertIsNone(a.cache_mib)  # chosen from RAM at run time (redlite.planner.native_defaults)
         self.assertIsNone(a.batch)

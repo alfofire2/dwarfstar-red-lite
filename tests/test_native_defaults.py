@@ -9,9 +9,15 @@ from redlite.cli import main
 from redlite.hardware import GIB, HardwareInfo
 from redlite.planner import (
     NATIVE_BOUNDED_CACHE_MIB,
-    NATIVE_FULL_RESIDENCY_CACHE_MIB,
+    NativeResidency,
     native_defaults,
+    native_residency,
+    select_native_model,
 )
+
+# a GGUF whose experts need 21312 MiB (the IQ2_XXS reference file) and 1.06 GiB of dense weights
+IQ2 = NativeResidency(21312, int(1.06 * GIB))
+IQ3 = NativeResidency(29376, int(1.42 * GIB))
 
 
 def _hw(ram_gib: float) -> HardwareInfo:
@@ -22,15 +28,44 @@ def _hw(ram_gib: float) -> HardwareInfo:
 
 
 class NativeDefaultsTests(unittest.TestCase):
-    def test_48gb_gets_full_residency(self):
-        d = native_defaults(48 * GIB)
+    def test_48gb_gets_full_residency_from_the_payload(self):
+        with patch("redlite.planner.native_residency", return_value=IQ3):
+            d = native_defaults(48 * GIB, "m.gguf")
         self.assertTrue(d.full_residency)
-        self.assertEqual(d.cache_mib, NATIVE_FULL_RESIDENCY_CACHE_MIB)
-        self.assertEqual(d.cache_mib, 22528)
+        self.assertEqual(d.cache_mib, 29376)
+        self.assertIn("29376 MiB from the file's expert payload", d.reason)
 
     def test_threshold_is_inclusive_at_40gb(self):
-        self.assertTrue(native_defaults(40 * GIB).full_residency)
-        self.assertFalse(native_defaults(40 * GIB - 1).full_residency)
+        with patch("redlite.planner.native_residency", return_value=IQ2):
+            self.assertTrue(native_defaults(40 * GIB, "m.gguf").full_residency)
+            self.assertFalse(native_defaults(40 * GIB - 1, "m.gguf").full_residency)
+
+    def test_full_residency_must_fit_the_working_set(self):
+        with patch("redlite.planner.native_residency", return_value=IQ3):
+            d = native_defaults(40 * GIB, "m.gguf")   # 29376 MiB + 1.42 GiB > 75% of 40 GiB
+        self.assertFalse(d.full_residency)
+        self.assertEqual(d.cache_mib, NATIVE_BOUNDED_CACHE_MIB)
+
+    def test_unreadable_model_falls_back_to_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "x.gguf"
+            bad.write_bytes(b"not a gguf")
+            self.assertIsNone(native_residency(bad))
+            d = native_defaults(48 * GIB, bad)
+        self.assertFalse(d.full_residency)
+        self.assertIn("could not be read", d.reason)
+
+    def test_best_model_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            self.assertIsNone(select_native_model(d, 48 * GIB))
+            for n in ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf"):
+                (d / n).write_bytes(b"GGUF")
+            sizes = {"Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf": IQ3, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf": IQ2}
+            with patch("redlite.planner.native_residency", side_effect=lambda p: sizes[Path(p).name]):
+                self.assertEqual(select_native_model(d, 48 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
+                self.assertEqual(select_native_model(d, 40 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")
+                self.assertEqual(select_native_model(d, 24 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")
 
     def test_24gb_gets_bounded_4gb_cache(self):
         d = native_defaults(24 * GIB)
@@ -46,6 +81,7 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_generate", return_value=Path("/x/redlite-generate")), \
                  contextlib.redirect_stdout(out):
                 self.assertEqual(main(["chat", str(model), "--dry-run", *extra]), 0)
@@ -53,7 +89,7 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
 
     def test_chat_without_flags_on_48gb_uses_full_residency(self):
         text = self._run(48)
-        self.assertIn("--cache-mib 22528", text)
+        self.assertIn("--cache-mib 21312", text)
         self.assertIn("full expert residency", text)
         self.assertNotIn("--batch", text)
 
@@ -78,6 +114,7 @@ class NativeServeCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
                  contextlib.redirect_stdout(out):
                 self.assertEqual(main(["serve", str(model), "--native", "--dry-run", *extra]), 0)
@@ -86,7 +123,7 @@ class NativeServeCliTests(unittest.TestCase):
     def test_serve_native_builds_the_redlite_server_command(self):
         text = self._run(48, "--port", "9000", "-c", "8192", "--batch", "256")
         self.assertIn("/x/redlite-server", text)
-        self.assertIn("--host 127.0.0.1 --port 9000 --context 8192 --cache-mib 22528 --batch 256", text)
+        self.assertIn("--host 127.0.0.1 --port 9000 --context 8192 --cache-mib 21312 --batch 256", text)
         self.assertNotIn("llama-server", text)
 
     def test_serve_native_on_24gb_defaults_to_4gb_and_4096_context(self):
