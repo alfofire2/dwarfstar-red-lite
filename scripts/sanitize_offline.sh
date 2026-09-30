@@ -49,7 +49,7 @@ build redlite-engine-offline-test \
   "$N/redlite_native_quant_cpu.c" "$N/redlite_native_shared_exec.c" \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_sampler.c"
 build redlite-server-fake \
-  "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c"
+  "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c" -pthread
 build redlite-sampler-dist \
   "$N/redlite_native_sampler_dist_cli.c" "$N/redlite_native_sampler.c"
 build redlite-gguf-fuzz \
