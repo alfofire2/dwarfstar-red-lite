@@ -44,7 +44,12 @@ def main() -> int:
     if a.size % rec or b.size % rec:
         print(f"bad dump sizes: {a.size} {b.size} (record {rec})", file=sys.stderr)
         return 1
-    n = min(a.size // rec, b.size // rec)
+    if a.size != b.size or a.size == 0:
+        # an empty or short dump (a crashed or truncated run) must never compare as parity
+        print(f"dump token counts differ or are empty: native {a.size // rec}, reference {b.size // rec}")
+        print("ORACLE LOGITS PARITY: NO")
+        return 1
+    n = a.size // rec
     a = a[: n * rec].reshape(n, rec)
     b = b[: n * rec].reshape(n, rec)
     worst_logit = 0.0
