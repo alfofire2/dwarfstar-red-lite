@@ -57,5 +57,86 @@
    "reuse": 167
   },
   "answer_sha1": "1f94f64826b2 (identical in every configuration)"
+ },
+ "dev30_prefill": {
+  "commit": "fca7d78",
+  "command": "scripts/dev/bench_m4.sh MODEL --reps 3 --cool 90 --only prefill|prefill8192|prefill22",
+  "steps_4gib_chunk512_tok_s": {
+   "0.3.0": [
+    307.3,
+    212.6
+   ],
+   "tiled_attention": [
+    310.1,
+    309.1
+   ],
+   "matrix_experts": [
+    428.3,
+    439.0
+   ],
+   "deltanet_simdgroup": [
+    490.2,
+    534.0
+   ],
+   "staged_gemm": [
+    518.0,
+    631.1
+   ],
+   "residency_set": [
+    565.6,
+    605.4
+   ],
+   "final_with_warmup": [
+    545.8,
+    645.6
+   ]
+  },
+  "full_residency_22gib_default_chunk2048_tok_s": {
+   "prefill1100": 891.9,
+   "prefill8192": 926.9,
+   "runs1100": [
+    896.2,
+    745.9,
+    891.9
+   ],
+   "runs8192": [
+    930.7,
+    926.9,
+    874.3
+   ]
+  },
+  "llama_cpp_same_ids_tok_s": {
+   "prefill1100": 858.34,
+   "prefill8192": 893.71
+  },
+  "reverted": {
+   "gpu_router_ab_medians": {
+    "on": 571.3,
+    "off": 566.5
+   },
+   "expert_skip_empty_block_experts_gpu_ms": 901
+  },
+  "decode": {
+   "decode22_5runs": [
+    71.62,
+    70.94,
+    70.51,
+    71.64,
+    71.15
+   ],
+   "decode22_median": 71.15,
+   "decode4_median": 47.77,
+   "ab_22gib_vs_0.3.0_medians": {
+    "dev30": 71.09,
+    "0.3.0": 70.465
+   }
+  },
+  "positions_8192_max_abs_logit": {
+   "dev30_4gib_b512": 3.81,
+   "dev30_22gib_b2048": 4.48,
+   "0.3.0_22gib_b512": 2.27,
+   "0.3.0_22gib_token_by_token_vs_llama": 4.29,
+   "0.3.0_token_by_token_vs_0.3.0_b512": 4.45
+  }
  }
 }

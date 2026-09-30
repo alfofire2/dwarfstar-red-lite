@@ -2,6 +2,23 @@
 
 ## Unreleased (0.4.0 cycle, branch `dev/0.4`)
 
+### dev30 — batched prefill: tiled attention, matrix experts, faster dense pass (M4 Max 48 GiB)
+
+- Tiled causal attention (`attn_fa_b`, flash-attention order on f32 simdgroup matrices),
+  batched experts on simdgroup matrices with split accumulators, DeltaNet recurrence with one
+  simdgroup per state row, threadgroup-staged dense GEMM, one Metal residency set for every
+  engine buffer, 2048-token chunks by default when every expert is preloaded (512 otherwise),
+  no expert prefetch under full residency.
+- Prefill at 22 GiB (full residency, default chunk): **891.9 tok/s** on 1100 tokens
+  (pinned llama.cpp on the same ids: 858.34) and **926.9 tok/s** on 8192 (0.3.0: 307.3 /
+  212.6 at 4 GiB). At 4 GiB with 512-token chunks: 545.8 / 645.6. Decode unchanged
+  (A/B at 22 GiB: 71.09 vs 70.47 for the 0.3.0 binary).
+- Tried and reverted: router selection on the GPU (no measurable gain), skipping empty
+  pair blocks in the expert kernels (slower).
+- `regress_m4.sh`: `logits.long_context_full_residency`; `long_positions.sh` bound 5.0 at
+  ≥ 8192 positions (native self-consistency floor 4.45 measured on 0.3.0);
+  `bench_m4.sh --only prefill22`; `RL_PREFILL_PROFILE=1`. See `docs/REDLITE_DEV30_PREFILL.md`.
+
 ### dev29 — server: state reuse across turns, stop sequences, FIFO queue (M4 Max 48 GiB)
 
 - `redlite-server` keeps the engine state between requests when the new prompt's ids extend

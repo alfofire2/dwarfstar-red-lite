@@ -126,9 +126,9 @@ will be SSD reads.
 - **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
   GGUF, expert misses become SSD reads. The expert prefetch (`RL_ENGINE_PREFETCH=0` turns
   it off) may help less there, or hurt.
-- **Long contexts slow down.** Decode attention is linear in the position. The batched
-  prefill's attention was not optimized, so prompt ingestion falls from ~314 tok/s at
-  1100 tokens to ~203 tok/s at 8192.
+- **Long contexts slow down decode.** Decode attention is linear in the position (split-K
+  above 256 positions). Prompt ingestion does not slow down (dev30: tiled attention; ~890 /
+  ~930 tok/s at 1100 / 8192 tokens with full residency on the M4 Max).
 - **Quantization.** IQ2_XXS is a very low-bit quantization. Red Lite reproduces llama.cpp
   on this file; it does not improve the file's quality.
 
