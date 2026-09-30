@@ -1443,6 +1443,79 @@ int redmetal_topk_pool_encode_device(
     }
 }
 
+int redmetal_topk_pool_encode_device_into(
+        redmetal_topk_pool_t handle,
+        void *mtl_compute_encoder,
+        void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset,
+        uint32_t top_k,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint64_t gate_bytes,
+        uint64_t up_bytes,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
+        if (!top_k || top_k > REDMETAL_TOPK_MAX || (ggml_type != 17u && ggml_type != 29u) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
+            topk_set_error("invalid device-driven top-k request"); return 0;
+        }
+        if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
+        id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
+        id<MTLBuffer> table = (__bridge id<MTLBuffer>)slot_table_buffer;
+        id<MTLBuffer> weights = (__bridge id<MTLBuffer>)weight_buffer;
+        id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
+        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+        const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
+        const uint64_t up_offset = gate_bytes;
+        const uint64_t down_offset = gate_bytes + up_bytes;
+        const uint32_t row_start = 0u;
+
+        id<MTLComputeCommandEncoder> enc = (__bridge id<MTLComputeCommandEncoder>)mtl_compute_encoder;
+        redmetal_topk_pool_use_all_slabs(handle, (__bridge void *)enc);
+        [enc setComputePipelineState:p->_gateupPipeline];
+        [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
+        [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
+        [enc setBuffer:input offset:(NSUInteger)input_offset atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:grid offset:0 atIndex:6];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+        [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+
+        [enc setComputePipelineState:p->_downPipeline];
+        [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+        [enc setBytes:&row_start length:sizeof(row_start) atIndex:2];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:3];
+        [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:6];
+        [enc setBuffer:grid offset:0 atIndex:7];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
+        [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+
+        [enc setComputePipelineState:p->_sumPipeline];
+        [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
+        [enc setBuffer:weights offset:(NSUInteger)weight_offset atIndex:1];
+        [enc setBuffer:output offset:(NSUInteger)output_offset atIndex:2];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:3];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
+        [enc dispatchThreads:MTLSizeMake(hidden_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        return 1;
+    }
+}
+
 int redmetal_topk_pool_encode(
         redmetal_topk_pool_t handle,
         void *mtl_command_buffer,

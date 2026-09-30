@@ -136,6 +136,24 @@ int redmetal_topk_pool_encode_device(
     void *mtl_output_buffer,
     uint64_t output_offset);
 
+/* dev22: same three dispatches as redmetal_topk_pool_encode_device, appended to an open compute encoder
+ * (serial dispatch) instead of three encoders of a command buffer. */
+int redmetal_topk_pool_encode_device_into(
+    redmetal_topk_pool_t pool,
+    void *mtl_compute_encoder,
+    void *slot_table_buffer, uint64_t slot_table_offset,
+    void *weight_buffer, uint64_t weight_offset,
+    uint32_t top_k,
+    uint32_t ggml_type,
+    uint32_t hidden_size,
+    uint32_t ffn_size,
+    uint64_t gate_bytes,
+    uint64_t up_bytes,
+    void *mtl_input_buffer,
+    uint64_t input_offset,
+    void *mtl_output_buffer,
+    uint64_t output_offset);
+
 /*
  * Batched prefill (dev20b): n_expert unique experts (slot table) serve n_pairs
  * (expert, token) pairs sorted by expert (expert_start[n_expert+1] prefix

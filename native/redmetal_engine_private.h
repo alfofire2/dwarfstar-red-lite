@@ -51,7 +51,9 @@ struct rl_metal_engine {
     int spec_enabled;              /* RL_ENGINE_SPECULATIVE != 0 and residency table available */
     uint64_t misses_seen;          /* pool cache misses observed so far (to know whether the last token missed) */
     int last_token_missed;         /* the previous token needed a load: decode the next one synchronously */
-    id<MTLComputePipelineState> p_route;
+    id<MTLComputePipelineState> p_route, p_copy;
+    id<MTLComputePipelineState> p_rows2_q4k, p_rows2_q6k, p_rows2_iq2xxs, p_rows2_f32;   /* dev22 sub-block decode GEMV */
+    int rows2;                     /* RL_ENGINE_ROWS2 != 0 (default): decode uses the sub-block kernels */
     id<MTLBuffer> plan_slots, plan_weights, plan_ids, plan_miss, layer_out_gpu;
     __unsafe_unretained id<MTLBuffer> *bk_conv, *bk_rec;   /* state backups for the fallback */
     int preloaded;                 /* every routed expert was loaded at open (cache holds them all) */
@@ -66,6 +68,8 @@ id<MTLComputePipelineState> make_pipe(id<MTLDevice> dev, id<MTLLibrary> lib, NSS
 void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max);
 uint32_t lanes_for(uint32_t type, uint32_t ncols);
 void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out);
+void emit_rows(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out);
+void emit_rms(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps);
 void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps);
 int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char *error, size_t cap);
 
