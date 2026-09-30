@@ -9,6 +9,10 @@
 //   redlite-ref-llama MODEL tokenize --text "..." [--no-special]
 //   redlite-ref-llama MODEL tokenize --file CORPUS [--no-special]   (one input per line, \n \t \\ escapes)
 //   redlite-ref-llama MODEL greedy --tokens a,b,c --max N [--ctx N]
+//   redlite-ref-llama MODEL bench --tokens a,b,c [--max N] [--ctx N]
+//       throughput of the pinned llama.cpp on the same ids, with its default context parameters
+//       (n_batch 2048, n_ubatch 512, flash attention auto, f16 KV): one prefill of the ids, then N
+//       greedy tokens one at a time. Development measurement only.
 //
 // Dump layout per token (little-endian f32):
 //   [hidden] embedding, [n_layer][hidden] layer outputs, [hidden] result_norm, [vocab] logits
@@ -17,6 +21,7 @@
 #include "ggml.h"
 #include "llama.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -191,6 +196,40 @@ int main(int argc, char **argv) {
     cap.hidden = llama_model_n_embd(model);
     cap.layers.resize((size_t)cap.n_layer);
     cap.router_layer = router_layer;
+
+    if (cmd == "bench") {
+        llama_context_params bp = llama_context_default_params();
+        bp.n_ctx = (uint32_t)std::max<size_t>((size_t)n_ctx, tokens.size() + (size_t)max_new + 16);
+        bp.n_seq_max = 1;
+        llama_context *bctx = llama_init_from_model(model, bp);
+        if (!bctx) { fprintf(stderr, "context init failed\n"); return 1; }
+        const size_t nb = (size_t)llama_n_batch(bctx);
+        const auto t0 = std::chrono::steady_clock::now();
+        for (size_t off = 0; off < tokens.size(); off += nb) {
+            const size_t n = std::min(nb, tokens.size() - off);
+            if (llama_decode(bctx, llama_batch_get_one(tokens.data() + off, (int32_t)n)) != 0) { fprintf(stderr, "prefill failed\n"); return 1; }
+        }
+        llama_synchronize(bctx);
+        const auto t1 = std::chrono::steady_clock::now();
+        const double pms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        printf("llama prefill %zu tokens: %.1f ms (%.2f tok/s) n_batch=%u n_ubatch=%u\n", tokens.size(), pms,
+               1000.0 * (double)tokens.size() / pms, llama_n_batch(bctx), llama_n_ubatch(bctx));
+        llama_token tok = 0;
+        const auto t2 = std::chrono::steady_clock::now();
+        for (int i = 0; i < max_new; ++i) {
+            const float *lg = llama_get_logits_ith(bctx, -1);
+            int best = 0;
+            for (int v = 1; v < n_vocab; ++v) if (lg[v] > lg[best]) best = v;
+            tok = best;
+            if (llama_decode(bctx, llama_batch_get_one(&tok, 1)) != 0) { fprintf(stderr, "decode failed\n"); return 1; }
+        }
+        llama_synchronize(bctx);
+        const double dms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t2).count();
+        if (max_new > 0) printf("llama decode %d tokens: %.1f ms (%.2f tok/s)\n", max_new, dms, 1000.0 * max_new / dms);
+        llama_free(bctx);
+        llama_model_free(model);
+        return 0;
+    }
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = (uint32_t)n_ctx;
