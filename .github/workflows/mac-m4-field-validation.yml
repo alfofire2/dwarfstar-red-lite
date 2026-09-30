@@ -160,6 +160,14 @@ jobs:
           set -euo pipefail
           .deps/redmetal/redlite-engine-offline-test "$REDLITE_MODEL_PATH" 2>&1 | tee artifacts/engine-offline.log
 
+      - name: Engine decode kernel self-test (model-free)
+        id: engine_kernels
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine kernel-selftest 2>&1 | tee artifacts/engine-kernels.log
+          grep -q "ENGINE KERNEL SELFTEST: OK" artifacts/engine-kernels.log
+
       - name: Persistent engine multi-token CPU-vs-Metal parity
         id: engine_parity
         shell: bash

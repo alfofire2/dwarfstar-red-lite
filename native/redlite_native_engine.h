@@ -126,6 +126,10 @@ double rl_engine_now_ms_public(void);
 /* Dequantized token embedding row (hidden floats) into out. */
 int rl_engine_embed_token(const rl_engine *engine, uint32_t token, float *out, char *error, size_t error_cap);
 
+/* macOS, redlite-engine only (redmetal_engine_selftest.m): model-free check of the dev21-dev26 decode kernels
+ * on synthetic weights against the CPU reference. report receives a short summary. */
+int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

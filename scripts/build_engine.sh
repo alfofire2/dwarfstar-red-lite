@@ -46,9 +46,11 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_router.m" \
     "$ROOT/native/redmetal_engine.m" \
     "$ROOT/native/redmetal_engine_prefill.m" \
+    "$ROOT/native/redmetal_engine_selftest.m" \
     -framework Foundation -framework Metal -lm -lpthread \
     -o "$OUT/redlite-engine"
   "$OUT/redlite-engine" --help >/dev/null || true
+  "$OUT/redlite-engine" kernel-selftest
   GEN=("${ENGINE[@]:1}")
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \

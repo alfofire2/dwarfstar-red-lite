@@ -45,6 +45,7 @@ static uint32_t parse_tokens(const char *list, uint32_t *out, uint32_t cap) {
         if (*p == ',') ++p;
         else if (*p) return 0;
     }
+    if (p && *p) return 0;   /* more ids than the capacity: reject instead of truncating */
     return n;
 }
 
@@ -96,7 +97,9 @@ static void usage(FILE *out) {
         "      --batch N: ingest the tokens before --dump-from with the batched Metal prefill (chunks of N) instead of token by token\n"
         "  redlite-engine prefill MODEL --tokens a,b,c [--batch N] [--cpu] [--context N] [--cache-mib N]\n"
         "      batched Metal prefill vs token-by-token Metal steps (and the CPU oracle with --cpu): last-token layer outputs, router ids, logits\n"
-        "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n");
+        "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n"
+        "  redlite-engine kernel-selftest\n"
+        "      model-free: decode GEMV kernels (block and sub-block), early-out guard, rl_copy_f32, rl_route and decode attention vs the CPU reference\n");
 }
 
 static void print_info(const rl_engine_info *in) {
@@ -114,12 +117,22 @@ static void print_info(const rl_engine_info *in) {
 
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
+#ifdef __APPLE__
+    if (argc == 2 && strcmp(argv[1], "kernel-selftest") == 0) {
+        char report[1024] = {0}, err[512] = {0};
+        if (!rl_metal_kernel_selftest(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel self-test FAILED: %s\n", err); return 1; }
+        printf("%s\nENGINE KERNEL SELFTEST: OK\n", report);
+        return 0;
+    }
+#endif
     if (argc < 3) { usage(stderr); return 2; }
     const char *cmd = argv[1];
     const char *model = argv[2];
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
-    uint32_t tokens[4096];
+    /* long-position parity (dev26) needs prompts well beyond 4096 ids */
+    enum { RL_CLI_MAX_TOKENS = 65536 };
+    static uint32_t tokens[RL_CLI_MAX_TOKENS];
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
     const char *out_path = NULL;
@@ -135,7 +148,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--cpu") == 0) { with_cpu = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--tokens") == 0) {
-            token_count = parse_tokens(argv[++i], tokens, 4096u);
+            token_count = parse_tokens(argv[++i], tokens, RL_CLI_MAX_TOKENS);
             if (!token_count) { fprintf(stderr, "invalid --tokens list\n"); return 2; }
         } else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
         else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }

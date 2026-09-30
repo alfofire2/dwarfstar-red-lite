@@ -75,6 +75,7 @@ run selftest.engine "$BIN/redlite-engine-offline-test"
 run selftest.attention "$BIN/redlite-attention" --selftest
 run selftest.gguf_fuzz "$BIN/redlite-gguf-fuzz" --iterations 20000
 run selftest.sanitize bash "$ROOT/scripts/sanitize_offline.sh"
+expect_line selftest.engine_kernels "ENGINE KERNEL SELFTEST: OK" "$BIN/redlite-engine" kernel-selftest
 
 echo "== stage parity (real GGUF) =="
 expect_line topk.parity "parity match       : YES" "$BIN/redlite-native" topk-parity "$MODEL"
@@ -112,6 +113,9 @@ echo "== batched prefill (dev20) =="
 expect_line prefill.parity.chunks8 "BATCHED PREFILL PARITY: YES" "$BIN/redlite-engine" prefill "$MODEL" --tokens 151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198 --batch 8 --cache-mib 1024 --context 64
 PREFILL96="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$(cat "$ROOT/tests/fixtures/long_context_prompt.txt")" --no-special | head -1 | cut -d',' -f1-96)"
 expect_line prefill.parity.96 "BATCHED PREFILL PARITY: YES" "$BIN/redlite-engine" prefill "$MODEL" --tokens "$PREFILL96" --batch 32 --cache-mib 2048 --context 128
+
+echo "== sanitized chat turn (dev26: ASan+UBSan redlite-generate on the real model) =="
+expect_line generate.sanitize "SANITIZED CHAT TURN: OK" bash "$ROOT/scripts/dev/sanitize_chat.sh" "$MODEL"
 
 echo "== tokenizer / generation =="
 PROMPT="Explain in one sentence why the sky is blue."
