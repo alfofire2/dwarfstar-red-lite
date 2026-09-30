@@ -139,6 +139,8 @@ int rl_engine_embed_token(const rl_engine *engine, uint32_t token, float *out, c
 /* macOS, redlite-engine only (redmetal_engine_selftest.m): model-free check of the dev21-dev26 decode kernels
  * on synthetic weights against the CPU reference. report receives a short summary. */
 int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_t cap);
+/* development: decode GEMV bandwidth per weight type (redlite-engine kernel-bench) */
+int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t cap);
 
 #ifdef __cplusplus
 }

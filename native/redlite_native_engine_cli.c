@@ -123,6 +123,12 @@ static void print_info(const rl_engine_info *in) {
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
 #ifdef __APPLE__
+    if (argc == 2 && strcmp(argv[1], "kernel-bench") == 0) {
+        char report[4096] = {0}, err[512] = {0};
+        if (!rl_metal_kernel_bench(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel bench failed: %s\n", err); return 1; }
+        printf("%s", report);
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "kernel-selftest") == 0) {
         char report[1024] = {0}, err[512] = {0};
         if (!rl_metal_kernel_selftest(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel self-test FAILED: %s\n", err); return 1; }

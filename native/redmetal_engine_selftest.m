@@ -51,7 +51,9 @@ static void st_put_half(uint8_t *p, float v) { const uint16_t h = st_half(v); p[
 static size_t st_row_bytes(uint32_t type, uint32_t cols) {
     switch (type) {
         case 0:  return (size_t)cols * 4u;
+        case 8:  return (size_t)cols / 32u * 34u;
         case 12: return (size_t)cols / 256u * 144u;
+        case 13: return (size_t)cols / 256u * 176u;
         case 14: return (size_t)cols / 256u * 210u;
         case 16: return (size_t)cols / 256u * 66u;
         default: return rl_iq3_row_bytes(type, cols);   /* dev31: IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS */
@@ -63,10 +65,12 @@ static void st_fill_row(uint32_t type, uint32_t cols, uint8_t *row) {
     const size_t bytes = st_row_bytes(type, cols);
     if (type == 0u) { float *f = (float *)(void *)row; for (uint32_t i = 0; i < cols; ++i) f[i] = st_uniform(); return; }
     for (size_t i = 0; i < bytes; ++i) row[i] = (uint8_t)st_next();
+    if (type == 8u) { for (uint32_t b = 0; b < cols / 32u; ++b) st_put_half(row + (size_t)b * 34u, 0.001f + 0.01f * fabsf(st_uniform())); return; }
     for (uint32_t b = 0; b < cols / 256u; ++b) {
         if (type == 12u) { uint8_t *bp = row + (size_t)b * 144u; st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); st_put_half(bp + 2, 0.001f + 0.01f * fabsf(st_uniform())); }
         if (type == 14u) { uint8_t *bp = row + (size_t)b * 210u; st_put_half(bp + 208, 0.001f + 0.004f * fabsf(st_uniform())); }
         if (type == 16u) { uint8_t *bp = row + (size_t)b * 66u; st_put_half(bp, 0.01f + 0.05f * fabsf(st_uniform())); }
+        if (type == 13u) { uint8_t *bp = row + (size_t)b * 176u; st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); st_put_half(bp + 2, 0.001f + 0.01f * fabsf(st_uniform())); }
         if (rl_iq3_supported(type)) { uint8_t *bp = row + (size_t)b * rl_iq3_block_bytes(type); st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); }
     }
 }
@@ -275,6 +279,84 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
     }
     free(ref); free(sc);
     return ok;
+}
+
+/* dev33 (development): effective bandwidth of the decode GEMV per weight type at the shapes of the two GGUFs.
+ * 16 copies of each matrix (beyond the system cache), 256 dispatches per command buffer, best of 5 after a warm-up. */
+int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t cap) {
+    @autoreleasepool {
+        rl_metal_engine *m = (rl_metal_engine *)calloc(1, sizeof(*m));
+        if (!m) { snprintf(error, cap, "bench allocation failed"); return 0; }
+        int ok = 0;
+        uint8_t grid[RL_IQ2_XXS_GRID_COUNT];
+        m->dev = MTLCreateSystemDefaultDevice();
+        m->queue = m->dev ? [m->dev newCommandQueue] : nil;
+        NSError *le = nil;
+        m->lib = m->dev ? rl_metal_engine_library(m->dev, &le) : nil;
+        if (!m->queue || !m->lib) { snprintf(error, cap, "Metal engine library compile failed"); goto bout; }
+        {
+            struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
+                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q5k, @"rl_rows_q5k"},
+                {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
+                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
+            };
+            for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
+                *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
+                if (!*pipes[i].slot) goto bout;
+            }
+        }
+        if (!rl_native_iq2_xxs_build_grid(grid, error, cap)) goto bout;
+        m->grid = [m->dev newBufferWithBytes:grid length:sizeof(grid) options:MTLResourceStorageModeShared];
+        m->abort_zero = [m->dev newBufferWithLength:16u options:MTLResourceStorageModeShared];
+        memset(m->abort_zero.contents, 0, 16u);
+        m->rows2 = 1;
+        {
+            static const struct { const char *what; uint32_t type, rows, cols; } cases[] = {
+                {"attn_qkv IQ2_XXS", 16u, 8192u, 2048u}, {"attn_qkv IQ3_XXS", 18u, 8192u, 2048u},
+                {"attn_q   IQ2_S  ", 22u, 8192u, 2048u}, {"ssm_out  Q4_K   ", 12u, 2048u, 4096u},
+                {"ssm_out  Q8_0   ", 8u, 2048u, 4096u},  {"attn_out Q6_K   ", 14u, 2048u, 4096u},
+                {"shexp up Q8_0   ", 8u, 512u, 2048u},   {"shexp up IQ4_XS ", 23u, 512u, 2048u},
+                {"shexp dn IQ4_XS ", 23u, 2048u, 512u},  {"shexp dn Q8_0   ", 8u, 2048u, 512u},
+                {"output   Q5_K   ", 13u, 151936u, 2048u},
+            };
+            size_t off = 0;
+            for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+                const uint32_t type = cases[c].type, rows = cases[c].rows, cols = cases[c].cols;
+                const size_t rb = st_row_bytes(type, cols), mb = rb * rows;
+                const uint32_t copies = mb * 16u > (size_t)1u << 31 ? 2u : 16u;
+                id<MTLBuffer> w = [m->dev newBufferWithLength:mb * copies options:MTLResourceStorageModeShared];
+                id<MTLBuffer> x = [m->dev newBufferWithLength:(size_t)cols * 4u options:MTLResourceStorageModeShared];
+                id<MTLBuffer> out = [m->dev newBufferWithLength:(size_t)rows * 4u options:MTLResourceStorageModeShared];
+                if (!w || !x || !out) { snprintf(error, cap, "bench allocation failed"); goto bout; }
+                for (uint32_t r = 0; r < rows * copies; ++r) st_fill_row(type, cols, (uint8_t *)w.contents + (size_t)r * rb);
+                for (uint32_t i = 0; i < cols; ++i) ((float *)x.contents)[i] = st_uniform();
+                double best = 1e30;
+                for (int rep = 0; rep < 6; ++rep) {   /* the first pass only ramps the GPU clock */
+                    id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+                    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                    [enc setBuffer:m->abort_zero offset:0 atIndex:30];
+                    for (uint32_t k = 0; k < 256u; ++k) {
+                        mweight mw = { w, (NSUInteger)(mb * (k % copies)), type, rows, cols };
+                        emit_rows(m, enc, &mw, x, out);
+                    }
+                    [enc endEncoding];
+                    [cb commit]; [cb waitUntilCompleted];
+                    const double ms = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0 / 256.0;
+                    if (rep > 0 && ms < best) best = ms;
+                }
+                off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0, "%s %6u x %5u  %7.1f us  %6.1f GB/s\n",
+                    cases[c].what, rows, cols, best * 1000.0, (double)mb / (best * 1e6));
+                if (off >= report_cap) break;
+            }
+        }
+        ok = 1;
+    bout:
+        m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
+        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q6k = m->p_rows2_iq2xxs = nil;
+        m->grid = nil; m->abort_zero = nil; m->lib = nil; m->queue = nil; m->dev = nil;
+        free(m);
+        return ok;
+    }
 }
 
 int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_t cap) {
