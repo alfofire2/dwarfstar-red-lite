@@ -278,7 +278,7 @@ static NSString * const kTopKSource = @
  * arithmetic as redmetal_topk_iq2_xs_block / redmetal_topk_iq1_m_block, one 8-value group at a time
  * so several rows can be decoded in lockstep and share the activation loads. */
 "inline void rm_group8(uint type, device const uchar *bp, uint gi, device const char *grid, thread float4 &v0, thread float4 &v1) {\n"
-"    if (type != 17u && type != 29u) { rl_iq3_group8(type, bp, gi, v0, v1); return; }\n"
+"    if (type != 17u && type != 29u) { rl_iq3_group8f(type, bp, gi, v0, v1); return; }\n"
 "    float v[8];\n"
 "    if (type == 17u) {\n"
 "        const uint g = gi >> 1; const uint half_ = gi & 1u;\n"

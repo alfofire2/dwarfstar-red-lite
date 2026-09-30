@@ -190,6 +190,30 @@ char *rl_iq3_metal_source(void) {
         "}\n"
         );
     ok = ok && append(&buf, &len, &cap,
+        /* dev33: rl_iq3_group8 with 16-bit loads and uchar4 unpacking; per value the same product db * grid * sign */
+        "static inline float4 rl3_sg4f(uint s, uint shift) { return select(float4(1.0f), float4(-1.0f), ((uint4(s) >> (uint4(0u, 1u, 2u, 3u) + shift)) & 1u) != 0u); }\n"
+        "static inline void rl_iq3_group8f(uint t, device const uchar *bp, uint g, thread float4 &v0, thread float4 &v1) {\n"
+        "    const float d = float(as_type<half>(*(device const ushort *)bp)); const uint sb = g >> 2; const uint l = g & 3u;\n"
+        "    if (t == 18u) {\n"
+        "        device const ushort *a16 = (device const ushort *)(bp + 66u + 4u * sb); const uint aux32 = uint(a16[0]) | (uint(a16[1]) << 16);\n"
+        "        const uint qq = ((device const ushort *)(bp + 2u + 8u * sb))[l];\n"
+        "        const float db = d * (0.5f + float(aux32 >> 28)) * 0.5f;\n"
+        "        const uint s7 = (aux32 >> (7u * l)) & 127u; const uint sg = s7 | ((popcount(s7) & 1u) << 7);\n"
+        "        v0 = db * float4(as_type<uchar4>(rl_iq3xxs_grid[qq & 255u])) * rl3_sg4f(sg, 0u);\n"
+        "        v1 = db * float4(as_type<uchar4>(rl_iq3xxs_grid[qq >> 8])) * rl3_sg4f(sg, 4u);\n"
+        "        return;\n"
+        "    }\n"
+        "    if (t == 21u) {\n"
+        "        const uint qq = ((device const ushort *)(bp + 2u + 8u * sb))[l]; const uint qh = (bp + 66u)[sb]; const uint sg = (bp + 74u + 4u * sb)[l];\n"
+        "        const float db = d * float(1 + 2 * int(((bp + 106u)[sb >> 1] >> (4u * (sb & 1u))) & 15u));\n"
+        "        v0 = db * float4(as_type<uchar4>(rl_iq3s_grid[(qq & 255u) | ((qh << (8u - 2u * l)) & 256u)])) * rl3_sg4f(sg, 0u);\n"
+        "        v1 = db * float4(as_type<uchar4>(rl_iq3s_grid[(qq >> 8) | ((qh << (7u - 2u * l)) & 256u)])) * rl3_sg4f(sg, 4u);\n"
+        "        return;\n"
+        "    }\n"
+        "    rl_iq3_group8(t, bp, g, v0, v1);\n"
+        "}\n"
+        );
+    ok = ok && append(&buf, &len, &cap,
         /* dev33: sum over the 32 values of sub-block sb (0..7) of one block times x[0..31]: the scale and sign words are
          * decoded once per sub-block and the codebook entries unpacked as uchar4 (same values as rl_iq3_group8; the
          * block scale is applied to the sub-block sum, the order of the dev22 IQ2_XXS sub-block kernel) */
