@@ -1,5 +1,9 @@
 # Red Lite dev26 (partial) — model-free robustness: GGUF fuzz, sanitizers, sampler parity
 
+> The items this document lists as not done (4096/8192-position parity and benchmarks, a sanitized
+> chat turn, model-free tests for the dev22–dev24 kernels) were completed later on the M4 Max:
+> see `REDLITE_DEV26_LONG_CONTEXT.md`.
+
 Status: **partial**. This document covers only the dev26 items that need neither
 Metal nor the model:
 - the sanitizer run of the model-free tests;

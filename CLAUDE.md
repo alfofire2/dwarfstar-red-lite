@@ -33,7 +33,7 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (43 checks with the llama.cpp oracle + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (45 checks with the llama.cpp oracle + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
 make sanitize                   # ASan+UBSan build and run of every model-free native test, the GGUF fuzz and the server protocol tests (macOS or Linux)
 bash scripts/build_server.sh    # redlite-server (OpenAI HTTP on rl_engine) + redlite-server-fake (echo backend for tests/test_native_server.py)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
@@ -62,6 +62,10 @@ scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill] [--co
 scripts/dev/quick_parity.sh MODEL [--long --batch N]   # parity gate for kernel/path changes (engine parity, gpu_routed, logits and greedy vs llama.cpp)
 RL_ENGINE_ROWS2=0 ...   # dev22 A/B: decode GEMV back to the dev18 block kernels
 RL_ENGINE_PREFETCH=0 ...   # dev23/dev24 A/B: no pre-gated expert prefetch (synchronous decode and batched prefill)
+RL_ENGINE_ATTN_SPLIT=0 ...   # dev26 A/B: decode attention back to the single-threadgroup kernel (split-K is used above 256 positions)
+.deps/redmetal/redlite-engine kernel-selftest   # model-free Metal check of the decode kernels (GEMV, guard, copy, rl_route, attention) vs the CPU reference
+scripts/dev/long_positions.sh MODEL [--no-bench | --bench-only]   # parity vs llama.cpp and throughput at 4096/8192 positions
+scripts/dev/sanitize_chat.sh MODEL   # ASan+UBSan redlite-generate on a real chat turn (regress check generate.sanitize)
 .deps/redmetal/redlite-generate MODEL --prompt "..." --json   # machine-readable stats on stderr; Ctrl-C stops the answer (exit 130)
 .deps/redmetal/redlite-server MODEL --port 8080 --cache-mib 4096   # OpenAI /v1/chat/completions (SSE); `redlite serve --native MODEL` launches it
 python3 scripts/dev/server_check.py MODEL   # server greedy stream == redlite-generate greedy text, clean SIGINT

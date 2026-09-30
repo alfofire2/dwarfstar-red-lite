@@ -2,6 +2,35 @@
 
 ## Unreleased (v0.3-streaming, after 0.3.0.dev21)
 
+### dev26 (completion) — long positions, sanitized chat turn, kernel self-test, split-K attention (M4 Max 48 GiB)
+
+See `docs/REDLITE_DEV26_LONG_CONTEXT.md`. Not measured on the M4 Pro.
+
+- **Parity at 4096 and 8192 positions** against the pinned llama.cpp
+  (`scripts/dev/long_positions.sh`; the frozen fixture's ids repeated): argmax 100/100,
+  KL ≤ 6.4e-3. The max-logit bound for these positions is 4.0. It was set after measuring
+  native token-by-token against native batched prefill at 4096, which already differ by
+  2.62.
+- **Split-K decode attention** (`attn_gqa_split` + `attn_gqa_merge`, above 256
+  positions). Decode at ~8192 positions: 20.1 → 57.4 tok/s at 22 GiB and 17.2 → 38.8 tok/s
+  at 4 GiB. At ~4096: 31.5 → 65.5 and 24.8 → 43.6. Short context is unchanged.
+  `RL_ENGINE_ATTN_SPLIT=0` restores the old kernel.
+- **Sanitized chat turn** (`scripts/dev/sanitize_chat.sh`, regress check
+  `generate.sanitize`): ASan+UBSan `redlite-generate` on the real model, with batched
+  prefill, prefetch, decode and sampling. No report, and the greedy text is identical to
+  the normal build.
+- **Model-free kernel self-test** (`redlite-engine kernel-selftest`, regress check
+  `selftest.engine_kernels`, also under `make sanitize`) covers:
+  - the dev22 sub-block GEMVs and the dev18 block GEMVs against the CPU row dot;
+  - the dev23 early-out guard;
+  - `rl_copy_f32`;
+  - `rl_route` against the CPU router;
+  - both decode attention kernels against a double-precision GQA.
+- **Fixed.**
+  - `compare_dumps.py` reported parity on an empty native dump.
+  - `redlite-engine --tokens` silently truncated lists longer than 4096 ids; it now takes
+    up to 65 536 and rejects longer lists.
+
 ### dev24 — prefill: pre-gated expert prefetch and parallel routing (M4 Max 48 GiB)
 
 Prefill of 1100 tokens with a 4 GiB cache, in the default 512-token chunks, rose from

@@ -351,5 +351,109 @@
     "parity": "quick_parity.sh PASS; logits.long_context_vs_llama PASS at chunks 96/256/512/1100",
     "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
     "note": "M4 Max only, GGUF warm in the page cache, GPU cooled 90 s before each run; earlier dev22/dev23 prefill figures (248.5/252.3) were taken without a pause; not measured on the M4 Pro 24 GiB"
+  },
+  "dev26_long_context": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "long_positions_parity": {
+      "command": "scripts/dev/long_positions.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf (batch 512, --cache-mib 4096, 100 decode steps)",
+      "p4096": {
+        "argmax_agree": "100/100",
+        "worst_kl": 0.006434,
+        "worst_logit_abs": 3.0316
+      },
+      "p8192": {
+        "argmax_agree": "100/100",
+        "worst_kl": 9.848e-07,
+        "worst_logit_abs": 2.2728
+      },
+      "native_token_by_token_vs_native_batched_p4096": {
+        "worst_logit_abs": 2.6195,
+        "worst_kl": 0.008029
+      },
+      "logit_abs_limit": 4.0,
+      "note": "limit chosen after measuring the native self-consistency floor; the 1100-position regress check keeps 2.0"
+    },
+    "long_positions_throughput": {
+      "command": "scripts/dev/long_positions.sh MODEL --bench-only (redlite-generate --raw, 128 greedy tokens, single runs, 90 s cool-down)",
+      "before_split_k": {
+        "p4096_4gib": {
+          "prefill_tps": 266.69,
+          "decode_tps": 24.81
+        },
+        "p4096_22gib": {
+          "prefill_tps": 266.96,
+          "decode_tps": 31.47
+        },
+        "p8192_4gib": {
+          "prefill_tps": 203.29,
+          "decode_tps": 17.17
+        },
+        "p8192_22gib": {
+          "prefill_tps": 204.1,
+          "decode_tps": 20.07
+        }
+      },
+      "after_split_k": {
+        "p4096_4gib": {
+          "prefill_tps": 266.71,
+          "decode_tps": 43.56
+        },
+        "p4096_22gib": {
+          "prefill_tps": 265.75,
+          "decode_tps": 65.51
+        },
+        "p8192_4gib": {
+          "prefill_tps": 201.88,
+          "decode_tps": 38.81
+        },
+        "p8192_22gib": {
+          "prefill_tps": 204.25,
+          "decode_tps": 57.36
+        }
+      },
+      "after_threshold_repeat_decode_tps": {
+        "p4096_4gib": 42.29,
+        "p4096_22gib": 63.84,
+        "p8192_4gib": 39.23,
+        "p8192_22gib": 56.31
+      },
+      "attn_gpu_ms_63_steps_p8400": {
+        "before": 2269.12,
+        "after": 253.64
+      }
+    },
+    "short_context_decode_medians": {
+      "command": "scripts/dev/bench_m4.sh MODEL --only decode22|decode4 --reps 3 --cool 60",
+      "split_k_all_lengths": {
+        "decode_22gib_tps": 68.47,
+        "decode_4gib_tps": 45.84
+      },
+      "attn_split_0": {
+        "decode_22gib_tps": 70.2,
+        "decode_4gib_tps": 46.83
+      },
+      "dev26_split_above_256": {
+        "decode_22gib_tps": 69.83,
+        "decode_4gib_tps": 46.51
+      },
+      "dev23_build_remeasured_same_hour": {
+        "decode_22gib_tps": 70.12,
+        "decode_4gib_tps": 47.1
+      },
+      "crossover_single_runs_22gib": {
+        "p970": {
+          "split": 65.08,
+          "old": 54.65
+        },
+        "p1880": {
+          "split": 65.14,
+          "old": 45.32
+        }
+      }
+    },
+    "sanitized_chat_turn": "scripts/dev/sanitize_chat.sh: 359 prompt tokens, batch 64, 32 tokens greedy + seeded sampling, ASan+UBSan, no report, greedy == normal build",
+    "kernel_selftest": "redlite-engine kernel-selftest: rows/rows2 16 shapes worst rel 1.1e-7; guard; copy; rl_route 64 cases; attention 6 lengths worst abs 8.2e-8",
+    "regression": "46/46 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only; not measured on the M4 Pro 24 GiB"
   }
 }
