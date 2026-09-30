@@ -24,6 +24,7 @@
 #include "redmetal_engine_private.h"
 #include "redlite_native_iq2_xxs.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_router_exec.h"
 
 #include <math.h>
@@ -53,7 +54,7 @@ static size_t st_row_bytes(uint32_t type, uint32_t cols) {
         case 12: return (size_t)cols / 256u * 144u;
         case 14: return (size_t)cols / 256u * 210u;
         case 16: return (size_t)cols / 256u * 66u;
-        default: return 0;
+        default: return rl_iq3_row_bytes(type, cols);   /* dev31: IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS */
     }
 }
 
@@ -66,6 +67,7 @@ static void st_fill_row(uint32_t type, uint32_t cols, uint8_t *row) {
         if (type == 12u) { uint8_t *bp = row + (size_t)b * 144u; st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); st_put_half(bp + 2, 0.001f + 0.01f * fabsf(st_uniform())); }
         if (type == 14u) { uint8_t *bp = row + (size_t)b * 210u; st_put_half(bp + 208, 0.001f + 0.004f * fabsf(st_uniform())); }
         if (type == 16u) { uint8_t *bp = row + (size_t)b * 66u; st_put_half(bp, 0.01f + 0.05f * fabsf(st_uniform())); }
+        if (rl_iq3_supported(type)) { uint8_t *bp = row + (size_t)b * rl_iq3_block_bytes(type); st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); }
     }
 }
 
@@ -288,7 +290,7 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
         if (!m->queue || !m->lib) { snprintf(error, cap, "Metal engine library compile failed: %s", le.localizedDescription.UTF8String ?: "no device"); goto out; }
         {
             struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
-                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"},
+                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
                 {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
                 {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
                 {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"},
@@ -305,13 +307,13 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
         if (!m->grid || !m->abort || !m->abort_zero) { snprintf(error, cap, "self-test allocation failed"); goto out; }
         memset(m->abort.contents, 0, 16u); memset(m->abort_zero.contents, 0, 16u);
         {
-            static const uint32_t types[4] = { 0u, 12u, 14u, 16u };
+            static const uint32_t types[8] = { 0u, 12u, 14u, 16u, 18u, 21u, 22u, 23u };
             static const uint32_t cols_q[4] = { 256u, 768u, 2048u, 4096u };
             static const uint32_t cols_f[4] = { 64u, 516u, 2048u, 4096u };
-            double worst[4] = { 0.0, 0.0, 0.0, 0.0 };
+            double worst[8] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
             uint32_t shapes = 0, route_cases = 0, attn_cases = 0;
             double attn_worst = 0.0;
-            for (uint32_t t = 0; t < 4u; ++t)
+            for (uint32_t t = 0; t < 8u; ++t)
                 for (uint32_t c = 0; c < 4u; ++c) {
                     if (!st_rows_case(m, types[t], 37u, types[t] == 0u ? cols_f[c] : cols_q[c], &worst[t], error, cap)) goto out;
                     shapes++;
@@ -320,12 +322,13 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
             if (!st_route(m, &route_cases, error, cap)) goto out;
             if (!st_attention(m, &attn_cases, &attn_worst, error, cap)) goto out;
             snprintf(report, report_cap,
-                "rows/rows2 vs CPU row dot: %u shapes x 2 kernels OK (worst relative error F32 %.2e Q4_K %.2e Q6_K %.2e IQ2_XXS %.2e)\n"
+                "rows/rows2 vs CPU row dot: %u shapes x 2 kernels OK (worst relative error F32 %.2e Q4_K %.2e Q6_K %.2e IQ2_XXS %.2e\n"
+                "                           IQ3_XXS %.2e IQ3_S %.2e IQ2_S %.2e IQ4_XS %.2e)\n"
                 "early-out guard       : OK (rl_rows2, rl_copy_f32, rl_route return with the flag set)\n"
                 "rl_copy_f32           : OK\n"
                 "rl_route vs CPU router: %u cases OK (ids, weights, slots, ties, miss -> early-out flag)\n"
                 "decode attention      : %u lengths x 2 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
-                shapes, worst[0], worst[1], worst[2], worst[3], route_cases, attn_cases, attn_worst);
+                shapes, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], route_cases, attn_cases, attn_worst);
         }
         ok = 1;
     out:

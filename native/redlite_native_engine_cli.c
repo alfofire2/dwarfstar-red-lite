@@ -14,6 +14,7 @@
 
 #include "redlite_native_engine.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq2_xxs.h"
 #include "redlite_native_tokenizer.h"
 
 #include <errno.h>
@@ -188,12 +189,15 @@ int main(int argc, char **argv) {
             const size_t rb = rl_gguf_row_bytes(t->ggml_type, ncols);
             const uint8_t *data = rl_gguf_tensor_data(&g, t);
             float *buf = (float *)malloc((size_t)ncols * sizeof(float));
+            uint8_t grid[RL_IQ2_XXS_GRID_COUNT];
+            char gerr[128];
+            const uint8_t *gp = t->ggml_type == 16u && rl_native_iq2_xxs_build_grid(grid, gerr, sizeof(gerr)) ? grid : NULL;
             FILE *out = fopen(out_path, "wb");
             if (!rb || !data || !buf || !out || (uint64_t)row_first + row_count > rows) fprintf(stderr, "cannot dequantize %s (type %s)\n", tensor_name, rl_gguf_type_name(t->ggml_type));
             else {
                 rc = 0;
                 for (uint32_t r = row_first; r < row_first + row_count && !rc; ++r) {
-                    if (!rl_quant_dequant_row(t->ggml_type, data + (size_t)r * rb, ncols, NULL, buf)) { fprintf(stderr, "type %s has no CPU dequantizer\n", rl_gguf_type_name(t->ggml_type)); rc = 1; }
+                    if (!rl_quant_dequant_row(t->ggml_type, data + (size_t)r * rb, ncols, gp, buf)) { fprintf(stderr, "type %s has no CPU dequantizer\n", rl_gguf_type_name(t->ggml_type)); rc = 1; }
                     else fwrite(buf, sizeof(float), ncols, out);
                 }
                 if (!rc) printf("dequantized %s (%s) rows %u..%u of %llu, %u columns\n", tensor_name, rl_gguf_type_name(t->ggml_type),
