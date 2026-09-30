@@ -107,8 +107,8 @@ for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`
 The sampler applies llama.cpp's chain (top-k → top-p → min-p → temperature) with the same
 arithmetic, so the candidate distribution matches the pinned llama.cpp for equal parameters.
 min-p is off by default here and 0.05 in llama.cpp (`docs/REDLITE_DEV26_ROBUSTNESS.md`).
-The RAM-based defaults, Ctrl-C handling and `--json` are new since dev21 and not yet
-validated on a Mac (`docs/REDLITE_DEV25_PRODUCT.md`).
+The RAM-based defaults, Ctrl-C handling and `--json` are new since dev21 and are
+validated on the M4 Max 48 GiB, not on the M4 Pro (`docs/REDLITE_DEV25_PRODUCT.md`).
 
 An OpenAI-compatible server on the same runtime (`POST /v1/chat/completions` with SSE
 streaming, `GET /v1/models`) starts with:
@@ -118,7 +118,8 @@ redlite serve --native models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --po
 ```
 
 It serves one request at a time and re-ingests the conversation on every request. Its
-protocol is tested with a fake engine; the real-model check is not yet run on a Mac. Greedy output is token-identical to the pinned llama.cpp on the
+protocol is tested with a fake engine. With the real model on the M4 Max, the streamed
+greedy answer is byte-identical to `redlite-generate`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. On an M4 Max / 48 GiB the same

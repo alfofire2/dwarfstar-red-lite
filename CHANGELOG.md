@@ -5,8 +5,14 @@
 Product surface (part of the dev25 scope) and model-free robustness work (part
 of the dev26 scope). See `docs/REDLITE_DEV25_PRODUCT.md` and
 `docs/REDLITE_DEV26_ROBUSTNESS.md`. Implemented and tested model-free on Linux
-x86_64 only (cloud container, gcc 13.3 / clang 18.1). Not yet built or run on
-macOS or the M4 Max. Version unchanged.
+x86_64 (cloud container, gcc 13.3 / clang 18.1). Validated with the real model on the
+M4 Max 48 GiB (macOS 27, commit `7d96db1`): `scripts/regress_m4.sh` 44/44 after a clean
+build, plus manual checks of `redlite chat` defaults, `redlite serve --native` streaming
+and interactive Ctrl-C. Not run on the M4 Pro. Version unchanged.
+
+- macOS 27 SDK: removed the no-op `didModifyRange:` calls on Shared Metal buffers, so
+  `make native` and `make redmetal` are warning-free again. `make sanitize` now works
+  on macOS.
 
 - `redlite chat` picks the expert cache from RAM when `--cache-mib` is omitted:
   22528 MiB (full residency, preloaded) at ≥ 40 GiB, 4096 MiB below. `--batch`

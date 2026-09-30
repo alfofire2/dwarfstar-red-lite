@@ -1,9 +1,10 @@
 # Red Lite dev25 (partial) — product surface: chat defaults, native server, Ctrl-C, JSON stats
 
-Status: **implemented and tested model-free on Linux; not yet built or run on macOS / the
-M4 Max.** Every item below needs `scripts/regress_m4.sh MODEL` on the Mac before it can
-be called validated. dev22–dev24, the performance milestones, are not started, so this
-work comes ahead of them in time but is numbered by scope.
+Status: **implemented, tested model-free on Linux, and validated with the real model on the
+M4 Max 48 GiB** (macOS 27, commit `7d96db1`, `scripts/regress_m4.sh` 44/44 after a clean
+build; see "Validation on the M4 Max" below). Nothing here is measured on the M4 Pro.
+dev22–dev24, the performance milestones, are not started, so this work comes ahead of
+them in time but is numbered by scope.
 
 ## What changed
 
@@ -90,16 +91,36 @@ no Metal and no GGUF on it.
 - `generate.json` checks that the statistics line is written.
 - `generate.sigint`: Ctrl-C mid-answer must give exit 130 and `"finish":"interrupted"`.
 
-These have not run yet. The server check was exercised only with shell stand-ins for the
-two binaries.
+### Validation on the M4 Max 48 GiB (commit `7d96db1`)
 
-No benchmark record is added, because nothing here measures throughput.
+`rm -rf .deps/redmetal && make native` (0 warnings), then
+`scripts/regress_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`:
+**44/44 PASS**, including `server.stream_greedy` (SSE stream and blocking answer
+byte-identical to `redlite-generate` greedy, clean SIGINT), `generate.json` (the real
+GGUF's `tokenizer.chat_template` is confirmed ChatML: `"chat_template_from_gguf":true`) and
+`generate.sigint` (exit 130, `"finish":"interrupted"`).
+
+Manual checks on the same machine and commit:
+
+- `./bin/redlite chat --dry-run` with no flags picks `--cache-mib 22528` (48.0 GiB RAM,
+  full residency).
+- `redlite serve --native MODEL --port 8093`, then a streaming `curl` request
+  (temperature 0, 40 tokens): SSE chunks, `finish_reason:"stop"`, `usage` and `[DONE]`.
+  Every decode token was GPU-routed and SIGINT shut the server down cleanly. The engine
+  was ready in 5.6 s with every expert preloaded.
+- Interactive `redlite-generate --interactive --json`, Ctrl-C (SIGINT) mid-answer: the
+  answer ends with `[interrupted]`, `"finish":"interrupted"`. The next question ("What was
+  my previous request?") is answered correctly, so the conversation state survived, and
+  `/quit` exits 0.
+
+No benchmark record is added. The server log prints per-request tok/s, but a single
+request is an observation, not a benchmark, and throughput is not claimed here.
 
 ## Scope boundary
 
-- **Not validated on any Mac.** The Metal build of `redlite-server` and of the changed
-  `redlite-generate`, the real-model server check, and the interactive Ctrl-C behaviour
-  with the model are all pending.
+- **Validated on the M4 Max 48 GiB only.** Nothing is run on the M4 Pro 24 GiB. The
+  4096 MiB default for machines under 40 GiB is the field-validated dev18 setting, but
+  the new launcher logic that picks it has not run there.
 - **Throughput is not claimed.** The server's throughput should equal `redlite-generate`'s
   plus HTTP overhead, but that is not measured.
 - **The server is single-sequence and stateless.** Every request re-ingests the whole

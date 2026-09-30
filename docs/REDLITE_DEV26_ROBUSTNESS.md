@@ -124,12 +124,23 @@ Only the llama.cpp **library** was built in the container, as the sampler oracle
 source-only shallow fetch of the pinned commit, `-DGGML_NATIVE=OFF`, CPU. It never
 touches a model, and no runtime binary links it.
 
-**Not yet run on macOS / M4 Max.** The build and parity side of `regress_m4.sh`
-(including the two new checks and the real 18 GiB GGUF through the hardened
-readers) has not been executed since these commits. The new rules cannot reject a
-well-formed file: 843 tensors and 49 kv against 18 GiB, no nested arrays (llama.cpp
-loads the file), every offset inside the file. The suite's model-opening checks
-are what confirm it.
+**Validated on the M4 Max 48 GiB** (macOS 27, commit `7d96db1`): clean `make native` and
+`make redmetal` with 0 warnings, then `scripts/regress_m4.sh` **44/44**. The real 18 GiB
+GGUF opens through the hardened readers in every model check. `selftest.gguf_fuzz`,
+`selftest.sanitize` and `sampler.vs_llama` all pass.
+
+On macOS, libllama is built with libc++. The sampler comparison there again gives
+bit-identical probabilities (worst difference 0.0), with 4 exact-tie cuts resolved
+differently, against 5 with libstdc++ on Linux. This confirms that the tie order is
+implementation-defined in llama.cpp.
+
+The first macOS run found two problems, both fixed and re-validated:
+- `scripts/sanitize_offline.sh` did not link the macOS `redlite-native`, which needs the
+  Metal top-k sources. A foreign `tests` package in the user's site-packages also
+  shadowed the repository's tests (`7d96db1`).
+- The macOS 27 SDK deprecates `didModifyRange:`, which produced 21 warnings. Every
+  affected buffer is Shared storage, where the call was a no-op, so the calls were
+  removed (`8a16b72`).
 
 No benchmark record is added: nothing here measures throughput. Tool run times
 are not benchmarks.
