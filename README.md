@@ -6,8 +6,10 @@ Red Lite is an independent project inspired by the narrow, hardware-aware philos
 DwarfStar/DS4. It is not a generic model runner. It targets one architecture and one
 hardware family:
 
-- **Model:** Qwen3-Next-80B-A3B-Instruct. The reference file is Bartowski's
-  `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB).
+- **Model:** Qwen3-Next-80B-A3B-Instruct, two of Bartowski's GGUFs: the reference
+  `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB, for 24 GiB Macs) and, since
+  0.4.0, `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29 vs 16.47 on the same text), which
+  runs with every expert resident on a 48 GiB Mac.
 - **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
   developed since September 2026 on a 48 GiB M4 Max.
 - **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the
@@ -20,13 +22,13 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 
 ## Two runtimes
 
-| | **Native runtime (0.3)** | **Launcher (0.2)** |
+| | **Native runtime (0.3, 0.4)** | **Launcher (0.2)** |
 |---|---|---|
 | What runs the model | Red Lite's own C11 / Objective-C / Metal implementation of the Qwen3-Next graph | a pinned llama.cpp (Metal), or a pinned CPU mmap runtime for oversized models |
-| Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB by default on 24 GiB machines) | whole model resident, or CPU mmap with bounded expert residency |
+| Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
 | Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
 | Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
-| Validated on | M4 Max 48 GiB (0.3.0); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
+| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0; both GGUFs); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
 
 ## Native runtime: quick start
 
@@ -38,34 +40,60 @@ M=models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
 .deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
 ./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
 ./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
+.deps/redmetal/redlite-engine info $M          # layout, and the cache that holds every expert of this file
 ```
+
+On a Mac with 40 GiB or more, put Bartowski's `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf`
+in `models/` too: `redlite chat` then picks it (see *Chat defaults*). A release tarball of
+the three binaries is built by `scripts/package_release.sh`.
 
 **Chat defaults.**
 
+- Model (when no path is given): the best file in `models/` for this machine — IQ3_XXS
+  when RAM ≥ 40 GiB and its experts plus dense weights stay below 75 % of RAM, else
+  IQ2_XXS.
 - Context: 4096 positions (`--context`).
 - Answer length: 256 tokens.
 - Temperature: 0.7 (`--temperature 0` is greedy and deterministic).
-- Expert cache: chosen from RAM. With 40 GiB or more it is 22528 MiB: every expert is
-  resident and preloaded, and tokens are routed on the GPU in one command buffer.
-  Otherwise it is 4096 MiB.
-- Prompts are ingested by a batched prefill in 512-token chunks (`--batch`).
+- Expert cache: with 40 GiB or more, every expert of the file resident and preloaded,
+  sized from the file's expert payload (21,312 MiB for IQ2_XXS, 29,376 MiB for IQ3_XXS;
+  `--cache-mib full` in the binaries); tokens are then routed on the GPU in one command
+  buffer. Otherwise 4096 MiB.
+- Prompts are ingested by a batched prefill in chunks of 2048 tokens with every expert
+  resident, 512 otherwise (`--batch`).
 
 **Sampler.** It follows llama.cpp's chain (top-k → top-p → min-p → temperature) with the
 same arithmetic. min-p is off by default here and 0.05 in llama.cpp.
 
-**Server.** It handles one request at a time and re-ingests the conversation on every
-request.
+**Server.** Requests run one at a time in arrival order (FIFO queue, `--queue`); `/health`
+answers meanwhile. A request that continues the previous conversation exactly reuses the
+engine state and only ingests the new tokens (second-turn first token 3.8 s → 0.17 s on
+an 1185-token conversation); any other request resets. `stop` sequences are supported.
 
 ## Measured performance
 
-**Method.**
+**Method.** Greedy decode of 256 tokens after a short chat prompt; prefill of the first
+N ids of `tests/fixtures/long_context_prompt.txt`; `scripts/dev/bench_m4.sh --reps 3
+--cool 90`, median of three cooled runs; the pinned llama.cpp measured on the same ids
+(`--only llama`, fully resident, its default batch sizes). Records:
+`benchmarks/m4max-48gb-0.4.0.json` (0.4.0) and the older files listed below. Nothing is
+extrapolated from one machine to another.
 
-- Reference IQ2_XXS GGUF, greedy decode.
-- Warm page cache: the whole GGUF fits in the 48 GiB machine's page cache.
-- Decode is measured after a short prompt unless a position is given.
-- Each number comes from one of the records listed under the table, with its command
-  and commit.
-- Nothing is extrapolated from one machine to another.
+**0.4.0, M4 Max 48 GiB:**
+
+| GGUF | Expert cache | Decode | Prefill 1100 tokens | Prefill 8192 tokens | llama.cpp decode / prefill 1100 / 8192 |
+|---|---|---:|---:|---:|---:|
+| IQ2_XXS | full (21,312 MiB), chunks of 2048 | 71.15 tok/s | **891.9 tok/s** | **926.9 tok/s** | 72.46 / 858.3 / 893.7 |
+| IQ2_XXS | 4 GiB, chunks of 512 | 47.77 tok/s | 545.8 tok/s | 645.6 tok/s | — |
+| IQ3_XXS | full (29,376 MiB), chunks of 2048 | 63.39 tok/s | 786.0 tok/s | 860.3 tok/s | 68.54 / 861.3 / 900.7 |
+| IQ3_XXS | 4 GiB, chunks of 512 | 43.8 tok/s (36.9–46.9) | 428.4 tok/s (401–509) | 588.3 tok/s | — |
+
+The IQ3_XXS 4 GiB rows vary with the page cache (the 31.7 GB file does not stay cached
+next to other runs' 29 GiB of expert slots). The 0.3.0 native runtime did 71.50 / 47.93
+tok/s decode and 307.3 / 212.6 tok/s prefill on the IQ2_XXS file under the same method
+(`docs/REDLITE_DEV28_CI_RELEASE.md`).
+
+**Earlier measurements:**
 
 | Machine | Build | Expert cache | Decode, short context | Decode @ ~4096 | Decode @ ~8192 | Prompt ingestion |
 |---|---|---|---:|---:|---:|---:|
@@ -74,43 +102,33 @@ request.
 | M4 Pro 24 GiB | native dev18 (`280f788`) | 4 GiB | 27.8 tok/s | not measured | not measured | 16.3 tok/s (token by token; there was no batched prefill yet) |
 | M4 Pro 24 GiB | launcher 0.2 (llama.cpp Metal, resident) | n/a | 36.4–38.0 tok/s | — | — | 236.7–258.8 tok/s (256-token prompts) |
 
-**Where the numbers come from.**
+Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–dev26),
+`benchmarks/m4pro-24gb-native-dev18.json`, `benchmarks/m4pro-24gb-sweep-2026-09-02.json`
+(the launcher's 4K/8K rows there are context sizes, not decode positions).
 
-- **M4 Max ranges.** Two measurements of the same code. Short context: the dev23 record
-  (03:40) and the 05:4x re-measurement of 2026-09-30. Long positions: two single-run
-  repeats. The same build measured 4–7% lower two hours later on the same
-  machine, cause not isolated (`docs/REDLITE_DEV26_LONG_CONTEXT.md`).
-- **Long positions.** Single cooled runs, `scripts/dev/long_positions.sh`.
-- **Prefill.** Median of three cooled runs, `scripts/dev/bench_m4.sh --cool 90`.
-- **Records.**
-  - `benchmarks/m4max-48gb-native-dev19.json`: dev19–dev26 sections.
-  - `benchmarks/m4pro-24gb-native-dev18.json`.
-  - `benchmarks/m4pro-24gb-sweep-2026-09-02.json`. The launcher's 4K/8K rows there are
-    context sizes (36.4 / 36.9 tok/s), not decode positions.
-- **Reference.** The pinned llama.cpp, fully resident on the M4 Max, gives 68.0 tok/s
-  decode (`llama-bench` tg64) and 338.6 tok/s prompt (pp48).
-
-**The 0.3.0 native runtime has not been measured on a 24 GiB M4 Pro.** Its 4 GiB
-configuration is the one intended for 24 GiB machines. On the 48 GiB machine the page
-cache holds the whole GGUF, so expert misses cost a memory copy. On 24 GiB some misses
-will be SSD reads.
+**Neither 0.3.0 nor 0.4.0 has been measured on a 24 GiB M4 Pro or a 16 GiB M4 Air.** The
+4 GiB configuration is the one intended for 24 GiB machines; there, some expert misses
+will be SSD reads instead of page-cache copies.
 
 ## Correctness
 
-- **Greedy output** is token-identical to the pinned llama.cpp on the regression prompts
-  (`scripts/regress_m4.sh`, 46 checks).
-- **Logits** match llama.cpp:
-  - after a 1100-token prompt: max-logit difference ≤ 2.0, KL ≤ 2e-2;
-  - at 4096 and 8192 positions: every argmax agrees over 100 steps, KL ≤ 6.4e-3.
+- **Greedy output** is token-identical to the pinned llama.cpp on the regression prompts,
+  for both GGUFs (`scripts/regress_m4.sh MODEL`: 49 checks on IQ2_XXS; on IQ3_XXS 36 checks,
+  plus 13 dense stage tools that only know the IQ2_XXS layout and are skipped).
+- **Logits** match llama.cpp: short context KL ≤ 1e-5 (IQ3_XXS: 1.4e-12); after an
+  1100-token prompt max-logit difference ≤ 2.0 and KL ≤ 2e-2; at 4096 and 8192 positions
+  every argmax agrees over 100 steps.
+- **Dequantization.** The CPU reference decodes every quant type of both files
+  bit-identically to ggml's own `to_float` (`scripts/dev/dequant_check.sh`).
 - **Kernels.** Every kernel change is gated by a CPU-oracle parity run: a double-precision
   implementation of the same graph in the same process. Any router top-k divergence fails
   the gate.
 - **Model-free tests.** The GGUF readers are fuzzed. The model-free tests run under
-  ASan/UBSan (`make sanitize`), and so does a real chat turn.
-- **Details:**
-  - `docs/REDLITE_DEV18_ENGINE.md` (the engine);
-  - `docs/REDLITE_DEV22_DECODE_KERNELS.md` to `docs/REDLITE_DEV26_LONG_CONTEXT.md` (the
-    0.3.0 performance work).
+  ASan/UBSan (`make sanitize`), and so does a real chat turn. GitHub CI runs them on Linux
+  for every push (when the account's GitHub Actions billing allows hosted jobs).
+- **Details:** `docs/REDLITE_DEV18_ENGINE.md` (the engine); `docs/REDLITE_DEV22_*` to
+  `docs/REDLITE_DEV26_*` (0.3.0 performance); `docs/REDLITE_DEV28_*` to `docs/REDLITE_DEV32_*`
+  (0.4.0).
 
 ## Limits
 

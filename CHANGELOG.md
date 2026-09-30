@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased (0.4.0 cycle, branch `dev/0.4`)
+## 0.4.0 — 2026-09-30
+
+The native runtime, faster and with a second, higher-quality GGUF. Work of dev28–dev32
+below, all on the M4 Max 48 GiB (nothing re-measured on the M4 Pro 24 GiB or an M4 Air).
+
+**What 0.4.0 adds**
+
+- **Prefill** (dev30): tiled attention, experts on simdgroup matrices, a faster DeltaNet
+  recurrence and dense GEMM, one residency set, 2048-token chunks with full residency.
+  1100 tokens: 307.3 → 891.9 tok/s; 8192 tokens: 212.6 → 926.9 tok/s (IQ2_XXS, all experts
+  resident; the pinned llama.cpp on the same ids: 858.3 / 893.7). Decode unchanged.
+- **IQ3_XXS GGUF** (dev31): IQ3_XXS, IQ3_S, IQ2_S and IQ4_XS decoded bit-identically to
+  ggml; the 31.7 GB file runs with every expert resident (29,376 MiB, sized from its
+  payload). Perplexity on the same local text 14.29 vs 16.47 for IQ2_XXS; greedy identical
+  to llama.cpp, KL 1.4e-12. `redlite chat` picks it when RAM ≥ 40 GiB.
+- **Server** (dev29): conversation-state reuse (second-turn first token 3.8 s → 0.17 s),
+  stop sequences, FIFO queue.
+- **Distribution** (dev28): model-free Linux CI on every push/PR, `package_release.sh`
+  arm64 tarball with SHA256.
+
+**Milestone targets of the 0.4.0 cycle** (M4 Max 48 GiB):
+
+| Milestone | Target | Result |
+|---|---|---|
+| dev28 | Linux CI on push/PR, green on GitHub; release tarball | CI and tarball done; **green on GitHub not reached** (GitHub does not start hosted jobs on this account: billing) |
+| dev29 | state reuse (greedy identical), TTFT before/after, stop, FIFO, fake + real tests | reached: identical answer, 3833 → 173 ms |
+| dev30 | prefill 1100 ≥ llama.cpp same prompt; 8192 ≥ 280 tok/s; decode 22 GiB not below 0.3.0 | reached with full residency: 891.9 (llama.cpp 858.34), 926.9, decode 71.09 vs 70.47 (A/B); at 4 GiB 1100 tokens 545.8, below llama.cpp |
+| dev31 | better GGUF with full residency, new quant types, greedy = llama.cpp, KL ≤ 1e-5, perplexity both files, chat picks it | reached: IQ3_XXS, KL 1.4e-12, 24/24 greedy, PPL 14.29 vs 16.47 |
+| dev32 | 0.4.0 release, README per model/cache, tarball, PR | done (PR open, not merged) |
+
 
 ### dev31 — IQ3_XXS GGUF: new quant types, full residency on 48 GiB (M4 Max 48 GiB)
 
