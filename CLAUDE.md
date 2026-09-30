@@ -61,6 +61,7 @@ RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time p
 scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill]   # median decode/prefill tok/s on this Mac
 scripts/dev/quick_parity.sh MODEL [--long --batch N]   # parity gate for kernel/path changes (engine parity, gpu_routed, logits and greedy vs llama.cpp)
 RL_ENGINE_ROWS2=0 ...   # dev22 A/B: decode GEMV back to the dev18 block kernels
+RL_ENGINE_PREFETCH=0 ...   # dev23 A/B: no pre-gated expert prefetch in the synchronous decode
 .deps/redmetal/redlite-generate MODEL --prompt "..." --json   # machine-readable stats on stderr; Ctrl-C stops the answer (exit 130)
 .deps/redmetal/redlite-server MODEL --port 8080 --cache-mib 4096   # OpenAI /v1/chat/completions (SSE); `redlite serve --native MODEL` launches it
 python3 scripts/dev/server_check.py MODEL   # server greedy stream == redlite-generate greedy text, clean SIGINT
@@ -117,7 +118,8 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
 
 4. **Persistent engine** (dev18: `redlite_native_engine*.{h,c}`, `redmetal_engine.m`,
    dev20 batched prefill: `redmetal_engine_prefill.m` + `redmetal_engine_private.h`,
-   dev21 GPU-routed decode: `rl_route` kernel + `step_speculative` in `redmetal_engine.m`, residency table in the pool,
+   dev21 GPU-routed decode: `rl_route` kernel + residency table in the pool; dev23 per-layer early-out (`step_routed`,
+   flag at buffer index 30 of every decode kernel) and pre-gated prefetch in `rl_metal_engine_step_sync`;
    `redlite_native_tokenizer.[ch]`, `redlite_native_sampler.[ch]`,
    `redlite_native_generate_cli.c`). `rl_engine` owns the mmap'd GGUF
    (`redlite_native_gguf_dir.[ch]`), the audited per-layer tensor table and two

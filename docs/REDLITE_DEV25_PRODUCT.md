@@ -32,7 +32,7 @@ them in time but is numbered by scope.
   - Non-interactive runs print their statistics and exit 130.
 - **`--json`** writes one statistics object per answer on stderr:
   - prefill and decode tokens, ms and tok/s;
-  - GPU-routed tokens and fallbacks;
+  - GPU-routed tokens and, since dev23, per-layer early-outs (`early_outs`);
   - cache hits and misses, expert loads, SSD MiB;
   - peak RSS and physical footprint;
   - cache, context and batch;

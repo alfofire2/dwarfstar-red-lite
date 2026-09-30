@@ -272,5 +272,49 @@
     "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
     "llama_cpp_tg64_tps": 68.0,
     "note": "single machine, idle, medians of 3 runs; not measured on the M4 Pro 24 GiB (the 22 GiB configuration needs >= 40 GiB RAM)"
+  },
+  "dev23_early_out_prefetch": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3 (medians)",
+    "dev22": {
+      "decode_22gib_tps": 66.23,
+      "decode_4gib_tps": 44.7,
+      "prefill_1100_4gib_tps": 248.5
+    },
+    "early_out_always": {
+      "decode_22gib_tps": 69.87,
+      "decode_4gib_tps": 8.32,
+      "early_outs_per_token_4gib": 32.7
+    },
+    "policy_load_free_token": {
+      "decode_22gib_tps": 69.37,
+      "decode_4gib_tps": 45.05
+    },
+    "dev23": {
+      "decode_22gib_tps": 72.72,
+      "decode_4gib_tps": 50.11,
+      "prefill_1100_4gib_tps": 252.3,
+      "phys_footprint_mib_4gib": 4805.6,
+      "phys_footprint_mib_22gib": 22032.2,
+      "critical_path_load_ms_per_token_4gib": 0.6,
+      "ssd_mib_per_token_4gib": 61.23
+    },
+    "prefetch_ab_alternated_decode_4gib_tps": {
+      "off": [
+        45.31,
+        44.93
+      ],
+      "on": [
+        47.62,
+        47.07
+      ]
+    },
+    "dead_ends": {
+      "spin_wait_cb_status_decode_4gib_tps": 27.5,
+      "periodic_probe_decode_4gib_tps": 39.49
+    },
+    "per_layer_miss_rate_4gib": "0.45-0.87 per layer, 31.7 of 48 layers per token (215 tokens)",
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only, GGUF warm in the page cache; not measured on the M4 Pro 24 GiB"
   }
 }

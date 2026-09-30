@@ -2,6 +2,31 @@
 
 ## Unreleased (v0.3-streaming, after 0.3.0.dev21)
 
+### dev23 — per-layer early-out and pre-gated prefetch (M4 Max 48 GiB)
+
+Decode with a 4 GiB cache rose from 44.7 to **50.1 tok/s** (target ≥ 45). Decode with full
+residency rose from 66.2 to **72.7 tok/s**. Implemented and validated in parity on the
+M4 Max with a limited cache; not measured on the M4 Pro. See
+`docs/REDLITE_DEV23_EARLY_OUT_PREFETCH.md`.
+
+- **GPU-routed tokens no longer restart.** A miss at layer *f* raises an early-out flag
+  (buffer index 30 of every decode kernel). The CPU loads only layer *f*'s experts and
+  resumes at *f+1*. The ~72 MiB of per-token state backups and the whole-token redo of
+  dev21 are gone.
+- **Policy.** The early-out path is tried after a token that loaded nothing; more than 4
+  early-outs send the next tokens to the synchronous path.
+- **Pre-gated prefetch** in the synchronous path. Layer *l+1*'s router is applied to
+  layer *l*'s FFN input, and the predicted experts are loaded while the GPU works.
+  Critical-path load time falls from 1.9 to 0.6 ms per token. `RL_ENGINE_PREFETCH=0`
+  disables it.
+- **Expert pool release check** is now per slot (load generations), so loads into other
+  slots are allowed while a plan is in flight.
+- **Stats.** `--stats`/`--json` report per-layer early-outs (`early_outs` in the JSON).
+- **Measured dead ends.**
+  - Spin-waiting on the command-buffer status: 44.6 → 27.5 tok/s.
+  - Early-out as the only 4 GiB path: 8.3 tok/s.
+  - Periodic probing: 39.5 tok/s.
+
 ### dev22 — decode kernels (M4 Max 48 GiB)
 
 Decode with full expert residency rose from 57.6 to **66.2 tok/s** (target ≥ 62;
