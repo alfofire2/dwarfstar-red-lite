@@ -1,0 +1,514 @@
+{
+  "profile": "native-engine-dev19-hardening-m4max-48gb-2026-09-08",
+  "hardware": "Apple M4 Max, 48 GiB unified memory, 12 performance + 4 efficiency cores, macOS 26.7",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf (17.97 GiB, Bartowski)",
+  "runtime": "redlite-generate (native C/Objective-C/Metal, no llama.cpp, no Python), built with -mcpu=native on this machine",
+  "commit_of_run": "24df4c72db7f13eed59946df70e2b84ac07609e2",
+  "prompt": "Explain in one sentence why the sky is blue.",
+  "template_tokens": 19,
+  "generated_tokens": 28,
+  "generated_ids_identical_to_dev18_m4pro_record_and_pinned_llama_cpp_greedy": true,
+  "runs": [
+    {
+      "label": "--cache-mib 4096, expert misses served from SSD (page cache churned by preceding oracle runs)",
+      "prompt_tps": 12.59,
+      "generation_tps": 21.09,
+      "decode_step_ms": 41.0,
+      "miss_load_ms_per_step": 50.7,
+      "expert_cache_hit_rate": 0.792,
+      "ssd_mib_per_token": 71.2,
+      "peak_rss_mib": 3476.3,
+      "phys_footprint_mib": 4577.2
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 1 (page cache warm)",
+      "prompt_tps": 27.61,
+      "generation_tps": 35.55,
+      "decode_step_ms": 29.8,
+      "miss_load_ms_per_step": 13.1,
+      "phys_footprint_mib": 4577.1
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 2",
+      "prompt_tps": 24.45,
+      "generation_tps": 34.9,
+      "decode_step_ms": 30.6,
+      "miss_load_ms_per_step": 12.5,
+      "phys_footprint_mib": 4577.4
+    },
+    {
+      "label": "--cache-mib 4096, back-to-back run 3",
+      "prompt_tps": 25.19,
+      "generation_tps": 36.74,
+      "decode_step_ms": 29.2,
+      "miss_load_ms_per_step": 13.0,
+      "phys_footprint_mib": 4577.3
+    },
+    {
+      "label": "--cache-mib 8192, first run",
+      "prompt_tps": 25.07,
+      "generation_tps": 34.03,
+      "decode_step_ms": 30.5,
+      "miss_load_ms_per_step": 15.2,
+      "expert_cache_hit_rate": 0.805,
+      "ssd_mib_per_token": 66.5,
+      "peak_rss_mib": 4653.1,
+      "phys_footprint_mib": 6032.3
+    },
+    {
+      "label": "--cache-mib 8192, back-to-back run 1",
+      "prompt_tps": 25.99,
+      "generation_tps": 33.63,
+      "decode_step_ms": 32.6,
+      "miss_load_ms_per_step": 14.9,
+      "phys_footprint_mib": 6032.3
+    },
+    {
+      "label": "--cache-mib 8192, back-to-back run 2",
+      "prompt_tps": 25.43,
+      "generation_tps": 33.62,
+      "decode_step_ms": 32.4,
+      "miss_load_ms_per_step": 13.8,
+      "phys_footprint_mib": 6032.1
+    },
+    {
+      "label": "earlier the same day, 40-token runs, page cache fully warm",
+      "cache_mib": [
+        1024,
+        2048,
+        4096
+      ],
+      "generation_tps": [
+        39.95,
+        40.46,
+        39.38
+      ],
+      "expert_cache_hit_rate": [
+        0.562,
+        0.696,
+        0.792
+      ],
+      "ssd_mib_per_token": [
+        150.0,
+        104.7,
+        71.2
+      ],
+      "phys_footprint_mib": [
+        1502.8,
+        2527.4,
+        4576.6
+      ]
+    }
+  ],
+  "long_context": {
+    "prompt": "tests/fixtures/long_context_prompt.txt cut to 1200 tokens",
+    "cache_mib": 2048,
+    "context": 1536,
+    "decode_step_ms_at_positions_1197_1199": [
+      31.3,
+      29.8,
+      28.4
+    ],
+    "note": "token-by-token prefill; llama.cpp argmax identical at positions 1000-1199"
+  },
+  "regression": "scripts/regress_m4.sh: 34/34 on this machine at this commit",
+  "caveat": "Single machine, single session. Throughput on this 48 GiB machine is bounded by expert miss loading (13-15 ms of the ~30 ms step) when the GGUF is warm in the page cache and drops to ~21 tok/s when misses come from the SSD; the hit rates and SSD bytes per token are prompt-determined and identical to the M4 Pro 24 GiB record. The dev18 figures in benchmarks/m4pro-24gb-native-dev18.json are from the M4 Pro 24 GiB and are not comparable.",
+  "resident_ceiling": {
+    "method": "17408 MiB expert cache (20074 slots), three identical chat turns in one interactive session, temperature 0; third turn has its experts resident",
+    "turn_3": {
+      "prompt_tokens": 21,
+      "prompt_s": 0.47,
+      "prompt_tps": 44.7,
+      "generated_tokens": 26,
+      "generation_s": 0.61,
+      "generation_tps": 42.6,
+      "decode_step_ms_est": 24
+    },
+    "turn_2": {
+      "prompt_tokens": 21,
+      "prompt_s": 0.49,
+      "generated_tokens": 33,
+      "generation_s": 0.82,
+      "generation_tps": 40.2
+    },
+    "single_300_token_run_17408": {
+      "generation_tps": 23.93,
+      "hit_rate": 0.962,
+      "ssd_mib_per_token": 12.95,
+      "resident_slots": "11956/20074",
+      "phys_footprint_mib": 10864.0,
+      "note": "first-touch misses continue for the whole run; the cache never fills"
+    },
+    "llama_cpp_pinned_fully_resident_llama_bench": {
+      "pp48_tps": 338.6,
+      "tg64_tps": 68.0,
+      "threads": 12,
+      "runs": 2
+    },
+    "conclusion": "With zero misses the current native kernels reach ~43 tok/s (24 ms/step) vs 68 tok/s for llama.cpp fully resident; expert prefetch can recover at most ~20% of decode on this machine. Prompt ingestion (token-by-token, ~25-45 tok/s) is 8-13x behind llama.cpp's batched prefill (339 tok/s): batched prefill is the next milestone (dev20)."
+  },
+  "dev20_batched_prefill": {
+    "commit_of_run": "see git log dev20 (a7f5c45 and the dev20b commit)",
+    "prompt": "tests/fixtures/long_context_prompt.txt, first 1100 tokens, 4 GiB expert cache",
+    "token_by_token_tps": 22.6,
+    "chunk_tps": {
+      "32": 33.7,
+      "64": 33.7,
+      "128": 40.3,
+      "256": 49.7,
+      "512": 65.7,
+      "1100": 99.1
+    },
+    "llama_cpp_parity_positions_1100_1199": "argmax identical, ORACLE LOGITS PARITY YES at every chunk size",
+    "prompt_96_tokens_one_chunk": {
+      "cache_mib_4096_tps": 38.1,
+      "cache_mib_12288_experts_resident_tps": 189.2,
+      "dense_gpu_ms": 140.4,
+      "experts_gpu_ms": 313.8,
+      "router_select_ms": 17.0
+    },
+    "mapped_experts_experiment": "RL_PREFILL_MAPPED_EXPERTS=1: numerically identical, 1.9-10.8 tok/s (Metal residency of each layer's expert window per command buffer)",
+    "reference_llama_cpp_pp48_tps": 338.6,
+    "after_lru_fix_dev20c": {
+      "prompt_96_tokens_one_chunk_cache_4096_tps": 155.4,
+      "prompt_96_split_ms": {
+        "dense_gpu": 139.1,
+        "experts_gpu": 312.2,
+        "miss_copies_wall": 78.3,
+        "lru_reserve": 31.4,
+        "router_select": 17.9
+      },
+      "prompt_1100_cache_4096_chunk_tps": {
+        "128": 152.4,
+        "256": 163.9,
+        "512": 171.4,
+        "1100": 166.3
+      },
+      "prompt_1100_cache_12288_chunk_512_tps": 163.4,
+      "decode_warm_cache_4096_tps": 39.9,
+      "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size"
+    },
+    "after_expert_kernel_relayout_dev20d": {
+      "prompt_96_tokens_one_chunk_cache_4096_tps": 200.8,
+      "prompt_96_experts_gpu_ms": 188.0,
+      "prompt_512_tokens_one_chunk_cache_4096_tps": 294.3,
+      "prompt_512_split_ms": {
+        "dense_gpu": 619.6,
+        "experts_gpu": 825.6,
+        "router_select": 90.0
+      },
+      "prompt_1100_cache_4096_chunk_tps": {
+        "256": 231.3,
+        "512": 248.6,
+        "1100": 270.7
+      },
+      "kernel_variants_experts_gpu_ms_96_tokens": {
+        "per_expert_sequential_pairs": 312,
+        "8_pair_tile": 981,
+        "adaptive_4_2_1_tile_float4": 370,
+        "4_row_tile": 295,
+        "grid_over_pairs": 256,
+        "slices_of_2_pairs": 182,
+        "slices_of_4_pairs": 188
+      },
+      "llama_cpp_parity": "ORACLE LOGITS PARITY YES at every size",
+      "regression": "36/36"
+    }
+  },
+  "dev21_gpu_routed_decode": {
+    "cache_mib": 22528,
+    "preload_ms": 3752.6,
+    "phys_footprint_mib": 22120.3,
+    "chat_turns_decode_tps_speculative": [
+      54.4,
+      55.4,
+      54.9,
+      57.1
+    ],
+    "chat_turns_decode_tps_RL_ENGINE_SPECULATIVE_0": [
+      18.0,
+      26.3,
+      35.8
+    ],
+    "answer_200_tokens_tps": 56.55,
+    "gpu_ms_per_token_single_command_buffer": [
+      16.1,
+      16.9
+    ],
+    "parity_repeat2_full_residency": {
+      "gpu_routed_tokens": 12,
+      "worst_layer_abs": 5.34e-05,
+      "logits_abs": 1.67e-05,
+      "router_mismatches": 0
+    },
+    "first_attempt_without_residency_set_tps": 11.1,
+    "llama_cpp_tg64_tps": 68.0
+  },
+  "dev22_decode_kernels": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3 (median; 256 greedy tokens, fixed rainbow prompt; prefill = first 1100 tokens of tests/fixtures/long_context_prompt.txt, chunks of 512)",
+    "baseline_commit": "3e2257e",
+    "baseline": {
+      "decode_22gib_tps": 57.57,
+      "decode_4gib_tps": 39.85,
+      "prefill_1100_4gib_tps": 240.1
+    },
+    "one_encoder_per_token": {
+      "decode_22gib_tps": 58.65,
+      "decode_4gib_tps": 40.17
+    },
+    "dev22": {
+      "decode_22gib_tps": 66.23,
+      "decode_4gib_tps": 44.7,
+      "prefill_1100_4gib_tps": 248.5,
+      "gpu_routed_tokens": "255/255"
+    },
+    "ab_same_build_RL_ENGINE_ROWS2_0_decode_22gib_tps": 59.87,
+    "parity": {
+      "gpu_routed_worst_layer_abs": 1.53e-05,
+      "router_mismatches": 0,
+      "greedy_vs_llama_cpp": "identical (24 tokens)"
+    },
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "llama_cpp_tg64_tps": 68.0,
+    "note": "single machine, idle, medians of 3 runs; not measured on the M4 Pro 24 GiB (the 22 GiB configuration needs >= 40 GiB RAM)"
+  },
+  "dev23_early_out_prefetch": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3 (medians)",
+    "dev22": {
+      "decode_22gib_tps": 66.23,
+      "decode_4gib_tps": 44.7,
+      "prefill_1100_4gib_tps": 248.5
+    },
+    "early_out_always": {
+      "decode_22gib_tps": 69.87,
+      "decode_4gib_tps": 8.32,
+      "early_outs_per_token_4gib": 32.7
+    },
+    "policy_load_free_token": {
+      "decode_22gib_tps": 69.37,
+      "decode_4gib_tps": 45.05
+    },
+    "dev23": {
+      "decode_22gib_tps": 72.72,
+      "decode_4gib_tps": 50.11,
+      "prefill_1100_4gib_tps": 252.3,
+      "phys_footprint_mib_4gib": 4805.6,
+      "phys_footprint_mib_22gib": 22032.2,
+      "critical_path_load_ms_per_token_4gib": 0.6,
+      "ssd_mib_per_token_4gib": 61.23
+    },
+    "prefetch_ab_alternated_decode_4gib_tps": {
+      "off": [
+        45.31,
+        44.93
+      ],
+      "on": [
+        47.62,
+        47.07
+      ]
+    },
+    "dead_ends": {
+      "spin_wait_cb_status_decode_4gib_tps": 27.5,
+      "periodic_probe_decode_4gib_tps": 39.49
+    },
+    "per_layer_miss_rate_4gib": "0.45-0.87 per layer, 31.7 of 48 layers per token (215 tokens)",
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only, GGUF warm in the page cache; not measured on the M4 Pro 24 GiB"
+  },
+  "dev24_prefill_overlap": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "command": "scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --only prefill --reps 3 --cool 90 (medians; first 1100 tokens of tests/fixtures/long_context_prompt.txt, chunk 512, --cache-mib 4096)",
+    "dev23_cooled_prefill_1100_4gib_tps": [
+      258.4,
+      262.6,
+      261.7
+    ],
+    "dev24_prefetch_off_prefill_1100_4gib_tps": [
+      271.6,
+      271.9,
+      271.0
+    ],
+    "dev24_prefill_1100_4gib_tps": [
+      314.3,
+      314.6,
+      313.8
+    ],
+    "dev24_prefill_1100_4gib_median_tps": 314.3,
+    "dev24_chunk1100_single_run_tps": 326.6,
+    "router_select_ms_per_1100_tokens": {
+      "before": 180,
+      "after": 39
+    },
+    "throttling_consecutive_runs_no_pause_tps": [
+      311.0,
+      186.6,
+      168.2,
+      147.0,
+      132.8
+    ],
+    "parity": "quick_parity.sh PASS; logits.long_context_vs_llama PASS at chunks 96/256/512/1100",
+    "regression": "44/44 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only, GGUF warm in the page cache, GPU cooled 90 s before each run; earlier dev22/dev23 prefill figures (248.5/252.3) were taken without a pause; not measured on the M4 Pro 24 GiB"
+  },
+  "dev26_long_context": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "long_positions_parity": {
+      "command": "scripts/dev/long_positions.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf (batch 512, --cache-mib 4096, 100 decode steps)",
+      "p4096": {
+        "argmax_agree": "100/100",
+        "worst_kl": 0.006434,
+        "worst_logit_abs": 3.0316
+      },
+      "p8192": {
+        "argmax_agree": "100/100",
+        "worst_kl": 9.848e-07,
+        "worst_logit_abs": 2.2728
+      },
+      "native_token_by_token_vs_native_batched_p4096": {
+        "worst_logit_abs": 2.6195,
+        "worst_kl": 0.008029
+      },
+      "logit_abs_limit": 4.0,
+      "note": "limit chosen after measuring the native self-consistency floor; the 1100-position regress check keeps 2.0"
+    },
+    "long_positions_throughput": {
+      "command": "scripts/dev/long_positions.sh MODEL --bench-only (redlite-generate --raw, 128 greedy tokens, single runs, 90 s cool-down)",
+      "before_split_k": {
+        "p4096_4gib": {
+          "prefill_tps": 266.69,
+          "decode_tps": 24.81
+        },
+        "p4096_22gib": {
+          "prefill_tps": 266.96,
+          "decode_tps": 31.47
+        },
+        "p8192_4gib": {
+          "prefill_tps": 203.29,
+          "decode_tps": 17.17
+        },
+        "p8192_22gib": {
+          "prefill_tps": 204.1,
+          "decode_tps": 20.07
+        }
+      },
+      "after_split_k": {
+        "p4096_4gib": {
+          "prefill_tps": 266.71,
+          "decode_tps": 43.56
+        },
+        "p4096_22gib": {
+          "prefill_tps": 265.75,
+          "decode_tps": 65.51
+        },
+        "p8192_4gib": {
+          "prefill_tps": 201.88,
+          "decode_tps": 38.81
+        },
+        "p8192_22gib": {
+          "prefill_tps": 204.25,
+          "decode_tps": 57.36
+        }
+      },
+      "after_threshold_repeat_decode_tps": {
+        "p4096_4gib": 42.29,
+        "p4096_22gib": 63.84,
+        "p8192_4gib": 39.23,
+        "p8192_22gib": 56.31
+      },
+      "attn_gpu_ms_63_steps_p8400": {
+        "before": 2269.12,
+        "after": 253.64
+      }
+    },
+    "short_context_decode_medians": {
+      "command": "scripts/dev/bench_m4.sh MODEL --only decode22|decode4 --reps 3 --cool 60",
+      "split_k_all_lengths": {
+        "decode_22gib_tps": 68.47,
+        "decode_4gib_tps": 45.84
+      },
+      "attn_split_0": {
+        "decode_22gib_tps": 70.2,
+        "decode_4gib_tps": 46.83
+      },
+      "dev26_split_above_256": {
+        "decode_22gib_tps": 69.83,
+        "decode_4gib_tps": 46.51
+      },
+      "dev23_build_remeasured_same_hour": {
+        "decode_22gib_tps": 70.12,
+        "decode_4gib_tps": 47.1
+      },
+      "crossover_single_runs_22gib": {
+        "p970": {
+          "split": 65.08,
+          "old": 54.65
+        },
+        "p1880": {
+          "split": 65.14,
+          "old": 45.32
+        }
+      }
+    },
+    "sanitized_chat_turn": "scripts/dev/sanitize_chat.sh: 359 prompt tokens, batch 64, 32 tokens greedy + seeded sampling, ASan+UBSan, no report, greedy == normal build",
+    "kernel_selftest": "redlite-engine kernel-selftest: rows/rows2 16 shapes worst rel 1.1e-7; guard; copy; rl_route 64 cases; attention 6 lengths worst abs 8.2e-8",
+    "regression": "46/46 after rm -rf .deps/redmetal && make native (0 warnings)",
+    "note": "M4 Max only; not measured on the M4 Pro 24 GiB"
+  },
+  "release_0_3_0": {
+    "machine": "Apple M4 Max 48 GiB, macOS 27",
+    "version": "0.3.0",
+    "date": "2026-09-30",
+    "summary_tok_s": {
+      "decode_short_22gib": [
+        69.83,
+        72.72
+      ],
+      "decode_short_4gib": [
+        46.51,
+        50.11
+      ],
+      "decode_p4096_22gib": [
+        63.84,
+        65.51
+      ],
+      "decode_p4096_4gib": [
+        42.29,
+        43.56
+      ],
+      "decode_p8192_22gib": [
+        56.31,
+        57.36
+      ],
+      "decode_p8192_4gib": [
+        38.81,
+        39.23
+      ],
+      "prefill_1100_4gib_median_cooled": 314.3
+    },
+    "milestones": {
+      "dev22": {
+        "target": "decode >= 62 @ 22 GiB",
+        "result": 66.23,
+        "reached": true
+      },
+      "dev23": {
+        "target": "decode >= 45 @ 4 GiB",
+        "result": 50.11,
+        "reached": true
+      },
+      "dev24": {
+        "target": "prefill >= 300 @ 1100 tok, 4 GiB",
+        "result": 314.3,
+        "reached": true
+      },
+      "dev26": {
+        "target": "parity+bench 4096/8192, sanitized chat turn, model-free kernel tests",
+        "reached": true
+      }
+    },
+    "final_validation": "make test 57 OK; ruff clean; make redmetal / make native / make sanitize rc 0, 0 warnings; regress_m4.sh 46/46 after rm -rf .deps/redmetal",
+    "note": "ranges are two measurements of the same code the same night; not measured on the M4 Pro 24 GiB"
+  }
+}

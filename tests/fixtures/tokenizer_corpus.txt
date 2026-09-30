@@ -1,0 +1,30 @@
+Hello world
+Explain in one sentence why the sky is blue.
+<|im_start|>user\nWhat is 2+2?<|im_end|>\n<|im_start|>assistant\n
+  leading spaces and trailing spaces  
+tabs\tbetween\twords
+line one\nline two\n\nline four after a blank
+CamelCaseIdentifier snake_case_name kebab-case-name
+1234567890 3.14159 1,000,000 -42 0x1F
+The year 2024 had 366 days; 1999 didn't.
+don't can't won't I'm you're it's
+Prices: $19.99, €20, £15, ¥1000
+Quotation "double" and 'single' and “curly” and ‘curly’
+Punctuation!!! ??? ... --- ;; :: ()[]{}<>
+def fib(n):\n    return n if n < 2 else fib(n-1) + fib(n-2)\n
+for (int i = 0; i < n; ++i) { sum += a[i] * b[i]; }
+SELECT id, name FROM users WHERE age >= 18 ORDER BY name;
+Il gatto dorme sul divano mentre fuori piove.
+Der schnelle braune Fuchs springt über den faulen Hund.
+Ça va? Très bien, merci — et toi?
+日本語のテキストをトークン化する
+中文分词测试：今天天气很好。
+한국어 문장을 토큰으로 나눕니다.
+Привет, мир! Как дела?
+مرحبا بالعالم
+Emoji 😀🚀🎉 and flags 🇮🇹🇺🇸 and skin tones 👍🏽
+Mixed: hello世界 test日本 123abc
+<|endoftext|> after end of text <|im_end|>
+<|im_start|>system\nYou are helpful.<|im_end|>\n
+https://example.com/path?query=1&other=2#frag user@example.com
+a\\b backslash escaped and literal \\n sequence

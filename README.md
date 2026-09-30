@@ -1,51 +1,149 @@
 # DwarfStar Red Lite
 
-**Apple-Silicon-only runtime profile for running Qwen3-Next-80B-A3B on memory-constrained Macs.**
+**Qwen3-Next-80B-A3B on Apple Silicon Macs, with a native Metal runtime written for this one model.**
 
-Red Lite is an independent project inspired by the narrow, hardware-aware philosophy
-of DwarfStar/DS4. Instead of trying to be a universal model runner, it targets one
-architecture and one hardware family:
+Red Lite is an independent project inspired by the narrow, hardware-aware philosophy of
+DwarfStar/DS4. It is not a generic model runner. It targets one architecture and one
+hardware family:
 
-- **Model family:** Qwen3-Next
-- **Reference model:** Qwen3-Next-80B-A3B-Instruct
-- **Hardware:** Apple Silicon macOS only
-- **Target machine:** 24 GB unified memory
-- **Goal:** make an 80B-total / 3B-active sparse MoE usable locally without pretending
-  that a 48 GB model magically fits in 24 GB RAM.
+- **Model:** Qwen3-Next-80B-A3B-Instruct. The reference file is Bartowski's
+  `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB).
+- **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
+  developed since September 2026 on a 48 GiB M4 Max.
+- **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the
+  whole model fits in memory.
 
-## What makes it "Red Lite"
+Qwen3-Next has 48 layers: 36 Gated DeltaNet blocks and 12 full-attention blocks, each
+followed by a 512-expert MoE that selects 10 experts per token. Only about 1 GiB of the
+weights is dense. The other ~17 GiB are routed experts, of which a token touches about
+3%. Red Lite keeps the dense part resident and treats the experts as a cache.
 
-Qwen3-Next-80B-A3B has 80B total parameters but activates about 3B per token. It has
-48 layers, 512 routed experts and selects 10 experts per token. Its hybrid stack uses
-three Gated DeltaNet / MoE blocks for each full-attention / MoE block.
+## Two runtimes
 
-That makes it a better 24 GB target than a dense 80B model: the model's *capacity* can
-live on SSD while only a working set must be resident for oversized operation.
+| | **Native runtime (0.3)** | **Launcher (0.2)** |
+|---|---|---|
+| What runs the model | Red Lite's own C11 / Objective-C / Metal implementation of the Qwen3-Next graph | a pinned llama.cpp (Metal), or a pinned CPU mmap runtime for oversized models |
+| Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB by default on 24 GiB machines) | whole model resident, or CPU mmap with bounded expert residency |
+| Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
+| Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
+| Validated on | M4 Max 48 GiB (0.3.0); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
 
-Red Lite therefore has two deliberately different execution paths:
+## Native runtime: quick start
 
-```
-                 +-----------------------------+
-                 | Qwen3-Next-80B-A3B GGUF     |
-                 +--------------+--------------+
-                                |
-                         memory planner
-                        /               \
-                       /                 \
-      working set fits                    model > budget
-             |                                  |
-             v                                  v
- +-----------------------+          +--------------------------+
- | Metal resident mode   |          | SSD-residency mode       |
- | llama.cpp + Metal     |          | mmap + bounded expert LRU|
- | all useful GPU layers |          | Apple CPU / Accelerate   |
- +-----------------------+          +--------------------------+
+```bash
+make native                     # builds .deps/redmetal/ and runs the model-free self-tests
+python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models
+
+M=models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
+.deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
+./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
+./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
 ```
 
-The fallback is intentional. Current oversized Qwen3-Next execution has a validated
-CPU mmap/residency path, whereas forcing a too-large model into Metal unified memory
-can trigger severe memory pressure or OOM. Red Lite prioritizes *actually completing
-inference* over claiming every mode is GPU accelerated.
+**Chat defaults.**
+
+- Context: 4096 positions (`--context`).
+- Answer length: 256 tokens.
+- Temperature: 0.7 (`--temperature 0` is greedy and deterministic).
+- Expert cache: chosen from RAM. With 40 GiB or more it is 22528 MiB: every expert is
+  resident and preloaded, and tokens are routed on the GPU in one command buffer.
+  Otherwise it is 4096 MiB.
+- Prompts are ingested by a batched prefill in 512-token chunks (`--batch`).
+
+**Sampler.** It follows llama.cpp's chain (top-k → top-p → min-p → temperature) with the
+same arithmetic. min-p is off by default here and 0.05 in llama.cpp.
+
+**Server.** It handles one request at a time and re-ingests the conversation on every
+request.
+
+## Measured performance
+
+**Method.**
+
+- Reference IQ2_XXS GGUF, greedy decode.
+- Warm page cache: the whole GGUF fits in the 48 GiB machine's page cache.
+- Decode is measured after a short prompt unless a position is given.
+- Each number comes from one of the records listed under the table, with its command
+  and commit.
+- Nothing is extrapolated from one machine to another.
+
+| Machine | Build | Expert cache | Decode, short context | Decode @ ~4096 | Decode @ ~8192 | Prompt ingestion |
+|---|---|---|---:|---:|---:|---:|
+| M4 Max 48 GiB | native 0.3.0 | 22 GiB (all resident) | 69.8–72.7 tok/s | 63.8–65.5 tok/s | 56.3–57.4 tok/s | 1100 tokens: 314.3 tok/s (4 GiB cache) |
+| M4 Max 48 GiB | native 0.3.0 | 4 GiB | 46.5–50.1 tok/s | 42.3–43.6 tok/s | 38.8–39.2 tok/s | 4096 tokens: ~266 tok/s, 8192 tokens: ~203 tok/s |
+| M4 Pro 24 GiB | native dev18 (`280f788`) | 4 GiB | 27.8 tok/s | not measured | not measured | 16.3 tok/s (token by token; there was no batched prefill yet) |
+| M4 Pro 24 GiB | launcher 0.2 (llama.cpp Metal, resident) | n/a | 36.4–38.0 tok/s | — | — | 236.7–258.8 tok/s (256-token prompts) |
+
+**Where the numbers come from.**
+
+- **M4 Max ranges.** Two measurements of the same code. Short context: the dev23 record
+  (03:40) and the 05:4x re-measurement of 2026-09-30. Long positions: two single-run
+  repeats. The same build measured 4–7% lower two hours later on the same
+  machine, cause not isolated (`docs/REDLITE_DEV26_LONG_CONTEXT.md`).
+- **Long positions.** Single cooled runs, `scripts/dev/long_positions.sh`.
+- **Prefill.** Median of three cooled runs, `scripts/dev/bench_m4.sh --cool 90`.
+- **Records.**
+  - `benchmarks/m4max-48gb-native-dev19.json`: dev19–dev26 sections.
+  - `benchmarks/m4pro-24gb-native-dev18.json`.
+  - `benchmarks/m4pro-24gb-sweep-2026-09-02.json`. The launcher's 4K/8K rows there are
+    context sizes (36.4 / 36.9 tok/s), not decode positions.
+- **Reference.** The pinned llama.cpp, fully resident on the M4 Max, gives 68.0 tok/s
+  decode (`llama-bench` tg64) and 338.6 tok/s prompt (pp48).
+
+**The 0.3.0 native runtime has not been measured on a 24 GiB M4 Pro.** Its 4 GiB
+configuration is the one intended for 24 GiB machines. On the 48 GiB machine the page
+cache holds the whole GGUF, so expert misses cost a memory copy. On 24 GiB some misses
+will be SSD reads.
+
+## Correctness
+
+- **Greedy output** is token-identical to the pinned llama.cpp on the regression prompts
+  (`scripts/regress_m4.sh`, 46 checks).
+- **Logits** match llama.cpp:
+  - after a 1100-token prompt: max-logit difference ≤ 2.0, KL ≤ 2e-2;
+  - at 4096 and 8192 positions: every argmax agrees over 100 steps, KL ≤ 6.4e-3.
+- **Kernels.** Every kernel change is gated by a CPU-oracle parity run: a double-precision
+  implementation of the same graph in the same process. Any router top-k divergence fails
+  the gate.
+- **Model-free tests.** The GGUF readers are fuzzed. The model-free tests run under
+  ASan/UBSan (`make sanitize`), and so does a real chat turn.
+- **Details:**
+  - `docs/REDLITE_DEV18_ENGINE.md` (the engine);
+  - `docs/REDLITE_DEV22_DECODE_KERNELS.md` to `docs/REDLITE_DEV26_LONG_CONTEXT.md` (the
+    0.3.0 performance work).
+
+## Limits
+
+- **One model, one layout.** Routed experts must be IQ2_XS or IQ1_M: the reference GGUF
+  mixes both. Dense tensors must be F32, Q8_0, Q2_K, Q4_K, Q5_K, Q6_K or IQ2_XXS. Other
+  GGUFs of the same model are not supported by the native runtime (the launcher handles
+  them).
+- **One sequence.** No multi-sequence batching. The server serves one request at a time.
+- **Full residency** (`--cache-mib 22528`, GPU-routed decode) needs a Mac with at least
+  40 GiB of RAM.
+- **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
+  GGUF, expert misses become SSD reads. The expert prefetch (`RL_ENGINE_PREFETCH=0` turns
+  it off) may help less there, or hurt.
+- **Long contexts slow down.** Decode attention is linear in the position. The batched
+  prefill's attention was not optimized, so prompt ingestion falls from ~314 tok/s at
+  1100 tokens to ~203 tok/s at 8192.
+- **Quantization.** IQ2_XXS is a very low-bit quantization. Red Lite reproduces llama.cpp
+  on this file; it does not improve the file's quality.
+
+## Tools
+
+| Status | Tools |
+|---|---|
+| **Product** | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server`, `redlite-engine` (`info`, `tokenize`, `logits`, `parity`, `prefill`, `kernel-selftest`) |
+| **Launcher** (0.2 path, M4 Pro-validated) | `redlite doctor / plan / run / serve / bench / sweep / bootstrap / download` |
+| **Regression** | `scripts/regress_m4.sh`; `scripts/dev/quick_parity.sh`, `bench_m4.sh`, `long_positions.sh`, `sanitize_chat.sh`; the stage parity CLIs in `.deps/redmetal/` (`redlite-ffn`, `redlite-deltanet-*`, `redlite-attention*`, `redlite-decoder-stack`, `redlite-native topk-parity`, …). The stage CLIs validated each graph stage (dev9–dev17) and are kept as regression tools; `redlite-engine` supersedes them for inference. |
+| **Legacy** | the Python streaming oracle `redlite-stream`, `redlite-ffn` (Python) and `redlite-topk` (dev1–dev8). It is frozen and kept as a numerical reference; its `--help` says so. |
+
+# Launcher (0.2)
+
+The sections below describe the llama.cpp-based launcher: the memory planner, the pinned
+engines and the M4 Pro 24 GiB presets. It remains the field-validated path on the 24 GiB
+M4 Pro.
 
 ## 24 GB recommended configurations
 
@@ -190,6 +288,7 @@ redlite models
 redlite bootstrap
 redlite download [24gb|balanced|quality]
 redlite plan MODEL.gguf
+redlite chat [MODEL.gguf]
 redlite run MODEL.gguf
 redlite serve MODEL.gguf
 redlite bench MODEL.gguf
@@ -223,11 +322,16 @@ Red Lite instead adapts the **DwarfStar design approach**:
 - integrated local CLI/server experience;
 - deterministic, pinned inference engines.
 
-For mathematical correctness of Qwen3-Next, the first usable release delegates the
+For mathematical correctness of Qwen3-Next, the first usable release (0.2) delegated the
 model graph/kernels to a pinned llama.cpp revision that already implements the
-architecture. This avoids shipping an unvalidated hand-written Gated DeltaNet kernel.
+architecture. 0.3 adds the native runtime, whose hand-written Gated DeltaNet, attention and
+MoE kernels were each validated against a CPU oracle and the pinned llama.cpp before
+being used.
 
 ## What is and is not validated
+
+This section covers the launcher. For the native runtime, see *Measured performance*,
+*Correctness* and *Limits* above.
 
 Red Lite has completed real field validation on an **Apple M4 Pro with 24 GiB unified memory** using the 17.97 GiB Bartowski IQ2_XXS build of Qwen3-Next-80B-A3B-Instruct.
 

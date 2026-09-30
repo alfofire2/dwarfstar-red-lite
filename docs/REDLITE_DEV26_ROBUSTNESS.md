@@ -1,0 +1,172 @@
+# Red Lite dev26 (partial) — model-free robustness: GGUF fuzz, sanitizers, sampler parity
+
+> The items this document lists as not done (4096/8192-position parity and benchmarks, a sanitized
+> chat turn, model-free tests for the dev22–dev24 kernels) were completed later on the M4 Max:
+> see `REDLITE_DEV26_LONG_CONTEXT.md`.
+
+Status: **partial**. This document covers only the dev26 items that need neither
+Metal nor the model:
+- the sanitizer run of the model-free tests;
+- a GGUF reader fuzz, and the fixes it led to;
+- a fix to the portable (Linux) build;
+- sampler distributional parity against the pinned llama.cpp.
+
+The llama.cpp side of the sampler comparison runs the real pinned library; its sampler
+needs no model.
+
+Not done: 4096/8192-position parity and benchmarks, and a sanitized chat turn. Both need
+Metal and the model. There are no dev22–dev24 kernels yet to write model-free tests for.
+See "Scope boundary".
+
+## Why
+
+The native runtime opens an 18 GiB file and reads counts, lengths and offsets from
+it before anything else, and until now only well-formed fixtures had tested that
+code. `make native` on Linux (the portable subset that CLAUDE.md documents) had
+also stopped building at some point after dev15, without anyone noticing.
+
+## What changed
+
+- **Portable build restored** (`2ed500b`). `redlite_native_deltanet_{state,tail}_cli.c`
+  used the Metal telemetry struct outside its `#ifdef __APPLE__`. The Linux build
+  is now also warning-clean under `-Wall -Wextra -Wpedantic`: the misleading
+  indentation in the prestate CLI is split, and the Linux `redlite-native` link
+  gets the same `-Wno-overlength-strings` as the macOS one.
+- **GGUF reader hardening** (`ee80ff7`). The fuzz found three defects:
+  1. `rl_native_build_expert_map` sized a `calloc` straight from the header's
+     `tensor_count`. A corrupted count requested 56 TiB.
+     `rl_gguf_model_open` accepted up to 2^24 tensors or kv entries (~1.8 GiB of
+     descriptors) whatever the file size. Both now reject counts the file cannot
+     hold (tensor descriptor ≥ 24 bytes, kv ≥ 13 bytes).
+  2. The expert map did not check tensor offsets against the file. Two routed
+     tensors with offsets near 2^64 sort next to each other, pass the slice check,
+     and then `data_base + offset` wraps into the `pread` offsets. Offsets beyond EOF
+     are now rejected, as `rl_gguf_model_open` already did.
+  3. Tokenizer arrays are now bounded by the bytes left in the file before
+     allocation. `token_type` values outside int32 are rejected instead of going
+     through an undefined float→int conversion. Nested arrays are rejected in both
+     readers, as llama.cpp does.
+- **Tooling** (`cad2e69`).
+  - `redlite-gguf-fuzz` builds two valid synthetic seeds (full directory with
+    tokenizer and chat template; routed triplet plus router). It feeds both readers
+    every strict truncation, 4- and 8-byte boundary values at every header offset,
+    and seeded random multi-mutations.
+    - Seeds must be accepted, and every truncation of the directory seed must be
+      rejected.
+    - For accepted mutants it mmaps the file, reads the first and last payload
+      bytes, and walks every expert layout.
+    - `make native` runs 2000 random iterations; `regress_m4.sh` runs 20000.
+  - `scripts/sanitize_offline.sh` (`make sanitize`) rebuilds the model-free tests
+    and the fuzz with `-fsanitize=address,undefined,float-cast-overflow
+    -fno-sanitize-recover=all` and runs them. It is also a new `regress_m4.sh`
+    check, `selftest.sanitize`.
+
+Since then (dev25, `3060e9b`), `make sanitize` also builds `redlite-server-fake` with the
+sanitizers and runs `tests/test_native_server.py` against it. That covers the HTTP parser,
+the JSON request parser (including a 300-mutation body fuzz) and the SSE writer.
+
+- **Sampler parity with llama.cpp** (`8c9e138`, `046cbed`).
+  - **Before:** the native sampler implemented top-k → top-p → temperature → draw. It had
+    no min-p, so llama.cpp's default chain differed (it applies `min_p = 0.05` after
+    top-p). It also did the nucleus and weights in double precision.
+  - **Now:** the sampler follows the pinned chain `top_k → top_p → min_p → temp → dist`
+    (`src/llama-sampler.cpp`, `common/sampling.cpp`) with the same float arithmetic:
+    - top-p: float softmax and float running sum, cut at the first `cum >= p`;
+    - min-p: `logit >= max + logf(min_p)`;
+    - temp: `logit / T`, then weights `expf(l - max)` summed in double;
+    - draw: the first candidate whose running weight reaches `u · sum`.
+  - `rl_sampler_distribution()` returns the exact distribution a draw uses.
+    `--min-p` is exposed in `redlite-generate`, `redlite chat` and `redlite-server`
+    (`min_p` request field, as in llama-server). The default stays 0 (off), so
+    `redlite chat` keeps its documented defaults. Pass `--min-p 0.05` to match
+    llama.cpp's defaults.
+  - Greedy is unchanged: argmax, lowest id on ties. Seeded non-greedy draws can differ
+    from dev21 in the last bit of a weight, because the arithmetic now mirrors llama.cpp.
+  - Tools:
+    - `redlite-sampler-dist` is native and model-free;
+    - `scripts/dev/ref_llama/redlite_ref_sampler.cpp` is the dev-only oracle linked
+      against the pinned libllama, built by `scripts/dev/build_ref_sampler.sh` on
+      macOS or Linux;
+    - `scripts/dev/compare_sampler.py` compares the two.
+    - `regress_m4.sh` gains `sampler.vs_llama`.
+  - **Documented differences** (not distributional):
+    1. **PRNG.** Native uses splitmix64; llama.cpp uses `std::mt19937` with
+       `uniform_real_distribution<double>`. Distributions are identical, but the same
+       seed does not give the same token sequence.
+    2. **Exact logit ties across a cut** (top-k boundary, nucleus cut, greedy mode).
+       llama.cpp keeps whichever tied ids `std::partial_sort` leaves in front, which is
+       implementation-defined and can differ between libstdc++ and libc++. Native keeps
+       the lowest ids. The probability multiset is the same; only the identities of
+       equally-scored tokens differ.
+
+## Validation
+
+Machine: **Linux x86_64 cloud container** (Ubuntu 24.04, 4 vCPU, 15 GiB, gcc 13.3,
+clang 18.1). There is no Metal and no GGUF on it. Commit `cad2e69`, except the sampler
+row.
+
+| Check | Command | Result |
+|---|---|---|
+| portable build, gcc | `rm -rf .deps/redmetal && CC=gcc make native` | rc 0, 0 warnings, all self-tests OK |
+| portable build, clang | `rm -rf .deps/redmetal && CC=clang make native` | rc 0, 0 warnings, all self-tests OK |
+| sanitizers (gcc; the container's clang lacks the ASan runtime) | `CC=gcc make sanitize` | selftest + 4 offline tests + fuzz: no report |
+| fuzz, longer | `.deps/redmetal/sanitize/redlite-gguf-fuzz --iterations 100000 --seed {1,0xdeadbeef,424242}` | 3 × 152 374 inputs, 0 reports, 0 accepted truncations |
+| Python | `make test`; `ruff check redlite tests --select E9,F63,F7,F82` | 36 OK; clean |
+| sampler vs pinned llama.cpp `7798007` (libllama built in the container, CPU) | `REDLITE_LLAMA_DIR=… bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py --draws 20000` | commit `046cbed`: **SAMPLER PARITY: YES** on 32 grid points (4 logit shapes × 8 parameter sets). Worst probability difference 0.0 (bit-identical float probabilities). The 5 exact-tie cuts are resolved differently, with the same probability lists. Draws: 20000 per point (1000 without top-k) from each side, all p-values ≥ 0.047. |
+
+Before the fixes, the same fuzz aborted under ASan on defect 1, and its own
+invariant check caught defect 2.
+
+The first sampler comparison failed its goodness-of-fit check on the llama.cpp side for
+one configuration: one token at p = 0.99995 and the rest pooled. A direct count showed
+both implementations drawing rare tokens at the expected rate (1 in 12 000 each,
+expected 0.58). The fault was the statistic: a chi-square on a pooled cell expecting
+0.05 draws is invalid. It now folds that cell into a regular one and tests it with an
+exact Poisson tail.
+
+Only the llama.cpp **library** was built in the container, as the sampler oracle:
+source-only shallow fetch of the pinned commit, `-DGGML_NATIVE=OFF`, CPU. It never
+touches a model, and no runtime binary links it.
+
+**Validated on the M4 Max 48 GiB** (macOS 27, commit `7d96db1`): clean `make native` and
+`make redmetal` with 0 warnings, then `scripts/regress_m4.sh` **44/44**. The real 18 GiB
+GGUF opens through the hardened readers in every model check. `selftest.gguf_fuzz`,
+`selftest.sanitize` and `sampler.vs_llama` all pass.
+
+On macOS, libllama is built with libc++. The sampler comparison there again gives
+bit-identical probabilities (worst difference 0.0), with 4 exact-tie cuts resolved
+differently, against 5 with libstdc++ on Linux. This confirms that the tie order is
+implementation-defined in llama.cpp.
+
+The first macOS run found two problems, both fixed and re-validated:
+- `scripts/sanitize_offline.sh` did not link the macOS `redlite-native`, which needs the
+  Metal top-k sources. A foreign `tests` package in the user's site-packages also
+  shadowed the repository's tests (`7d96db1`).
+- The macOS 27 SDK deprecates `didModifyRange:`, which produced 21 warnings. Every
+  affected buffer is Shared storage, where the call was a no-op, so the calls were
+  removed (`8a16b72`).
+
+No benchmark record is added: nothing here measures throughput. Tool run times
+are not benchmarks.
+
+## Scope boundary
+
+- Implemented and tested synthetically on Linux x86_64 only. Nothing here is
+  validated on the M4 Max or the M4 Pro, and nothing here changes Metal code, kernel
+  arithmetic, decode or prefill.
+- The fuzz is a deterministic mutation fuzzer over two small seeds, not
+  coverage-guided (no libFuzzer/AFL). It exercises the header, metadata and
+  directory parsers and the expert layout, not the tokenizer or the engine's
+  tensor-table audit.
+- The sanitizer run covers the portable model-free tests only. The dev26 item
+  "sanitizer run of a chat turn" needs Metal and the model and is **not done**.
+- Also **not done** from dev26: parity and benchmark at 4096/8192 positions, and
+  model-free tests for the dev22–dev24 kernels, which do not exist yet.
+- Sampler parity is checked on synthetic logit vectors over the real vocabulary size
+  (peaked, three strong candidates, flat top, exact ties) and an 8-point parameter
+  grid. It does not use model logits. The sampler is a pure function of the logits, so
+  that is the whole contract.
+- dev22–dev24 are not started. Their targets need Metal, the model and llama.cpp on the
+  M4 Max: decode ≥ 62 / ≥ 45 tok/s and prefill ≥ 300 tok/s. dev25 is partial, see
+  `docs/REDLITE_DEV25_PRODUCT.md`. The work was done in a cloud container without any
+  of these.

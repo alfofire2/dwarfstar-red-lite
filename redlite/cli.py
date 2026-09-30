@@ -11,10 +11,12 @@ import sys
 from . import __version__
 from .hardware import detect
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import plan_for
-from .runner import engine_status, run_completion, run_server, run_bench, ROOT
+from .planner import native_defaults, plan_for
+from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
+
+DEFAULT_NATIVE_MODEL = ROOT / "models" / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -171,7 +173,31 @@ def cmd_run(args) -> int:
     return run_completion(args.model, plan, args.prompt, args.tokens, args.extra, args.dry_run, args.single_turn)
 
 
+def cmd_chat(args) -> int:
+    hw = detect(Path(args.model).parent)
+    _require_apple(hw)
+    model = Path(args.model).expanduser()
+    if not model.is_file():
+        _die(f"Model not found: {model}")
+    cache_mib = args.cache_mib
+    if cache_mib is None:
+        defaults = native_defaults(hw.ram_bytes)
+        cache_mib = defaults.cache_mib
+        print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    try:
+        return run_native_chat(
+            str(model), args.context, cache_mib, args.max_tokens,
+            args.temperature, args.top_k, args.top_p, args.seed,
+            args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
+            batch=args.batch, json_stats=args.json, min_p=args.min_p,
+        )
+    except FileNotFoundError:
+        _die("Native Red Lite runtime not built. Run: make native")
+
+
 def cmd_serve(args) -> int:
+    if args.native:
+        return _serve_native(args)
     _, plan = _make_plan(args)
     _print_plan(plan)
     if not plan.safe and not args.force:
@@ -179,6 +205,26 @@ def cmd_serve(args) -> int:
     if plan.status == "CRITICAL" and not args.quiet_warning:
         print("[redlite] warning: CRITICAL resident margin; server concurrency should remain 1 on 24 GiB.")
     return run_server(args.model, plan, args.host, args.port, args.extra, args.dry_run)
+
+
+def _serve_native(args) -> int:
+    hw = detect(Path(args.model).parent)
+    _require_apple(hw)
+    model = Path(args.model).expanduser()
+    if not model.is_file():
+        _die(f"Model not found: {model}")
+    cache_mib = args.cache_mib
+    if cache_mib is None:
+        defaults = native_defaults(hw.ram_bytes)
+        cache_mib = defaults.cache_mib
+        print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    try:
+        return run_native_server(
+            str(model), args.host, args.port, args.context or 4096, cache_mib,
+            batch=args.batch, dry_run=args.dry_run,
+        )
+    except FileNotFoundError:
+        _die("Native Red Lite server not built. Run: make native")
 
 
 def cmd_bench(args) -> int:
@@ -257,10 +303,41 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--engine-args", dest="extra", nargs=argparse.REMAINDER, default=[], help="Remaining arguments are passed to the selected backend")
     s.set_defaults(func=cmd_run)
 
+    s = sub.add_parser("chat", help="Chat with the persistent native Red Lite runtime")
+    s.add_argument(
+        "model", nargs="?", default=str(DEFAULT_NATIVE_MODEL),
+        help=f"Path to the Qwen3-Next GGUF (default: {DEFAULT_NATIVE_MODEL})",
+    )
+    s.add_argument("-p", "--prompt", help="Optional first user message")
+    s.add_argument("--system", help="Optional system prompt")
+    s.add_argument("-c", "--context", type=int, default=4096, help="Context positions (default: 4096)")
+    s.add_argument(
+        "--cache-mib", type=int, default=None,
+        help="Routed-expert cache in MiB (default: 22528 = every expert resident and preloaded "
+             "when RAM >= 40 GiB, otherwise 4096)",
+    )
+    s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 512; 1 = token by token)")
+    s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")
+    s.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7; 0 = greedy)")
+    s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")
+    s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
+    s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
+    s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
+    s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
+    s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")
+    s.add_argument("--no-stream", action="store_true", help="Print each answer only when complete")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_chat)
+
     s = sub.add_parser("serve", help="Start OpenAI-compatible HTTP server")
     _add_plan_args(s)
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8080)
+    s.add_argument("--native", action="store_true",
+                   help="Serve with the native Red Lite runtime (redlite-server) instead of llama-server")
+    s.add_argument("--cache-mib", type=int, default=None,
+                   help="--native: routed-expert cache in MiB (default: 22528 when RAM >= 40 GiB, otherwise 4096)")
+    s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 512)")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

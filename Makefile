@@ -1,4 +1,4 @@
-.PHONY: doctor bootstrap test install
+.PHONY: doctor bootstrap test install redmetal native sanitize
 
 doctor:
 	PYTHONPATH=. python3 -m redlite.cli doctor
@@ -11,3 +11,24 @@ test:
 
 install:
 	./scripts/install.sh
+
+redmetal:
+	bash ./scripts/build_redmetal.sh
+
+native:
+	bash ./scripts/build_native.sh
+	bash ./scripts/build_layer_audit.sh
+	bash ./scripts/build_deltanet_proj.sh
+	bash ./scripts/build_deltanet_prestate.sh
+	bash ./scripts/build_deltanet_state.sh
+	bash ./scripts/build_deltanet_tail.sh
+	bash ./scripts/build_deltanet_layer.sh
+	bash ./scripts/build_recurrent_block.sh
+	bash ./scripts/build_attention.sh
+	bash ./scripts/build_attention_block.sh
+	bash ./scripts/build_decoder_stack.sh
+	bash ./scripts/build_engine.sh
+	bash ./scripts/build_server.sh
+
+sanitize:
+	bash ./scripts/sanitize_offline.sh

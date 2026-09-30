@@ -1,0 +1,138 @@
+name: CI
+
+# Automatic triggers disabled on 2026-09-08: validation runs locally on the test machine
+# (scripts/regress_m4.sh). Re-enable by restoring the push/pull_request triggers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.os }} / native C runtime
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build native runtime
+        run: make native
+
+      - name: Native CLI smoke
+        shell: bash
+        run: |
+          .deps/redmetal/redlite-native --help
+          .deps/redmetal/redlite-native selftest
+
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        python-version:
+          - "3.10"
+          - "3.12"
+          - "3.13"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Upgrade packaging tools
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install Red Lite
+        run: python -m pip install -e .
+
+      - name: Compile Python sources
+        run: python -m compileall -q redlite tests
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build Red Metal bridge
+        if: runner.os == 'macOS'
+        run: make redmetal
+
+      - name: Smoke-test CLI
+        shell: bash
+        run: |
+          redlite --version
+          redlite-stream --help
+          redlite-ffn --help
+          redlite-topk --help
+
+      - name: Import streaming modules
+        run: |
+          python - <<'PY'
+          from redlite.expert_cache import ExpertSlotCache
+          from redlite.expert_store import ExpertStore, build_expert_layouts
+          from redlite.expert_map import build_expert_map
+          from redlite.streaming import make_streaming_plan
+          from redlite.redmetal import redmetal_library_path
+          from redlite.redmetal_cache import MetalExpertCache
+          from redlite.redmetal_exec import RedMetalExecPool
+          from redlite.redmetal_exec_cache import ExecMetalExpertCache
+          from redlite.redmetal_parity import quant_parity_probe
+          from redlite.redmetal_quant import RedMetalQuantBridge
+          from redlite.redmetal_ffn import RedMetalFfnPool
+          from redlite.redmetal_ffn_cache import FfnMetalExpertCache
+          from redlite.redmetal_ffn_parity import expert_ffn_parity_probe
+          from redlite.redmetal_topk import RedMetalTopKPool
+          from redlite.redmetal_topk_cache import TopKMetalExpertCache
+          from redlite.redmetal_topk_parity import topk_layer_parity_probe
+          from redlite.quant_reference import quant_row_dot, row_bytes_for_type
+          from redlite.quant_tables import SUPPORTED_ROUTED_TYPES, quant_type_name
+          print("streaming imports: OK")
+          print("routed quant types:", SUPPORTED_ROUTED_TYPES)
+          print("redmetal library path:", redmetal_library_path())
+          PY
+
+  package:
+    name: Build package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build frontend
+        run: python -m pip install --upgrade build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dwarfstar-red-lite-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

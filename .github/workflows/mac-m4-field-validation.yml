@@ -1,0 +1,246 @@
+name: Red Lite M4 Field Validation
+
+# Automatic triggers disabled on 2026-09-08: validation runs locally on the test machine
+# (scripts/regress_m4.sh). Re-enable by restoring the push/pull_request triggers.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redlite-m4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  m4-field-validation:
+    name: M4 Pro 24GB field validation
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 45
+    env:
+      REDLITE_MODEL_PATH: ${{ vars.REDLITE_MODEL_PATH }}
+      # Bootstrapped pinned llama.cpp checkout shared with the runner (the workspace checkout is cleaned,
+      # so .deps/llama.cpp never survives there). Unset -> the oracle step is skipped with a warning.
+      REDLITE_LLAMA_DIR: ${{ vars.REDLITE_LLAMA_DIR }}
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          clean: true
+
+      - name: Verify runner and model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          {
+            echo "github_sha=${GITHUB_SHA}"
+            echo "runner_name=${RUNNER_NAME:-unknown}"
+            echo "runner_arch=${RUNNER_ARCH:-unknown}"
+            echo "runner_os=${RUNNER_OS:-unknown}"
+            uname -a
+            sw_vers
+            sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+            sysctl -n hw.memsize 2>/dev/null || true
+          } | tee artifacts/runner-info.log
+          if [[ -z "${REDLITE_MODEL_PATH:-}" ]]; then echo "Repository variable REDLITE_MODEL_PATH is not configured." >&2; exit 2; fi
+          if [[ ! -f "$REDLITE_MODEL_PATH" ]]; then echo "Model not found at REDLITE_MODEL_PATH=$REDLITE_MODEL_PATH" >&2; exit 2; fi
+          {
+            echo "model_path=$REDLITE_MODEL_PATH"
+            stat -f 'model_bytes=%z' "$REDLITE_MODEL_PATH"
+            du -h "$REDLITE_MODEL_PATH"
+          } | tee artifacts/model-info.log
+
+      - name: Build native runtime
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          make native 2>&1 | tee artifacts/make-native.log
+
+      - name: Full-attention tensor audit current milestone
+        id: full_attn_audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-layer-audit "$REDLITE_MODEL_PATH" --tensors 2>&1 | tee artifacts/layer-audit-tensors.log
+
+      - name: Complete full-attention regression
+        id: full_attention
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-attention parity "$REDLITE_MODEL_PATH" --layer 3 --position 0 2>&1 | tee artifacts/full-attention-layer3-context1.log
+          .deps/redmetal/redlite-attention parity "$REDLITE_MODEL_PATH" --layer 3 --position 1 2>&1 | tee artifacts/full-attention-layer3-context2.log
+          .deps/redmetal/redlite-attention parity "$REDLITE_MODEL_PATH" --layer 3 --position 15 2>&1 | tee artifacts/full-attention-layer3-context16.log
+
+      - name: Complete full-attention transformer block regression
+        id: full_attention_block
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-attention-block parity "$REDLITE_MODEL_PATH" --layer 3 --position 7 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/full-attention-block-layer3.log
+
+      - name: Complete 48-layer decoder stack regression
+        id: decoder_stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-decoder-stack parity "$REDLITE_MODEL_PATH" --position 7 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/decoder-stack-48.log
+
+      - name: DeltaNet projection regression
+        id: projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-proj parity "$REDLITE_MODEL_PATH" --layer 0 --rows 8 2>&1 | tee artifacts/deltanet-proj-layer0.log
+
+      - name: DeltaNet prestate regression
+        id: prestate
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-prestate parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-prestate-layer0.log
+
+      - name: DeltaNet recurrent-state regression
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-state parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-state-layer0.log
+
+      - name: DeltaNet gated tail regression
+        id: tail
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-tail parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-tail-layer0.log
+
+      - name: Complete DeltaNet layer regression
+        id: deltanet_layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-deltanet-layer parity "$REDLITE_MODEL_PATH" --layer 0 2>&1 | tee artifacts/deltanet-layer0.log
+
+      - name: Complete recurrent transformer block regression
+        id: recurrent_block
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-recurrent-block parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --cache-mib 256 2>&1 | tee artifacts/recurrent-block-layer0.log
+
+      - name: Complete FFN regression layer 0
+        id: ffn0
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0.log
+
+      - name: Full-width FFN layer 0 regression
+        id: ffn0_full
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 0 --top-k 10 --rows 2048 --cache-mib 256 2>&1 | tee artifacts/ffn-layer0-full.log
+
+      - name: Complete FFN regression layer 6
+        id: ffn6
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-ffn parity "$REDLITE_MODEL_PATH" --layer 6 --top-k 10 --rows 8 --cache-mib 256 2>&1 | tee artifacts/ffn-layer6.log
+
+      - name: Native engine offline self-test
+        id: engine_offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine-offline-test "$REDLITE_MODEL_PATH" 2>&1 | tee artifacts/engine-offline.log
+
+      - name: Engine decode kernel self-test (model-free)
+        id: engine_kernels
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine kernel-selftest 2>&1 | tee artifacts/engine-kernels.log
+          grep -q "ENGINE KERNEL SELFTEST: OK" artifacts/engine-kernels.log
+
+      - name: Persistent engine multi-token CPU-vs-Metal parity
+        id: engine_parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine parity "$REDLITE_MODEL_PATH" --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64 2>&1 | tee artifacts/engine-parity.log
+
+      - name: Native tokenizer and greedy generation
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          .deps/redmetal/redlite-engine tokenize "$REDLITE_MODEL_PATH" --text "Explain in one sentence why the sky is blue." --chat 2>&1 | tee artifacts/tokenize.log
+          .deps/redmetal/redlite-generate "$REDLITE_MODEL_PATH" --prompt "Explain in one sentence why the sky is blue." --max-tokens 48 --cache-mib 2048 --no-stream --stats 2>&1 | tee artifacts/generate.log
+          grep -q "Rayleigh scattering" artifacts/generate.log
+
+      - name: Pinned llama.cpp oracle comparison
+        id: oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${REDLITE_LLAMA_DIR:-}" ]]; then
+            echo "::warning title=oracle skipped::Repository variable REDLITE_LLAMA_DIR is not configured; the llama.cpp oracle comparison did not run."
+            echo "oracle comparison SKIPPED: REDLITE_LLAMA_DIR not configured" | tee artifacts/regress.log
+            exit 0
+          fi
+          if [[ ! -f "$REDLITE_LLAMA_DIR/build/bin/libllama.dylib" ]]; then
+            echo "REDLITE_LLAMA_DIR=$REDLITE_LLAMA_DIR has no build/bin/libllama.dylib (run scripts/bootstrap_macos.sh there)" >&2
+            exit 2
+          fi
+          REDLITE_REGRESS_LOG=artifacts/regress scripts/regress_m4.sh "$REDLITE_MODEL_PATH" --quick 2>&1 | tee artifacts/regress.log
+          grep -q "^PASS  logits.vs_llama" artifacts/regress.log
+          grep -q "^PASS  generate.vs_llama" artifacts/regress.log
+          grep -q "^PASS  tokenize.corpus_vs_llama" artifacts/regress.log
+
+      - name: Write diagnostics summary
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cat > artifacts/diagnostics.json <<JSON
+          {
+            "commit": "${GITHUB_SHA}",
+            "runner": "${RUNNER_NAME:-unknown}",
+            "os": "${RUNNER_OS:-unknown}",
+            "arch": "${RUNNER_ARCH:-unknown}",
+            "build": "${{ steps.build.outcome }}",
+            "full_attn_audit": "${{ steps.full_attn_audit.outcome }}",
+            "full_attention": "${{ steps.full_attention.outcome }}",
+            "full_attention_block": "${{ steps.full_attention_block.outcome }}",
+            "decoder_stack": "${{ steps.decoder_stack.outcome }}",
+            "deltanet_projection": "${{ steps.projection.outcome }}",
+            "deltanet_prestate": "${{ steps.prestate.outcome }}",
+            "deltanet_state": "${{ steps.state.outcome }}",
+            "deltanet_tail": "${{ steps.tail.outcome }}",
+            "deltanet_layer": "${{ steps.deltanet_layer.outcome }}",
+            "recurrent_block": "${{ steps.recurrent_block.outcome }}",
+            "ffn_layer_0": "${{ steps.ffn0.outcome }}",
+            "ffn_layer_0_full": "${{ steps.ffn0_full.outcome }}",
+            "ffn_layer_6": "${{ steps.ffn6.outcome }}",
+            "engine_offline": "${{ steps.engine_offline.outcome }}",
+            "engine_parity": "${{ steps.engine_parity.outcome }}",
+            "generate": "${{ steps.generate.outcome }}",
+            "oracle": "${{ steps.oracle.outcome }}"
+          }
+          JSON
+          cat artifacts/diagnostics.json
+
+      - name: Upload M4 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redlite-m4-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14

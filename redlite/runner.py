@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import signal
 import subprocess
 from typing import Iterable
 
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPS = ROOT / ".deps"
 LLAMA_BIN = DEPS / "llama.cpp" / "build" / "bin"
 OMR_BIN = DEPS / "oversized-moe-runtime" / "build" / "bin"
+REDMETAL_BIN = DEPS / "redmetal"
 
 
 def _first_existing(paths: Iterable[Path]) -> Path:
@@ -32,12 +34,107 @@ def oversized_cli() -> Path:
     return _first_existing([OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"])
 
 
+def native_generate() -> Path:
+    return _first_existing([REDMETAL_BIN / "redlite-generate"])
+
+
+def native_server() -> Path:
+    return _first_existing([REDMETAL_BIN / "redlite-server"])
+
+
 def engine_status() -> dict[str, bool]:
     return {
+        "native_redlite_generate": (REDMETAL_BIN / "redlite-generate").exists(),
         "metal_llama_cli": any(p.exists() for p in [LLAMA_BIN / "llama-cli", LLAMA_BIN / "llama-completion"]),
         "metal_llama_server": (LLAMA_BIN / "llama-server").exists(),
         "oversized_moe": any(p.exists() for p in [OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"]),
     }
+
+
+def call_native_foreground(cmd: list[str]) -> int:
+    """Run a native binary that handles Ctrl-C itself (stop the answer / shut down cleanly).
+
+    subprocess.call would turn the terminal's SIGINT into a KeyboardInterrupt here and kill
+    the child, so the parent ignores SIGINT while the child runs with the default disposition.
+    """
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        proc = subprocess.Popen(cmd, preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        return proc.wait()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def run_native_chat(
+    model: str,
+    context: int,
+    cache_mib: int,
+    max_tokens: int,
+    temperature: float,
+    top_k: int,
+    top_p: float,
+    seed: int,
+    system: str | None = None,
+    prompt: str | None = None,
+    stats: bool = False,
+    no_stream: bool = False,
+    dry_run: bool = False,
+    batch: int | None = None,
+    json_stats: bool = False,
+    min_p: float | None = None,
+) -> int:
+    cmd = [
+        str(native_generate()), model, "--interactive",
+        "--context", str(context),
+        "--cache-mib", str(cache_mib),
+        "--max-tokens", str(max_tokens),
+        "--temperature", str(temperature),
+        "--top-k", str(top_k),
+        "--top-p", str(top_p),
+        "--seed", str(seed),
+    ]
+    if system:
+        cmd.extend(["--system", system])
+    if prompt:
+        cmd.extend(["--prompt", prompt])
+    if stats:
+        cmd.append("--stats")
+    if no_stream:
+        cmd.append("--no-stream")
+    if batch is not None:
+        cmd.extend(["--batch", str(batch)])
+    if json_stats:
+        cmd.append("--json")
+    if min_p is not None:
+        cmd.extend(["--min-p", str(min_p)])
+    print("[redlite]", " ".join(_quote(x) for x in cmd))
+    if dry_run:
+        return 0
+    return call_native_foreground(cmd)
+
+
+def run_native_server(
+    model: str,
+    host: str,
+    port: int,
+    context: int,
+    cache_mib: int,
+    batch: int | None = None,
+    dry_run: bool = False,
+) -> int:
+    cmd = [
+        str(native_server()), model,
+        "--host", host,
+        "--port", str(port),
+        "--context", str(context),
+        "--cache-mib", str(cache_mib),
+    ]
+    if batch is not None:
+        cmd.extend(["--batch", str(batch)])
+    print("[redlite]", " ".join(_quote(x) for x in cmd))
+    if dry_run:
+        return 0
+    return call_native_foreground(cmd)
 
 
 def metal_common(model: str, plan: Plan) -> list[str]:
