@@ -2,6 +2,23 @@
 
 ## Unreleased (0.4.0 cycle, branch `dev/0.4`)
 
+### dev29 — server: state reuse across turns, stop sequences, FIFO queue (M4 Max 48 GiB)
+
+- `redlite-server` keeps the engine state between requests when the new prompt's ids extend
+  exactly the ids the state holds (previous prompt + generated tokens that were fed back);
+  otherwise it resets and ingests everything (the DeltaNet state cannot be truncated).
+  `usage.prompt_tokens_details.cached_tokens` reports the reuse; `--no-reuse` disables it.
+  Second turn of a 1185-id conversation: TTFT 3833 → 173 ms (4 GiB cache) and
+  3779 → 167 ms (22 GiB), answer identical to 0.3.0 and to `--no-reuse`.
+- `stop` (string or up to 4 strings) is supported: output ends before the earliest match,
+  `finish_reason: "stop"`; partial matches are held back like incomplete UTF-8.
+- Requests are queued FIFO and run by one worker thread; `/health` and `/v1/models` answer
+  while a generation runs; `--queue N` (default 16) waiting requests, then `503`.
+- Tests: 4 new protocol tests (fake backend, also under ASan/UBSan), selftest cases, and the
+  real-model regress check `server.reuse_greedy` (warm turn 2 == cold turn 2, greedy).
+  `scripts/dev/server_ttft.py` measures the second-turn latency.
+  See `docs/REDLITE_DEV29_SERVER.md`.
+
 ### dev28 — Linux CI, release tarball, same-prompt llama.cpp baseline (M4 Max 48 GiB)
 
 - `.github/workflows/ci.yml` runs on every push and pull request: one Linux job with ruff,

@@ -149,7 +149,10 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
    behind `rl_server_backend`; `redlite_native_server_cli.c` binds it to `rl_engine`,
    `redlite_native_server_fake.c` to a deterministic echo backend used by
    `tests/test_native_server.py`). Protocol changes are tested against the fake backend;
-   the real-model check is `server.stream_greedy` in `regress_m4.sh`.
+   the real-model check is `server.stream_greedy` in `regress_m4.sh`. dev29: FIFO queue with one
+   worker thread (the accepting thread answers `/health` at once), `stop` sequences
+   (`rl_stop_scan`), and state reuse across requests only when the new prompt ids extend the
+   held ids exactly (`rl_prefix_reuse`; `server.reuse_greedy` checks warm == cold greedy).
 
 ### Native source conventions
 

@@ -118,7 +118,9 @@ will be SSD reads.
   mixes both. Dense tensors must be F32, Q8_0, Q2_K, Q4_K, Q5_K, Q6_K or IQ2_XXS. Other
   GGUFs of the same model are not supported by the native runtime (the launcher handles
   them).
-- **One sequence.** No multi-sequence batching. The server serves one request at a time.
+- **One sequence.** No multi-sequence batching. The server runs one request at a time
+  (others wait in a FIFO queue) and keeps the state of the last conversation only: a request
+  that extends it exactly reuses it, any other request resets the engine.
 - **Full residency** (`--cache-mib 22528`, GPU-routed decode) needs a Mac with at least
   40 GiB of RAM.
 - **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
