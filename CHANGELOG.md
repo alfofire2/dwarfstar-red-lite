@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (after 0.4.0, branch `dev/iq3-kernels`)
+
+### dev33 — faster IQ kernels (M4 Max 48 GiB)
+
+- Sub-block IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS dots for decode, a faster 8-value IQ3 decoder for
+  prefill, vectorized IQ2_XS / IQ1_M decode expert dots; `redlite-engine kernel-bench`.
+- Same-session A/B vs the 0.4.0 binary: IQ3_XXS decode 64.7 → 70.1 tok/s (llama.cpp 68.5),
+  IQ3_XXS prefill 1100 tokens 787 → 837 tok/s (llama.cpp 861), IQ2_XXS decode 65.9 → 68.3.
+- Two attempts reverted (codebooks in threadgroup memory; uchar4 loads in the IQ2_XXS GEMV).
+  See `docs/REDLITE_DEV33_IQ_KERNELS.md`.
+
 ## 0.4.0 — 2026-09-30
 
 The native runtime, faster and with a second, higher-quality GGUF. Work of dev28–dev32

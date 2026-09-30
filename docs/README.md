@@ -28,6 +28,7 @@ Developed on the `dev/0.4` branch; M4 Max 48 GiB only.
 | dev30 batched prefill: tiled attention, matrix experts, faster dense pass | [REDLITE_DEV30_PREFILL.md](REDLITE_DEV30_PREFILL.md) |
 | dev31 IQ3_XXS GGUF: new quant types, full residency on 48 GiB | [REDLITE_DEV31_IQ3.md](REDLITE_DEV31_IQ3.md) |
 | dev32 release 0.4.0 | [REDLITE_DEV32_RELEASE.md](REDLITE_DEV32_RELEASE.md) |
+| dev33 faster IQ kernels (after 0.4.0) | [REDLITE_DEV33_IQ_KERNELS.md](REDLITE_DEV33_IQ_KERNELS.md) |
 
 ## Native runtime milestones (v0.3, released as 0.3.0)
 
