@@ -123,6 +123,8 @@ expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,1288
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
 expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
+# dev29: the second turn reuses the first turn's state and answers exactly like a reset engine (same run, same log)
+if grep -q "multi-turn reuse: identical greedy answer" "$LOG/server.stream_greedy.log"; then echo "PASS  server.reuse_greedy"; PASS=$((PASS + 1)); else echo "FAIL  server.reuse_greedy (see $LOG/server.stream_greedy.log)"; FAIL=$((FAIL + 1)); FAILED+=(server.reuse_greedy); fi
 expect_line generate.json '"batch":512,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
 # Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
 "$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
