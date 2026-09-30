@@ -2,6 +2,21 @@
 
 ## Unreleased (0.4.0 cycle, branch `dev/0.4`)
 
+### dev31 — IQ3_XXS GGUF: new quant types, full residency on 48 GiB (M4 Max 48 GiB)
+
+- Bartowski `…-IQ3_XXS.gguf` (31,726,709,216 bytes, SHA-256 = HF LFS id) runs natively
+  with every expert resident (29,376 MiB, computed from its expert payload).
+- New quant types, CPU reference bit-identical to ggml's `to_float` and Metal kernels:
+  IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS; routed experts may have a down type different from
+  gate/up (type word in the Metal kernels, ABI unchanged).
+- Parity on the IQ3_XXS file: CPU oracle vs Metal YES, GPU-routed YES, logits vs llama.cpp
+  KL 1.4e-12, 24 greedy tokens identical, 1100-position context PASS.
+- Perplexity (pinned llama.cpp, frozen local corpus): IQ2_XXS 16.47, IQ3_XXS 14.29.
+- `--cache-mib full`; `redlite chat` picks IQ3_XXS when RAM ≥ 40 GiB and it fits, else
+  IQ2_XXS; the planner sizes the cache from the payload (no more 22,528 constant).
+- `regress_m4.sh` runs on both files (dequant parity vs ggml added; legacy dense stage
+  tools SKIP on the IQ3_XXS layout). See `docs/REDLITE_DEV31_IQ3.md`.
+
 ### dev30 — batched prefill: tiled attention, matrix experts, faster dense pass (M4 Max 48 GiB)
 
 - Tiled causal attention (`attn_fa_b`, flash-attention order on f32 simdgroup matrices),

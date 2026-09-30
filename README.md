@@ -114,10 +114,11 @@ will be SSD reads.
 
 ## Limits
 
-- **One model, one layout.** Routed experts must be IQ2_XS or IQ1_M: the reference GGUF
-  mixes both. Dense tensors must be F32, Q8_0, Q2_K, Q4_K, Q5_K, Q6_K or IQ2_XXS. Other
-  GGUFs of the same model are not supported by the native runtime (the launcher handles
-  them).
+- **Two files.** The native runtime is validated on Bartowski's IQ2_XXS and IQ3_XXS GGUFs of
+  Qwen3-Next-80B-A3B-Instruct. Routed experts may be IQ2_XS, IQ1_M, IQ3_XXS or IQ3_S; dense
+  tensors F32, Q8_0, Q2_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ2_S, IQ3_XXS, IQ3_S or IQ4_XS. Other
+  files of the same model use more types and are not supported natively (the launcher
+  handles them).
 - **One sequence.** No multi-sequence batching. The server runs one request at a time
   (others wait in a FIFO queue) and keeps the state of the last conversation only: a request
   that extends it exactly reuses it, any other request resets the engine.

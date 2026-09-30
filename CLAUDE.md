@@ -197,6 +197,13 @@ executables, so ABI-visible changes there affect both layers.
   expert scale. Router is F32 `(2048, 512)` per layer.
 - Routed expert quant types in the target GGUF are mixed: layers 0–5 and 43–47 are
   IQ2_XS, layers 6–42 are IQ1_M. Dispatch is by the tensor's actual GGML type.
+- dev31: the second supported file is Bartowski's `…-IQ3_XXS.gguf` (31.7 GB): experts
+  gate/up IQ3_XXS, down IQ3_S or IQ3_XXS per layer (the expert layout carries `down_type`;
+  Metal kernels get a type word, gate/up in bits 0–7, down in 8–15), dense IQ3_XXS / IQ2_S /
+  IQ4_XS / Q8_0 / Q6_K, IQ3_S embedding. `redlite_native_iq3.[ch]` decodes them bit-identically
+  to ggml (`scripts/dev/dequant_check.sh`). Full-residency cache = 48 × 512 slots of the largest
+  expert triplet rounded to 4 KiB (`--cache-mib full`: 21312 MiB IQ2_XXS, 29376 MiB IQ3_XXS).
+  `regress_m4.sh MODEL` works on both; dumps of a non-reference file go to `.deps/regress-<name>`.
 - DeltaNet pairs value head `h` with key head `h / (H_v / H_k)` (repeat-interleave,
   as in llama.cpp); `h % H_k` is wrong and was fixed in dev18.
 - Token embedding is Q2_K, the LM head is an untied Q5_K `output.weight`; tokenizer

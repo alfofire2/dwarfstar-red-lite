@@ -138,5 +138,67 @@
    "0.3.0_22gib_token_by_token_vs_llama": 4.29,
    "0.3.0_token_by_token_vs_0.3.0_b512": 4.45
   }
+ },
+ "dev31_iq3_xxs": {
+  "model": "models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf (31726709216 bytes, sha256 14f4d0c84ada768f503efd0bb54be065340eb74328c7f61df2916adaee4f4c4b)",
+  "full_residency_cache_mib": {
+   "IQ2_XXS": 21312,
+   "IQ3_XXS": 29376
+  },
+  "routed_expert_payload_bytes": {
+   "IQ2_XXS": 18157142016,
+   "IQ3_XXS": 30198988800
+  },
+  "perplexity": {
+   "command": "scripts/dev/perplexity.sh MODEL (llama.cpp 7798007a2, corpus sha256 6948b2c37279, ctx 512, 111 chunks)",
+   "IQ2_XXS": [
+    16.4675,
+    0.30152
+   ],
+   "IQ3_XXS": [
+    14.2917,
+    0.26089
+   ]
+  },
+  "parity_iq3": {
+   "logits_vs_llama_max_abs": 1.0014e-05,
+   "logits_vs_llama_kl": 1.436e-12,
+   "greedy_24_tokens": "identical to llama.cpp (2 GiB and full)",
+   "long_context_1100": {
+    "max_abs": 0.566,
+    "kl": 0.0003936
+   },
+   "engine_parity": "YES, 0 router mismatches",
+   "gpu_routed": "YES 12/12"
+  },
+  "bench_iq3_tok_s": {
+   "command": "scripts/dev/bench_m4.sh MODEL --reps 3 --cool 90 --cache-mib 29376 [--only prefill22|prefill8192|llama]",
+   "decode_full": 63.39,
+   "decode_full_runs": [
+    63.39,
+    64.07,
+    63.05
+   ],
+   "decode4": 43.77,
+   "decode4_runs": [
+    36.87,
+    43.77,
+    46.91
+   ],
+   "prefill1100_full": 786.0,
+   "prefill8192_full": 860.3,
+   "prefill1100_4gib": 428.4,
+   "prefill8192_4gib": 588.3,
+   "prefill8192_4gib_runs": [
+    169.0,
+    615.8,
+    588.3
+   ],
+   "llama_cpp": {
+    "prefill1100": 861.3,
+    "prefill8192": 900.65,
+    "decode": 68.54
+   }
+  }
  }
 }
