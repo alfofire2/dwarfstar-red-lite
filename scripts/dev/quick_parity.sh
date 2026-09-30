@@ -14,6 +14,7 @@ MODEL="${1:?usage: $0 MODEL [--long] [--batch N]}"; shift
 LONG=0; BATCH=1100
 while [[ $# -gt 0 ]]; do case "$1" in --long) LONG=1; shift;; --batch) BATCH="$2"; shift 2;; *) echo "unknown $1"; exit 2;; esac; done
 mkdir -p "$OUT"
+rm -f "$OUT"/*.bin "$OUT"/*.txt "$OUT"/*.log   # a crashed run must never be compared against a stale dump
 FAIL=0
 check() { # name pattern cmd...
   local name="$1" pat="$2"; shift 2
