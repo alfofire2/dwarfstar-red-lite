@@ -39,5 +39,23 @@
    "attention_wall_ms": 17273.1,
    "experts_gpu_ms": 13509.6
   }
+ },
+ "dev29_server_turn2_ttft": {
+  "commit": "dev29-green",
+  "command": "python3 scripts/dev/server_ttft.py MODEL --cache-mib C [--bin 0.3.0 build] [--server-args=--no-reuse] (60 s cool, median of 3)",
+  "turn1_prompt_ids": 1185,
+  "turn2_prompt_ids": 1235,
+  "reused_ids": 1216,
+  "cache4096_ms": {
+   "0.3.0": 3833,
+   "no_reuse": 3833,
+   "reuse": 173
+  },
+  "cache22528_ms": {
+   "0.3.0": 3779,
+   "no_reuse": 3845,
+   "reuse": 167
+  },
+  "answer_sha1": "1f94f64826b2 (identical in every configuration)"
  }
 }
