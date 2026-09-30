@@ -65,7 +65,7 @@ static uint64_t phys_footprint_bytes(void) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-generate 0.3.0 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
+        "redlite-generate 0.4.0 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
         "  redlite-generate MODEL --prompt \"...\" [options]\n"
         "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"
