@@ -53,9 +53,13 @@ struct rl_metal_engine {
     int last_token_missed;         /* the previous token needed a load: decode the next one synchronously */
     id<MTLComputePipelineState> p_route, p_copy;
     id<MTLComputePipelineState> p_rows2_q4k, p_rows2_q6k, p_rows2_iq2xxs, p_rows2_f32;   /* dev22 sub-block decode GEMV */
-    int rows2;                     /* RL_ENGINE_ROWS2 != 0 (default): decode uses the sub-block kernels */
+    int rows2;
+    id<MTLBuffer> abort, abort_zero;
+    int prefetch;                      /* dev23: RL_ENGINE_PREFETCH != 0 (default): pre-gated expert prefetch in the synchronous decode */
+    id<MTLBuffer> pred_logits;         /* next layer's router logits from this layer's FFN input */
+    double prefetch_ms;                /* CPU time spent in prefetch loads (overlapped with the GPU) */
+    uint32_t sync_left;                /* dev23: tokens to decode synchronously before probing the GPU-routed path again */   /* dev23 early-out flag (index 30 of every decode kernel) and its never-set twin */                     /* RL_ENGINE_ROWS2 != 0 (default): decode uses the sub-block kernels */
     id<MTLBuffer> plan_slots, plan_weights, plan_ids, plan_miss, layer_out_gpu;
-    __unsafe_unretained id<MTLBuffer> *bk_conv, *bk_rec;   /* state backups for the fallback */
     int preloaded;                 /* every routed expert was loaded at open (cache holds them all) */
     double preload_ms;
 };

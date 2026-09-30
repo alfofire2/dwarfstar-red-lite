@@ -55,9 +55,10 @@ static NSString * const kEngineSource = @
 "    return uchar2((s[j + 4u] & 15u) | ((s[j - 4u] >> 6) << 4), (s[j + 4u] >> 4) | ((s[j] >> 6) << 4));\n"
 "}\n"
 /* ---- norms / residuals (validated block ops) ---- */
-"kernel void rl_rms(device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
+"kernel void rl_rms(device uint *rl_abort [[buffer(30)]], device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
 "    constant uint &n [[buffer(3)]], constant float &eps [[buffer(4)]], uint tid [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float partial[8]; float ss = 0.0f;\n"
 "    for (uint i = tid; i < n; i += 256u) ss = fma(x[i], x[i], ss);\n"
 "    ss = simd_sum(ss); if (simd_lane == 0) partial[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -65,9 +66,10 @@ static NSString * const kEngineSource = @
 "    const float inv = rsqrt(total / float(n) + eps);\n"
 "    for (uint i = tid; i < n; i += 256u) y[i] = x[i] * inv * w[i];\n"
 "}\n"
-"kernel void rl_resid_rms(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device const float *w [[buffer(2)]],\n"
+"kernel void rl_resid_rms(device uint *rl_abort [[buffer(30)]], device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *sum [[buffer(3)]], device float *norm [[buffer(4)]], constant uint &n [[buffer(5)]], constant float &eps [[buffer(6)]],\n"
 "    uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float partial[8]; float ss = 0.0f;\n"
 "    for (uint i = tid; i < n; i += 256u) { const float v = a[i] + b[i]; sum[i] = v; ss = fma(v, v, ss); }\n"
 "    ss = simd_sum(ss); if (simd_lane == 0) partial[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -75,8 +77,9 @@ static NSString * const kEngineSource = @
 "    const float inv = rsqrt(total / float(n) + eps);\n"
 "    for (uint i = tid; i < n; i += 256u) norm[i] = sum[i] * inv * w[i];\n"
 "}\n"
-"kernel void rl_scale_add(device const float *resid [[buffer(0)]], device const float *routed [[buffer(1)]], device const float *shared [[buffer(2)]],\n"
+"kernel void rl_scale_add(device uint *rl_abort [[buffer(30)]], device const float *resid [[buffer(0)]], device const float *routed [[buffer(1)]], device const float *shared [[buffer(2)]],\n"
 "    device const float *scalar [[buffer(3)]], device float *out [[buffer(4)]], constant uint &n [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid < n) out[gid] = resid[gid] + (routed[gid] + shared[gid] * scalar[0]);\n"
 "}\n"
 /* ---- quantized row dot products: lanes_per_row SIMD lanes per row, one block per lane per step ---- */
@@ -161,9 +164,10 @@ static NSString * const kEngineSource = @
 "}\n"
 /* generic lane-parallel row kernel body: BLOCK values per block, BYTES bytes per block, DOT(bp, xchunk) */
 #define RL_ROWS_KERNEL(NAME, BLOCK, BYTES, DOTEXPR, EXTRA_PARAM) \
-"kernel void " NAME "(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n" \
+"kernel void " NAME "(device uint *rl_abort [[buffer(30)]], device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n" \
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]]" EXTRA_PARAM ",\n" \
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n" \
+"    if (rl_abort[0] != 0u) return;\n" \
 "    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n" \
 "    const uint blocks = ncols / " BLOCK "u; const ulong row_bytes = ulong(blocks) * " BYTES "ul; float acc = 0.0f;\n" \
 "    if (active) { device const uchar *rp = weights + ulong(row) * row_bytes;\n" \
@@ -233,9 +237,10 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    return acc;\n"
 "}\n"
 #define RL_ROWS_SUB_KERNEL(NAME, BLOCK, BYTES, SUB, SUBVALS, DOTEXPR, EXTRA_PARAM) \
-"kernel void " NAME "(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n" \
+"kernel void " NAME "(device uint *rl_abort [[buffer(30)]], device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n" \
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]]" EXTRA_PARAM ",\n" \
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n" \
+"    if (rl_abort[0] != 0u) return;\n" \
 "    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n" \
 "    const uint blocks = ncols / " BLOCK "u; const uint items = blocks * " SUB "u; const ulong row_bytes = ulong(blocks) * " BYTES "ul; float acc = 0.0f;\n" \
 "    if (active) { device const uchar *rp = weights + ulong(row) * row_bytes;\n" \
@@ -247,41 +252,46 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 RL_ROWS_SUB_KERNEL("rl_rows2_q4k", "256", "144", "8", "32", "rl_q4k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_q6k", "256", "210", "16", "16", "rl_q6k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp, s, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
-"kernel void rl_rows2_f32(device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"kernel void rl_rows2_f32(device uint *rl_abort [[buffer(30)]], device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]],\n"
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows; float acc = 0.0f;\n"
 "    if (active) { device const float4 *rp = (device const float4 *)(weights + ulong(row) * ulong(ncols)); device const float4 *xv = (device const float4 *)x;\n"
 "        for (uint i = lane; i < ncols / 4u; i += lanes) acc += dot(rp[i], xv[i]); }\n"
 "    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
 "    if (active && lane == 0u) out[row] = acc;\n"
 "}\n"
-"kernel void rl_rows_f32(device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"kernel void rl_rows_f32(device uint *rl_abort [[buffer(30)]], device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]],\n"
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows; float acc = 0.0f;\n"
 "    if (active) { device const float *rp = weights + ulong(row) * ulong(ncols); for (uint i = lane; i < ncols; i += lanes) acc = fma(rp[i], x[i], acc); }\n"
 "    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
 "    if (active && lane == 0u) out[row] = acc;\n"
 "}\n"
 /* ---- Gated DeltaNet (validated dev15 kernels, kv_ratio pairing) ---- */
-"kernel void dn_ba_params(device const float *ba [[buffer(0)]], device const float *dt [[buffer(1)]], device const float *avec [[buffer(2)]],\n"
+"kernel void dn_ba_params(device uint *rl_abort [[buffer(30)]], device const float *ba [[buffer(0)]], device const float *dt [[buffer(1)]], device const float *avec [[buffer(2)]],\n"
 "    device float *beta [[buffer(3)]], device float *gate [[buffer(4)]], constant uint &dt_rank [[buffer(5)]], constant uint &n_group [[buffer(6)]],\n"
 "    uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid >= dt_rank) return; const uint width = dt_rank / n_group; const uint group = gid / width; const uint local = gid - group * width;\n"
 "    const uint stride = 2u * width; const float b = ba[group * stride + local]; const float alpha = ba[group * stride + width + local] + dt[gid];\n"
 "    beta[gid] = 1.0f / (1.0f + exp(-b)); const float sp = alpha > 20.0f ? alpha : log(1.0f + exp(alpha)); gate[gid] = sp * avec[gid];\n"
 "}\n"
-"kernel void dn_conv_silu(device const float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device const float *conv_w [[buffer(2)]],\n"
+"kernel void dn_conv_silu(device uint *rl_abort [[buffer(30)]], device const float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device const float *conv_w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant uint &channels [[buffer(4)]], constant uint &dconv [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid >= channels) return; float acc = 0.0f; const uint ns = dconv - 1u; const uint sb = gid * ns; const uint kb = gid * dconv;\n"
 "    for (uint j = 0; j < ns; ++j) acc = fma(state[sb + j], conv_w[kb + j], acc);\n"
 "    acc = fma(qkv[gid], conv_w[kb + ns], acc); out[gid] = acc / (1.0f + exp(-acc));\n"
 "}\n"
-"kernel void dn_qk_l2_tg(device const float *src [[buffer(0)]], device float *q [[buffer(1)]], device float *k [[buffer(2)]],\n"
+"kernel void dn_qk_l2_tg(device uint *rl_abort [[buffer(30)]], device const float *src [[buffer(0)]], device float *q [[buffer(1)]], device float *k [[buffer(2)]],\n"
 "    constant uint &head_dim [[buffer(3)]], constant uint &heads [[buffer(4)]], constant float &eps [[buffer(5)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float red[32]; const uint which = tg / heads; const uint head = tg - which * heads;\n"
 "    const uint base = which * heads * head_dim + head * head_dim; const float x = i < head_dim ? src[base + i] : 0.0f;\n"
 "    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -289,18 +299,20 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    const float scale = 1.0f / max(sqrt(total), eps);\n"
 "    if (i < head_dim) { if (which == 0u) q[head * head_dim + i] = x * scale; else k[head * head_dim + i] = x * scale; }\n"
 "}\n"
-"kernel void dn_shift_state(device const float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device float *next_state [[buffer(2)]],\n"
+"kernel void dn_shift_state(device uint *rl_abort [[buffer(30)]], device const float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device float *next_state [[buffer(2)]],\n"
 "    constant uint &channels [[buffer(3)]], constant uint &dconv [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid >= channels) return; const uint ns = dconv - 1u; const uint b = gid * ns;\n"
 "    for (uint j = 0; j + 1u < ns; ++j) next_state[b + j] = state[b + j + 1u];\n"
 "    next_state[b + ns - 1u] = qkv[gid];\n"
 "}\n"
 /* fused gated delta rule for one (value head, state row j): decay, delta, in-place update, output */
-"kernel void dn_state_fused(device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"kernel void dn_state_fused(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
 "    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
 "    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float red[32]; const uint h = tg / state_size; const uint j = tg - h * state_size; if (h >= value_heads) return;\n"
 "    const uint kh = h / kv_ratio; const uint nsimd = state_size / 32u; const uint idx = (h * state_size + j) * state_size + i;\n"
 "    float s = state[idx] * exp(gate[h]); const float ki = k[kh * state_size + i];\n"
@@ -312,10 +324,11 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    float o = simd_sum(s * q[kh * state_size + i]); if (simd_lane == 0) red[simd_id] = o; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (i == 0u) { float total = 0.0f; for (uint n = 0; n < nsimd; ++n) total += red[n]; out[h * state_size + j] = total * (1.0f / sqrt((float)state_size)); }\n"
 "}\n"
-"kernel void dn_tail_norm(device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
+"kernel void dn_tail_norm(device uint *rl_abort [[buffer(30)]], device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
 "    uint h [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float red[32]; if (h >= heads) return; const uint base = h * head_dim; const float x = i < head_dim ? core[base + i] : 0.0f;\n"
 "    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    float total = 0.0f; for (uint n = 0; n < (head_dim + 31u) / 32u; ++n) total += red[n];\n"
@@ -324,13 +337,14 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "}\n"
 /* ---- full attention (validated dev16 kernels + general GQA) ---- */
 /* per head: RMSNorm (q or k weight), NeoX partial RoPE, write query_rope / key+value cache; threadgroup per head */
-"kernel void attn_qk_prep(device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
+"kernel void attn_qk_prep(device uint *rl_abort [[buffer(30)]], device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
 "    device const float *qw [[buffer(3)]], device const float *kw [[buffer(4)]], device float *query_rope [[buffer(5)]], device float *gate [[buffer(6)]],\n"
 "    device float *key_cache [[buffer(7)]], device float *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
 "    constant uint &query_heads [[buffer(10)]], constant uint &kv_heads [[buffer(11)]], constant uint &position [[buffer(12)]],\n"
 "    constant uint &rope_dims [[buffer(13)]], constant float &freq_base [[buffer(14)]], constant float &eps [[buffer(15)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float red[32]; threadgroup float tmp[256];\n"
 "    const bool is_q = tg < query_heads; const uint head = is_q ? tg : tg - query_heads; if (!is_q && head >= kv_heads) return;\n"
 "    const uint src = is_q ? head * head_dim * 2u : head * head_dim;\n"
@@ -352,11 +366,12 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (is_q) { query_rope[head * head_dim + i] = r; gate[head * head_dim + i] = qgate_raw[src + head_dim + i]; }\n"
 "    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = r; value_cache[dst] = value[head * head_dim + i]; }\n"
 "}\n"
-"kernel void attn_gqa(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_gqa(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float scores[1024]; threadgroup float red_max[8]; threadgroup float red_sum[8];\n"
 "    if (head >= query_heads || seq_len == 0u) return;\n"
 "    const uint qbase = head * head_dim; const uint kv_head = head / (query_heads / kv_heads); const float scale = rsqrt(float(head_dim));\n"
@@ -392,10 +407,11 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
  * softmax probabilities of the selected experts renormalized to sum 1. Looks each selected expert up
  * in the layer's residency table and writes the slot addresses / weights the expert kernels read.
  * plan_miss counts selected experts that are not resident (the token must then be redone). */
-"kernel void rl_route(device const float *logits [[buffer(0)]], device const ulong *resident [[buffer(1)]],\n"
+"kernel void rl_route(device uint *rl_abort [[buffer(30)]], device const float *logits [[buffer(0)]], device const ulong *resident [[buffer(1)]],\n"
 "    device ulong *plan_slots [[buffer(2)]], device float *plan_weights [[buffer(3)]], device uint *plan_ids [[buffer(4)]],\n"
 "    device uint *plan_miss [[buffer(5)]], constant uint &n_expert [[buffer(6)]], constant uint &top_k [[buffer(7)]],\n"
 "    uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float lg[512]; threadgroup float red_v[16]; threadgroup uint red_i[16]; threadgroup uint chosen[64];\n"
 "    for (uint i = tid; i < n_expert; i += 256u) lg[i] = logits[i];\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -424,24 +440,27 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "            plan_weights[k] = plan_weights[k] / sum; plan_ids[k] = chosen[k];\n"
 "            const ulong a = resident[chosen[k]]; plan_slots[k] = a; if (a == 0ul) miss++;\n"
 "        }\n"
-"        plan_miss[0] = miss;\n"
+"        plan_miss[0] = miss; if (miss) rl_abort[0] = 1u;\n"
 "    }\n"
 "}\n"
 /* ---- shared expert (validated dev14 kernels) ---- */
-"kernel void sh_scalar_gate(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
+"kernel void sh_scalar_gate(device uint *rl_abort [[buffer(30)]], device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
 "    constant uint &hidden [[buffer(3)]], uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]],\n"
 "    ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float partial[8]; float acc = 0.0f;\n"
 "    for (uint i = tid; i < hidden; i += 256u) acc = fma(w[i], x[i], acc);\n"
 "    acc = simd_sum(acc); if (simd_lane == 0) partial[simd_id] = acc; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (tid == 0u) { float total = 0.0f; for (uint k = 0; k < 8u; ++k) total += partial[k]; scalar[0] = 1.0f / (1.0f + exp(-total)); }\n"
 "}\n"
-"kernel void sh_silu_mul(device const float *gate [[buffer(0)]], device const float *up [[buffer(1)]], device float *act [[buffer(2)]],\n"
+"kernel void sh_silu_mul(device uint *rl_abort [[buffer(30)]], device const float *gate [[buffer(0)]], device const float *up [[buffer(1)]], device float *act [[buffer(2)]],\n"
 "    constant uint &count [[buffer(3)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid >= count) return; const float g = gate[gid]; act[gid] = (g / (1.0f + exp(-g))) * up[gid];\n"
 "}\n"
-"kernel void rl_copy_f32(device const float *src [[buffer(0)]], device float *dst [[buffer(1)]], constant uint &count [[buffer(2)]],\n"
+"kernel void rl_copy_f32(device uint *rl_abort [[buffer(30)]], device const float *src [[buffer(0)]], device float *dst [[buffer(1)]], constant uint &count [[buffer(2)]],\n"
 "    uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
 "    if (gid < count) dst[gid] = src[gid];\n"
 "}\n";
 
@@ -558,6 +577,7 @@ void emit_rows(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, const mweig
 
 void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out) {
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setBuffer:m->abort_zero offset:0 atIndex:30];
     emit_rows(m, enc, w, x, out);
     [enc endEncoding];
 }
@@ -574,6 +594,7 @@ void emit_rms(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, id<MTLBuffer
 
 void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps) {
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setBuffer:m->abort_zero offset:0 atIndex:30];
     emit_rms(m, enc, x, w, y, n, eps);
     [enc endEncoding];
 }
@@ -637,6 +658,12 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             if (!*pipes[i].slot) { rl_metal_engine_destroy(m); return NULL; }
         }
         m->grid = [m->dev newBufferWithBytes:e->iq2_grid length:RL_IQ2_XXS_GRID_COUNT options:MTLResourceStorageModeShared];
+        { const char *pf = getenv("RL_ENGINE_PREFETCH"); m->prefetch = !pf || atoi(pf) != 0; }
+        m->pred_logits = new_buf(m, (size_t)in->n_expert * sizeof(float));
+        m->abort = new_buf(m, 16u);
+        m->abort_zero = new_buf(m, 16u);
+        if (!m->abort || !m->abort_zero) { set_error(error, cap, "Metal early-out flag allocation failed"); rl_metal_engine_destroy(m); return NULL; }
+        memset(m->abort.contents, 0, 16u); memset(m->abort_zero.contents, 0, 16u);
 
         /* dense weights */
         m->layers = (mlayer *)calloc(in->n_layer, sizeof(*m->layers));
@@ -721,7 +748,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             id<MTLResidencySet> rs = (__bridge id<MTLResidencySet>)redmetal_topk_pool_slab_residency_set(rl_native_metal_pool_handle(m->experts));
             if (rs) [m->queue addResidencySet:rs];
         }
-        /* dev21: GPU-routed decode (residency table, per-layer plans, state backups) */
+        /* dev21/dev23: GPU-routed decode (residency table, per-layer plans, early-out) */
         const char *spec_env = getenv("RL_ENGINE_SPECULATIVE");
         m->spec_enabled = (!spec_env || atoi(spec_env) != 0) && !m->profile && in->n_expert <= 512u && in->top_k <= 64u;
         m->last_token_missed = 1;
@@ -735,13 +762,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             m->plan_ids = new_buf(m, (size_t)in->n_layer * 64u * sizeof(uint32_t));
             m->plan_miss = new_buf(m, (size_t)in->n_layer * sizeof(uint32_t));
             m->layer_out_gpu = new_buf(m, (size_t)in->n_layer * hb);
-            m->bk_conv = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
-            m->bk_rec = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
-            int ok = m->plan_slots && m->plan_weights && m->plan_ids && m->plan_miss && m->layer_out_gpu && m->bk_conv && m->bk_rec;
-            for (uint32_t r = 0; ok && r < in->n_recurrent; ++r) {
-                m->bk_conv[r] = new_buf(m, conv_bytes); m->bk_rec[r] = new_buf(m, rec_bytes);
-                if (!m->bk_conv[r] || !m->bk_rec[r]) ok = 0;
-            }
+            /* dev23: no state backups; the early-out path never runs a layer past its first miss */
+            const int ok = m->plan_slots && m->plan_weights && m->plan_ids && m->plan_miss && m->layer_out_gpu;
             if (!ok) m->spec_enabled = 0;
         }
         /* full residency: when the cache can hold every routed expert, load them all now (page cache -> pool)
@@ -791,7 +813,6 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     if (m->experts) rl_native_metal_destroy(m->experts);
     if (m->pf) rl_metal_prefill_destroy(m->pf);
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
-    free(m->bk_conv); free(m->bk_rec);
     m->p_route = nil; m->plan_slots = m->plan_weights = m->plan_ids = m->plan_miss = m->layer_out_gpu = nil;
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
@@ -834,10 +855,14 @@ typedef struct {
     rl_metal_engine *m;
     __strong id<MTLCommandBuffer> cb;
     __strong id<MTLComputeCommandEncoder> enc;
+    __unsafe_unretained id<MTLBuffer> abort;   /* dev23 early-out flag bound at index 30 (m->abort_zero: never set) */
 } emitter;
 
 static id<MTLComputeCommandEncoder> em_enc(emitter *em) {
-    if (!em->enc) em->enc = [em->cb computeCommandEncoder];
+    if (!em->enc) {
+        em->enc = [em->cb computeCommandEncoder];
+        [em->enc setBuffer:em->abort offset:0 atIndex:30];
+    }
     return em->enc;
 }
 
@@ -990,103 +1015,115 @@ static void emit_scale_add(rl_engine *e, emitter *em) {
     enc_1d(enc, m->p_scale_add, hidden, 64u);
 }
 
-/* dev21: the whole token in one command buffer with the router selection and the expert lookups on the GPU.
- * Returns 1 on success, 0 on error, -1 when a selected expert was not resident (states restored; the
- * caller decodes the token synchronously). */
-static int step_speculative(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
-                            rl_engine_step_stats *stats, char *error, size_t cap) {
-    rl_backend_state *s = &e->gpu;
+/* GPU-routed layers first..n_layer-1 plus the output head: router selection and expert lookup on the GPU
+ * (dev21); with the early-out flag bound, everything after the first layer that selects a non-resident
+ * expert returns immediately (dev23). */
+static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLBuffer> resident, uint32_t position,
+                              int want_logits, char *error, size_t cap) {
+    rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
     const float eps = in->rms_eps;
     const size_t hb = (size_t)hidden * sizeof(float);
+    for (uint32_t l = first; l < in->n_layer; ++l) {
+        const rl_layer_tensors *t = &e->layers[l];
+        const mlayer *w = &m->layers[l];
+        emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
+        if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, em, t, w);
+        else emit_attention(e, em, t, w, position);
+        emit_ffn_pre(e, em, w);
+        const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
+        const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
+        {
+            id<MTLComputeCommandEncoder> enc = em_enc(em);
+            [enc setComputePipelineState:m->p_route];
+            [enc setBuffer:m->router_logits offset:0 atIndex:0];
+            [enc setBuffer:resident offset:(NSUInteger)l * experts * sizeof(uint64_t) atIndex:1];
+            [enc setBuffer:m->plan_slots offset:slots_off atIndex:2];
+            [enc setBuffer:m->plan_weights offset:weights_off atIndex:3];
+            [enc setBuffer:m->plan_ids offset:ids_off atIndex:4];
+            [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
+            [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
+            [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        }
+        rl_native_layer_info li;
+        rl_expert_layout lay;
+        if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
+            !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
+        if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
+                (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, li.ggml_type,
+                li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
+                (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
+            snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); return 0;
+        }
+        emit_scale_add(e, em);
+        em_copy(em, m->x, 0, m->layer_out_gpu, (NSUInteger)l * hb, hidden);
+    }
+    emit_rms(m, em_enc(em), m->x, &m->output_norm, m->final_norm, hidden, eps);
+    if (want_logits) emit_rows(m, em_enc(em), &m->output, m->final_norm, m->logits);
+    return 1;
+}
+
+#define RL_ROUTED_MAX_RESTARTS 4u
+
+/* dev23: GPU-routed decode with per-layer early-out. The token runs as one command buffer; when layer f selects
+ * a non-resident expert, the router kernel raises the early-out flag and every later dispatch returns at once.
+ * Layers before f are complete and layer f has run up to its router exactly once, so no state is restored:
+ * the CPU loads layer f's missing experts (with the ids/weights the GPU selected), runs them, and resumes the
+ * GPU-routed chain at layer f+1 in the same command buffer. Only layers that miss cost a CPU round trip.
+ * (dev21 restored every DeltaNet state and redid the whole token synchronously on the first miss.) */
+static int step_routed(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
+                       rl_engine_step_stats *stats, char *error, size_t cap) {
+    rl_backend_state *s = &e->gpu;
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden, topk = in->top_k;
+    const size_t hb = (size_t)hidden * sizeof(float);
     const double start = rl_engine_now_ms();
     id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->experts);
     if (!resident) { set_error(error, cap, "residency table unavailable"); return 0; }
+    rl_native_topk_plan plan;
+    memset(&plan, 0, sizeof(plan));
     int result = 0;
     @autoreleasepool {
         if (!rl_engine_embed_token(e, token, (float *)m->x.contents, error, cap)) return 0;
         memcpy(s->embed, m->x.contents, hb);
         stats->embed_ms = rl_engine_now_ms() - start;
-        memset(m->plan_miss.contents, 0, (size_t)in->n_layer * sizeof(uint32_t));
-
-        id<MTLCommandBuffer> cb = [m->queue commandBuffer];
-        /* state backups: the fallback restores them if any layer selects a non-resident expert */
-        {
-            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
-            for (uint32_t r = 0; r < in->n_recurrent; ++r) {
-                [blit copyFromBuffer:m->conv_state[r] sourceOffset:0 toBuffer:m->bk_conv[r] destinationOffset:0 size:m->conv_state[r].length];
-                [blit copyFromBuffer:m->rec_state[r] sourceOffset:0 toBuffer:m->bk_rec[r] destinationOffset:0 size:m->rec_state[r].length];
-            }
-            [blit endEncoding];
-        }
-        emitter em = { m, cb, nil };
-        for (uint32_t l = 0; l < in->n_layer; ++l) {
-            const rl_layer_tensors *t = &e->layers[l];
-            const mlayer *w = &m->layers[l];
-            emit_rms(m, em_enc(&em), m->x, &w->attn_norm, m->normed, hidden, eps);
-            if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, &em, t, w);
-            else emit_attention(e, &em, t, w, s->position);
-            emit_ffn_pre(e, &em, w);
-            /* routing + expert lookup on the GPU */
-            const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
-            const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
-            {
-                id<MTLComputeCommandEncoder> enc = em_enc(&em);
-                [enc setComputePipelineState:m->p_route];
-                [enc setBuffer:m->router_logits offset:0 atIndex:0];
-                [enc setBuffer:resident offset:(NSUInteger)l * experts * sizeof(uint64_t) atIndex:1];
-                [enc setBuffer:m->plan_slots offset:slots_off atIndex:2];
-                [enc setBuffer:m->plan_weights offset:weights_off atIndex:3];
-                [enc setBuffer:m->plan_ids offset:ids_off atIndex:4];
-                [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
-                [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
-                [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-            }
-            {
-                rl_native_layer_info li;
-                rl_expert_layout lay;
-                if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
-                    !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) { em_close(&em); goto done; }
-                if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(&em),
-                        (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, li.ggml_type,
-                        li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
-                        (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
-                    snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); em_close(&em); goto done;
-                }
-            }
-            emit_scale_add(e, &em);
-            em_copy(&em, m->x, 0, m->layer_out_gpu, (NSUInteger)l * hb, hidden);
-        }
-        emit_rms(m, em_enc(&em), m->x, &m->output_norm, m->final_norm, hidden, eps);
-        if (logits) emit_rows(m, em_enc(&em), &m->output, m->final_norm, m->logits);
-        em_close(&em);
-        cb = em.cb;
-        if (!commit_wait(cb, "GPU-routed token", &stats->gpu_ms, error, cap)) goto done;
-        stats->layers_ms = rl_engine_now_ms() - start - stats->embed_ms;
-
-        uint32_t missed = 0;
-        const uint32_t *miss = (const uint32_t *)m->plan_miss.contents;
-        for (uint32_t l = 0; l < in->n_layer; ++l) missed += miss[l];
-        if (missed) {
-            /* restore the DeltaNet states; the KV rows at this position are rewritten by the synchronous pass */
-            id<MTLCommandBuffer> rb = [m->queue commandBuffer];
-            id<MTLBlitCommandEncoder> blit = [rb blitCommandEncoder];
-            for (uint32_t r = 0; r < in->n_recurrent; ++r) {
-                [blit copyFromBuffer:m->bk_conv[r] sourceOffset:0 toBuffer:m->conv_state[r] destinationOffset:0 size:m->conv_state[r].length];
-                [blit copyFromBuffer:m->bk_rec[r] sourceOffset:0 toBuffer:m->rec_state[r] destinationOffset:0 size:m->rec_state[r].length];
-            }
-            [blit endEncoding];
-            if (!commit_wait(rb, "state restore", NULL, error, cap)) goto done;
-            result = -1;
-            goto done;
-        }
-        /* LRU bookkeeping for the experts the GPU used, host views, telemetry */
+        uint32_t *miss = (uint32_t *)m->plan_miss.contents;
         const uint32_t *ids = (const uint32_t *)m->plan_ids.contents;
-        for (uint32_t l = 0; l < in->n_layer; ++l) {
-            if (!rl_native_metal_touch_resident(m->experts, l, ids + (size_t)l * 64u, topk, error, cap)) goto done;
-            memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids + (size_t)l * 64u, (size_t)topk * sizeof(uint32_t));
+        const float *weights = (const float *)m->plan_weights.contents;
+        volatile uint32_t *abort_flag = (volatile uint32_t *)m->abort.contents;
+        memset(miss, 0, (size_t)in->n_layer * sizeof(uint32_t));
+        abort_flag[0] = 0u;
+        uint32_t first = 0, restarts = 0;
+        emitter em = { m, [m->queue commandBuffer], nil, m->abort };
+        for (;;) {
+            if (!emit_routed_layers(e, &em, first, resident, s->position, logits != NULL, error, cap)) { em_close(&em); goto done; }
+            em_close(&em);
+            if (!commit_wait(em.cb, "GPU-routed token", &stats->gpu_ms, error, cap)) goto done;
+            if (plan.active && !rl_native_metal_release_topk(m->experts, &plan, NULL, error, cap)) goto done;
+            uint32_t f = first;
+            if (abort_flag[0] != 0u) while (f < in->n_layer && miss[f] == 0u) ++f;
+            else f = in->n_layer;
+            /* LRU bookkeeping for the layers the GPU routed, before a load can evict one of their experts */
+            for (uint32_t l = first; l < f; ++l)
+                if (!rl_native_metal_touch_resident(m->experts, l, ids + (size_t)l * 64u, topk, error, cap)) goto done;
+            if (abort_flag[0] == 0u) break;
+            if (f >= in->n_layer) { set_error(error, cap, "early-out raised without a missed layer"); goto done; }
+            /* layer f: load its missing experts (GPU-selected ids and renormalized weights) and run them */
+            if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, f, ids + (size_t)f * 64u, weights + (size_t)f * 512u,
+                    topk, &plan, error, cap)) goto done;
+            abort_flag[0] = 0u;   /* the previous command buffer has completed: nothing reads the flag now */
+            restarts++;
+            em.cb = [m->queue commandBuffer];
+            if (!rl_native_metal_encode_topk(m->experts, &plan, (__bridge void *)em.cb, (__bridge void *)m->ffn_in, 0u,
+                    (__bridge void *)m->routed, 0u, error, cap)) goto done;
+            emit_scale_add(e, &em);
+            em_copy(&em, m->x, 0, m->layer_out_gpu, (NSUInteger)f * hb, hidden);
+            first = f + 1u;
         }
+        stats->layers_ms = rl_engine_now_ms() - start - stats->embed_ms;
+        for (uint32_t l = 0; l < in->n_layer; ++l)
+            memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids + (size_t)l * 64u, (size_t)topk * sizeof(uint32_t));
         memcpy(s->layer_out, m->layer_out_gpu.contents, (size_t)in->n_layer * hb);
         memcpy(s->final_norm, m->final_norm.contents, hb);
         if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));
@@ -1101,21 +1138,30 @@ static int step_speculative(rl_engine *e, rl_metal_engine *m, uint32_t token, fl
         }
         s->position++;
         stats->speculative = 1;
+        stats->speculative_fallback = restarts;   /* dev23: number of per-layer early-outs in this token */
         result = 1;
     }
 done:
+    if (plan.active) {
+        id<MTLCommandBuffer> drain = [m->queue commandBuffer];
+        [drain commit];
+        [drain waitUntilCompleted];
+        rl_native_metal_release_topk(m->experts, &plan, NULL, NULL, 0);
+    }
     stats->total_ms = rl_engine_now_ms() - start;
     return result;
 }
 
 int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
                          rl_engine_step_stats *stats, char *error, size_t cap) {
+    /* dev23 policy: the early-out path pays one resume (and the skipped dispatches of the rest of the token)
+     * per layer that misses, so it only wins when misses are rare. As in dev21 it is tried after a token that
+     * needed no expert load; a token with more than RL_ROUTED_MAX_RESTARTS early-outs sends the next tokens
+     * back to the synchronous path until one of them loads nothing. */
     if (m->spec_enabled && !m->last_token_missed) {
-        const int r = step_speculative(e, m, token, logits, stats, error, cap);
-        if (r == 1) return 1;
-        if (r == 0) return 0;
-        stats->speculative_fallback = 1;
-        m->last_token_missed = 1;
+        const int r = step_routed(e, m, token, logits, stats, error, cap);
+        if (r) m->last_token_missed = stats->speculative_fallback > RL_ROUTED_MAX_RESTARTS;
+        return r;
     }
     return rl_metal_engine_step_sync(e, m, token, logits, stats, error, cap);
 }
@@ -1133,6 +1179,10 @@ int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, 
     if (!probs) { set_error(error, cap, "router scratch allocation failed"); return 0; }
     rl_native_topk_plan plan;
     memset(&plan, 0, sizeof(plan));
+    uint32_t pred_ids[RL_ENGINE_MAX_TOPK];
+    float pred_w[RL_ENGINE_MAX_TOPK], pred_zero[RL_ENGINE_MAX_TOPK];
+    memset(pred_zero, 0, sizeof(pred_zero));
+    int have_pred = 0;
     int ok = 0;
     @autoreleasepool {
         id<MTLCommandBuffer> pending = nil; /* expert + residual command buffer of the previous layer */
@@ -1144,16 +1194,39 @@ int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, 
             const rl_layer_tensors *t = &e->layers[l];
             const mlayer *w = &m->layers[l];
             const double l0 = rl_engine_now_ms();
-            emitter em = { m, [m->queue commandBuffer], nil };
+            emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
             emit_rms(m, em_enc(&em), m->x, &w->attn_norm, m->normed, hidden, eps);
             em_stage(&em, 0);
             if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, &em, t, w);
             else emit_attention(e, &em, t, w, s->position);
             emit_ffn_pre(e, &em, w);
+            /* dev23 pre-gating: the next layer's router applied to this layer's FFN input predicts its experts */
+            const int predict = m->prefetch && l + 1u < in->n_layer;
+            if (predict) emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, m->ffn_in, m->pred_logits);
             em_close(&em);
             id<MTLCommandBuffer> cb = em.cb;
             /* the queue executes the previous layer's expert/residual buffer before this one */
-            if (!commit_wait(cb, "layer attention/router/shared", &stats->gpu_ms, error, cap)) goto done;
+            [cb commit];
+            if (have_pred) {
+                /* prefetch this layer's predicted experts while the GPU runs the previous experts and this layer */
+                rl_native_topk_plan pplan;
+                memset(&pplan, 0, sizeof(pplan));
+                const double p0 = rl_engine_now_ms();
+                if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, pred_ids, pred_zero, topk, &pplan, error, cap) ||
+                    !rl_native_metal_release_topk(m->experts, &pplan, NULL, error, cap)) { [cb waitUntilCompleted]; goto done; }
+                m->prefetch_ms += rl_engine_now_ms() - p0;
+                have_pred = 0;
+            }
+            [cb waitUntilCompleted];
+            if (cb.status != MTLCommandBufferStatusCompleted || cb.error) {
+                snprintf(error, cap, "layer attention/router/shared command buffer failed: %s", cb.error.localizedDescription.UTF8String ?: "unknown");
+                goto done;
+            }
+            stats->gpu_ms += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (predict) {
+                if (!rl_native_router_select_softmax_topk((const float *)m->pred_logits.contents, experts, topk, pred_ids, pred_w, probs, error, cap)) goto done;
+                have_pred = 1;
+            }
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
             if (pending) {
@@ -1175,7 +1248,7 @@ int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, 
             if (!rl_native_metal_encode_topk(m->experts, &plan, (__bridge void *)cb, (__bridge void *)m->ffn_in, 0u,
                     (__bridge void *)m->routed, 0u, error, cap)) goto done;
             {
-                emitter xm = { m, cb, nil };
+                emitter xm = { m, cb, nil, m->abort_zero };
                 emit_scale_add(e, &xm);
                 em_close(&xm);
             }

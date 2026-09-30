@@ -498,6 +498,7 @@ int rl_native_metal_encode_topk(
     if (!runtime || !plan || !plan->top_k || plan->active) { set_error(error, error_cap, "invalid native top-k encode request"); return 0; }
     plan->bytes_read_at_encode = redmetal_topk_pool_bytes_read(runtime->pool);
     plan->calls_at_encode = redmetal_topk_pool_read_calls(runtime->pool);
+    for (uint32_t i = 0; i < plan->top_k; ++i) plan->slot_generation[i] = redmetal_topk_pool_slot_generation(runtime->pool, plan->slots[i]);
     if (!redmetal_topk_pool_encode(runtime->pool, mtl_command_buffer, plan->slots, plan->gate_bytes, plan->up_bytes,
             plan->down_bytes, plan->weights, plan->top_k, plan->ggml_type, plan->hidden, plan->ffn, 0u, plan->hidden,
             mtl_input_buffer, input_offset, mtl_output_buffer, output_offset)) {
@@ -529,6 +530,7 @@ int rl_native_metal_encode_topk_batched(
     if (!runtime || !plan || !plan->top_k || plan->active) { set_error(error, error_cap, "invalid native batched top-k encode request"); return 0; }
     plan->bytes_read_at_encode = redmetal_topk_pool_bytes_read(runtime->pool);
     plan->calls_at_encode = redmetal_topk_pool_read_calls(runtime->pool);
+    for (uint32_t i = 0; i < plan->top_k; ++i) plan->slot_generation[i] = redmetal_topk_pool_slot_generation(runtime->pool, plan->slots[i]);
     if (!redmetal_topk_pool_encode_batched(runtime->pool, mtl_command_buffer, plan->slots, plan->gate_bytes, plan->up_bytes,
             plan->down_bytes, plan->top_k, plan->ggml_type, plan->hidden, plan->ffn, tok_first, ntok, top_k, ntok * top_k,
             pair_token, pair_weight, expert_start, tok_pair, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset)) {
@@ -554,9 +556,12 @@ int rl_native_metal_release_topk(
     const uint64_t bytes_after = redmetal_topk_pool_bytes_read(runtime->pool);
     const uint64_t calls_after = redmetal_topk_pool_read_calls(runtime->pool);
     if (plan->active) {
+        int rewritten = 0;
+        for (uint32_t i = 0; i < plan->top_k; ++i)
+            if (redmetal_topk_pool_slot_generation(runtime->pool, plan->slots[i]) != plan->slot_generation[i]) rewritten = 1;
         redmetal_topk_pool_release(runtime->pool, plan->slots, plan->top_k);
         plan->active = 0;
-        if (bytes_after != plan->bytes_read_at_encode || calls_after != plan->calls_at_encode) {
+        if (rewritten) {
             set_error(error, error_cap, "native top-k experts were overwritten by SSD reads while in flight");
             return 0;
         }

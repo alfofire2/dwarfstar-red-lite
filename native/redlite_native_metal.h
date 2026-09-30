@@ -62,7 +62,9 @@ int rl_native_metal_execute_topk(
  *   encode   - encode the expert dispatches into an external command buffer
  *              reading/writing external MTLBuffers (opaque pointers)
  *   release  - after the command buffer completed: release in-flight slots and
- *              verify no SSD reads happened while the experts were in flight
+ *              verify that none of the plan's slots was rewritten while in flight
+ *              (dev23: per-slot load generations; loads into other slots, e.g. a
+ *              prefetch, are allowed while the plan is in flight)
  */
 typedef struct {
     uint32_t layer;
@@ -77,6 +79,7 @@ typedef struct {
     float weights[512];
     uint64_t bytes_read_at_encode;
     uint64_t calls_at_encode;
+    uint32_t slot_generation[512];   /* dev23: load generation of each plan slot at encode */
     int active;
 } rl_native_topk_plan;
 

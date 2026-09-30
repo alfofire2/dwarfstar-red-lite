@@ -78,7 +78,7 @@ typedef struct {
     uint32_t expert_plans;   /* batched prefill: expert plans (groups) executed */
     double prep_lru_ms, prep_load_ms, prep_commit_ms, expert_wait_ms;   /* prefill expert phase wall split */
     uint32_t speculative;          /* dev21: token decoded by the GPU-routed single-command-buffer path */
-    uint32_t speculative_fallback; /* dev21: GPU-routed attempt hit a non-resident expert and was redone synchronously */
+    uint32_t speculative_fallback; /* dev23: per-layer early-outs of a GPU-routed token (layers whose experts were loaded by the CPU) */
 } rl_engine_step_stats;
 
 void rl_engine_config_default(rl_engine_config *cfg);

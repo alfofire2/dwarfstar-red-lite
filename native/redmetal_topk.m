@@ -99,6 +99,7 @@ static int topk_pread_all(
 static NSString * const kTopKSource = @
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
+"constant bool redmetal_guard [[function_constant(0)]];   /* dev23: early-out variant (flag at index 30) */\n"
 "\n"
 "struct redmetal_topk_slots { device const uchar *slot[512]; };\n"
 "#define RM_S 4u   /* pairs per slice: one decoded weight serves RM_S tokens */\n"
@@ -177,8 +178,10 @@ static NSString * const kTopKSource = @
 "    constant uint &top_k [[buffer(7)]],\n"
 "    constant uint &type [[buffer(8)]],\n"
 "    constant uint &lanes_per_row [[buffer(9)]],\n"
+"    device const uint *rl_abort [[buffer(30), function_constant(redmetal_guard)]],\n"
 "    uint2 tid [[thread_position_in_grid]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (redmetal_guard) { if (rl_abort[0] != 0u) return; }\n"
 "    const uint expert = tid.y;\n"
 "    const uint row = tid.x / lanes_per_row;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
@@ -215,8 +218,10 @@ static NSString * const kTopKSource = @
 "    constant uint &top_k [[buffer(8)]],\n"
 "    constant uint &type [[buffer(9)]],\n"
 "    constant uint &lanes_per_row [[buffer(10)]],\n"
+"    device const uint *rl_abort [[buffer(30), function_constant(redmetal_guard)]],\n"
 "    uint2 tid [[thread_position_in_grid]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (redmetal_guard) { if (rl_abort[0] != 0u) return; }\n"
 "    const uint expert = tid.y;\n"
 "    const uint r = tid.x / lanes_per_row;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
@@ -429,7 +434,9 @@ static NSString * const kTopKSource = @
 "    device float *out [[buffer(2)]],\n"
 "    constant uint &row_count [[buffer(3)]],\n"
 "    constant uint &top_k [[buffer(4)]],\n"
+"    device const uint *rl_abort [[buffer(30), function_constant(redmetal_guard)]],\n"
 "    uint gid [[thread_position_in_grid]]) {\n"
+"    if (redmetal_guard) { if (rl_abort[0] != 0u) return; }\n"
 "    if (gid >= row_count) return;\n"
 "    float acc = 0.0f;\n"
 "    for (uint e = 0; e < top_k; ++e) acc += weights[e] * tmp[e * row_count + gid];\n"
@@ -443,6 +450,7 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _gateupPipeline;
     id<MTLComputePipelineState> _downPipeline;
     id<MTLComputePipelineState> _sumPipeline;
+    id<MTLComputePipelineState> _gateupGPipeline, _downGPipeline, _sumGPipeline;   /* dev23 early-out variants */
     id<MTLComputePipelineState> _gateupBPipeline;
     id<MTLComputePipelineState> _downBPipeline;
     id<MTLComputePipelineState> _sumBPipeline;
@@ -475,6 +483,7 @@ static NSString * const kTopKSource = @
     uint32_t _capacity;
     uint32_t _slotsPerSlab;
     uint32_t *_slotInflight;
+    uint32_t *_slotGeneration;   /* dev23: bumped by every load into the slot (release checks in-flight slots were not rewritten) */
     uint64_t _allocatedBytes;
     uint64_t _bytesRead;
     uint64_t _readCalls;
@@ -540,13 +549,21 @@ static NSString * const kTopKSource = @
             libraryError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
-    id<MTLFunction> gateup = [library newFunctionWithName:@"redmetal_topk_gateup_lanes"];
-    id<MTLFunction> down = [library newFunctionWithName:@"redmetal_topk_down_lanes"];
-    id<MTLFunction> sum = [library newFunctionWithName:@"redmetal_topk_weighted_sum"];
+    MTLFunctionConstantValues *plain = [MTLFunctionConstantValues new], *guarded = [MTLFunctionConstantValues new];
+    bool guard_off = false, guard_on = true;
+    [plain setConstantValue:&guard_off type:MTLDataTypeBool atIndex:0];
+    [guarded setConstantValue:&guard_on type:MTLDataTypeBool atIndex:0];
+    NSError *fnError = nil;
+    id<MTLFunction> gateup = [library newFunctionWithName:@"redmetal_topk_gateup_lanes" constantValues:plain error:&fnError];
+    id<MTLFunction> down = [library newFunctionWithName:@"redmetal_topk_down_lanes" constantValues:plain error:&fnError];
+    id<MTLFunction> sum = [library newFunctionWithName:@"redmetal_topk_weighted_sum" constantValues:plain error:&fnError];
+    id<MTLFunction> gateupG = [library newFunctionWithName:@"redmetal_topk_gateup_lanes" constantValues:guarded error:&fnError];
+    id<MTLFunction> downG = [library newFunctionWithName:@"redmetal_topk_down_lanes" constantValues:guarded error:&fnError];
+    id<MTLFunction> sumG = [library newFunctionWithName:@"redmetal_topk_weighted_sum" constantValues:guarded error:&fnError];
     id<MTLFunction> gateupB = [library newFunctionWithName:@"redmetal_topk_gateup_b"];
     id<MTLFunction> downB = [library newFunctionWithName:@"redmetal_topk_down_b"];
     id<MTLFunction> sumB = [library newFunctionWithName:@"redmetal_topk_sum_b"];
-    if (!gateup || !down || !sum || !gateupB || !downB || !sumB) {
+    if (!gateup || !down || !sum || !gateupB || !downB || !sumB || !gateupG || !downG || !sumG) {
         topk_set_error("one or more top-k Metal functions were not found");
         return nil;
     }
@@ -566,6 +583,13 @@ static NSString * const kTopKSource = @
     _sumPipeline = [_device newComputePipelineStateWithFunction:sum error:&pipelineError];
     if (!_sumPipeline) {
         topk_set_error("failed to create top-k weighted sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
+        return nil;
+    }
+    _gateupGPipeline = [_device newComputePipelineStateWithFunction:gateupG error:&pipelineError];
+    _downGPipeline = [_device newComputePipelineStateWithFunction:downG error:&pipelineError];
+    _sumGPipeline = [_device newComputePipelineStateWithFunction:sumG error:&pipelineError];
+    if (!_gateupGPipeline || !_downGPipeline || !_sumGPipeline) {
+        topk_set_error("failed to create early-out top-k pipelines: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
     }
     pipelineError = nil;
@@ -601,7 +625,8 @@ static NSString * const kTopKSource = @
     }
     _fileSize = (uint64_t)st.st_size;
     _slotInflight = calloc(_capacity, sizeof(uint32_t));
-    if (!_slotInflight) {
+    _slotGeneration = calloc(_capacity, sizeof(uint32_t));
+    if (!_slotInflight || !_slotGeneration) {
         topk_set_error("failed to allocate top-k in-flight table");
         close(_fd);
         _fd = -1;
@@ -623,6 +648,8 @@ static NSString * const kTopKSource = @
     if (_fd >= 0) close(_fd);
     free(_slotInflight);
     _slotInflight = NULL;
+    free(_slotGeneration);
+    _slotGeneration = NULL;
 }
 
 - (int)ensureBatchPairs:(uint32_t)pairs experts:(uint32_t)experts tokens:(uint32_t)ntok topk:(uint32_t)top_k hidden:(uint32_t)hidden ffn:(uint32_t)ffn {
@@ -805,6 +832,12 @@ uint64_t redmetal_topk_pool_read_calls(redmetal_topk_pool_t handle) {
 double redmetal_topk_pool_read_ms(redmetal_topk_pool_t handle) {
     RMTopKPool *p = topk_obj(handle); if (!p) return 0.0; @synchronized (p) { return p->_readMs; }
 }
+uint32_t redmetal_topk_pool_slot_generation(redmetal_topk_pool_t handle, uint32_t slot_id) {
+    RMTopKPool *p = topk_obj(handle);
+    if (!p || slot_id >= p->_capacity) return 0;
+    @synchronized (p) { return p->_slotGeneration[slot_id]; }
+}
+
 int redmetal_topk_pool_slot_inflight(redmetal_topk_pool_t handle, uint32_t slot_id) {
     RMTopKPool *p = topk_obj(handle);
     if (!p || slot_id >= p->_capacity) return 0;
@@ -825,9 +858,12 @@ int redmetal_topk_pool_load_expert(
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
         if (!p || slot_id >= p->_capacity) return 0;
-        if (redmetal_topk_pool_slot_inflight(handle, slot_id)) {
-            topk_set_error("refusing to overwrite in-flight top-k slot %u", slot_id);
-            return 0;
+        @synchronized (p) {
+            if (p->_slotInflight[slot_id] != 0) {
+                topk_set_error("refusing to overwrite in-flight top-k slot %u", slot_id);
+                return 0;
+            }
+            p->_slotGeneration[slot_id]++;
         }
         if (gate_bytes > UINT64_MAX - up_bytes || gate_bytes + up_bytes > UINT64_MAX - down_bytes) {
             topk_set_error("top-k expert payload size overflow");
@@ -1478,7 +1514,7 @@ int redmetal_topk_pool_encode_device_into(
 
         id<MTLComputeCommandEncoder> enc = (__bridge id<MTLComputeCommandEncoder>)mtl_compute_encoder;
         redmetal_topk_pool_use_all_slabs(handle, (__bridge void *)enc);
-        [enc setComputePipelineState:p->_gateupPipeline];
+        [enc setComputePipelineState:p->_gateupGPipeline];
         [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
         [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
         [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
@@ -1491,7 +1527,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
         [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
 
-        [enc setComputePipelineState:p->_downPipeline];
+        [enc setComputePipelineState:p->_downGPipeline];
         [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
         [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
         [enc setBytes:&row_start length:sizeof(row_start) atIndex:2];
@@ -1505,7 +1541,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
         [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
 
-        [enc setComputePipelineState:p->_sumPipeline];
+        [enc setComputePipelineState:p->_sumGPipeline];
         [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
         [enc setBuffer:weights offset:(NSUInteger)weight_offset atIndex:1];
         [enc setBuffer:output offset:(NSUInteger)output_offset atIndex:2];

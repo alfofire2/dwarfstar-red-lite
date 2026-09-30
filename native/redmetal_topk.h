@@ -28,6 +28,8 @@ uint64_t redmetal_topk_pool_allocated_bytes(redmetal_topk_pool_t pool);
 uint64_t redmetal_topk_pool_bytes_read(redmetal_topk_pool_t pool);
 uint64_t redmetal_topk_pool_read_calls(redmetal_topk_pool_t pool);
 double redmetal_topk_pool_read_ms(redmetal_topk_pool_t pool);
+/* dev23: number of loads ever written into the slot (a plan compares it at encode and release) */
+uint32_t redmetal_topk_pool_slot_generation(redmetal_topk_pool_t pool, uint32_t slot_id);
 int redmetal_topk_pool_slot_inflight(redmetal_topk_pool_t pool, uint32_t slot_id);
 
 int redmetal_topk_pool_load_expert(
@@ -137,7 +139,9 @@ int redmetal_topk_pool_encode_device(
     uint64_t output_offset);
 
 /* dev22: same three dispatches as redmetal_topk_pool_encode_device, appended to an open compute encoder
- * (serial dispatch) instead of three encoders of a command buffer. */
+ * (serial dispatch) instead of three encoders of a command buffer.
+ * dev23: uses the early-out kernel variants; the encoder must have a uint flag bound at buffer index 30
+ * (a non-zero flag makes the three dispatches return immediately). */
 int redmetal_topk_pool_encode_device_into(
     redmetal_topk_pool_t pool,
     void *mtl_compute_encoder,

@@ -411,7 +411,7 @@ int main(int argc, char **argv) {
     }
     printf("worst layer abs       : %.6g\n", worst_layer);
     printf("worst logits abs      : %.6g\n", worst_logit);
-    printf("GPU-routed tokens     : %u speculative, %u fallbacks, %u synchronous\n", spec_tokens, spec_fallbacks, token_count * repeat - spec_tokens);
+    printf("GPU-routed tokens     : %u speculative, %u per-layer early-outs, %u synchronous\n", spec_tokens, spec_fallbacks, token_count * repeat - spec_tokens);
     printf("MULTI-TOKEN ENGINE PARITY: %s\n", all_ok ? "YES" : "NO");
     free(cpu_logits); free(gpu_logits);
     rl_engine_close(e);

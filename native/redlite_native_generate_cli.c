@@ -432,7 +432,7 @@ int main(int argc, char **argv) {
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);
         fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f [load %.1f gpu %.1f] shared %.1f out %.1f) dense GPU %.1f ms\n",
             st.total_ms, st.recurrent_ms, st.attention_ms, st.router_ms, st.routed_ms, st.routed_load_ms, st.routed_gpu_ms, st.shared_ms, st.output_ms, st.gpu_ms);
-        fprintf(stderr, "decode path          : %u GPU-routed (speculative) tokens, %u fallbacks, %u synchronous\n", spec_tokens, spec_fallbacks, decoded - spec_tokens);
+        fprintf(stderr, "decode path          : %u GPU-routed tokens (%u per-layer early-outs), %u synchronous\n", spec_tokens, spec_fallbacks, decoded - spec_tokens);
         fprintf(stderr, "expert cache         : hits=%" PRIu64 " misses=%" PRIu64 " loads=%" PRIu64 " resident=%u/%u slots (hit rate %.1f%%)\n",
             st.cache_hits - hits_start, st.cache_misses - misses_start, st.expert_loads - loads_start, st.resident_slots, st.slot_capacity,
             (st.cache_hits + st.cache_misses - hits_start - misses_start) ? 100.0 * (double)(st.cache_hits - hits_start) / (double)(st.cache_hits + st.cache_misses - hits_start - misses_start) : 0.0);
@@ -452,7 +452,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "{\"open_ms\":%.1f,\"experts_preloaded\":%s,\"preload_ms\":%.1f,\"chat_template_from_gguf\":%s,"
             "\"prompt_tokens\":%u,\"prefill_ms\":%.1f,\"prefill_tok_s\":%.2f,"
             "\"generated_tokens\":%u,\"decode_passes\":%u,\"decode_ms\":%.1f,\"decode_tok_s\":%.2f,"
-            "\"gpu_routed\":%u,\"gpu_routed_fallbacks\":%u,\"cache_hits\":%llu,\"cache_misses\":%llu,"
+            "\"gpu_routed\":%u,\"early_outs\":%u,\"cache_hits\":%llu,\"cache_misses\":%llu,"
             "\"expert_loads\":%llu,\"ssd_mib\":%.1f,\"peak_rss_mib\":%.1f,\"phys_footprint_mib\":%.1f,"
             "\"cache_mib\":%llu,\"context\":%u,\"batch\":%u,\"finish\":\"%s\"}\n",
             open_ms, preloaded ? "true" : "false", pre_ms, template_from_gguf ? "true" : "false",
