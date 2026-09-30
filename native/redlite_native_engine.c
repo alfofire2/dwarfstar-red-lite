@@ -4,6 +4,7 @@
 
 #include "redlite_native_engine_internal.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -99,7 +100,8 @@ static int expect_dense(const rl_gguf_tensor *t, const char *what, uint32_t dims
         char *error, size_t cap) {
     if (!t) { snprintf(error, cap, "missing tensor %s", what); return 0; }
     const uint32_t ty = t->ggml_type;
-    const int supported = ty == 0u || ty == 1u || ty == 8u || ty == 10u || ty == 12u || ty == 13u || ty == 14u || ty == 16u;
+    const int supported = ty == 0u || ty == 1u || ty == 8u || ty == 10u || ty == 12u || ty == 13u || ty == 14u || ty == 16u ||
+                          rl_iq3_supported(ty);   /* dev31: IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS */
     if (!supported) { snprintf(error, cap, "tensor %s has unsupported dense type %u", t->name, ty); return 0; }
     return expect(t, what, ty, dims, d0, d1, error, cap);
 }

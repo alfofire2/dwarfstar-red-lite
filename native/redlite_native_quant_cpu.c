@@ -1,5 +1,6 @@
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_iq2_xxs.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_shared_exec.h"
 
 #include <math.h>
@@ -188,7 +189,9 @@ int rl_quant_dequant_row(uint32_t ggml_type, const uint8_t *row, uint32_t ncols,
             }
             return 1;
         }
-        default: return 0;
+        default:
+            if (rl_iq3_supported(ggml_type)) return rl_iq3_dequant_row(ggml_type, row, ncols, out);   /* dev31 */
+            return 0;
     }
 }
 
@@ -270,7 +273,9 @@ int rl_quant_row_dot(uint32_t ggml_type, const uint8_t *row, const float *x, uin
             return rl_native_shared_quant_row_dot(row, rb, ggml_type, x, ncols, iq2_xxs_grid,
                 iq2_xxs_grid ? RL_IQ2_XXS_GRID_COUNT : 0u, out, err, sizeof(err));
         }
-        default: return 0;
+        default:
+            if (rl_iq3_supported(ggml_type)) return rl_iq3_row_dot(ggml_type, row, x, ncols, out);   /* dev31 */
+            return 0;
     }
 }
 

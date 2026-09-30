@@ -46,7 +46,7 @@ build redlite-shared-exec-offline-test \
   "$N/redlite_native_iq2_xxs.c"
 build redlite-engine-offline-test \
   "$N/redlite_native_engine_offline_test.c" "$N/redlite_native_gguf_dir.c" \
-  "$N/redlite_native_quant_cpu.c" "$N/redlite_native_shared_exec.c" \
+  "$N/redlite_native_quant_cpu.c" "$N/redlite_native_iq3.c" "$N/redlite_native_shared_exec.c" \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_sampler.c"
 build redlite-server-fake \
   "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c" -pthread
@@ -58,7 +58,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   # redlite-engine for its model-free Metal kernel self-test (dev22-dev23 kernels vs the CPU reference)
   "${CC_CMD[@]}" "${FLAGS[@]}" -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension -fobjc-arc \
     "$N/redlite_native_engine_cli.c" "$N/redlite_native_engine.c" "$N/redlite_native_engine_cpu.c" \
-    "$N/redlite_native_tokenizer.c" "$N/redlite_native_gguf_dir.c" "$N/redlite_native_quant_cpu.c" \
+    "$N/redlite_native_tokenizer.c" "$N/redlite_native_gguf_dir.c" "$N/redlite_native_quant_cpu.c" "$N/redlite_native_iq3.c" \
     "$N/redlite_native_layer_map.c" "$N/redlite_native_router.c" "$N/redlite_native_router_exec.c" \
     "$N/redlite_native_shared_exec.c" "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_gguf.c" \
     "$N/redlite_native_cache.c" "$N/redlite_native_model.c" "$N/redlite_native_tables.c" \

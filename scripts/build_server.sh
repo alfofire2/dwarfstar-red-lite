@@ -17,6 +17,7 @@ ENGINE=(
   "$N/redlite_native_sampler.c"
   "$N/redlite_native_gguf_dir.c"
   "$N/redlite_native_quant_cpu.c"
+  "$N/redlite_native_iq3.c"
   "$N/redlite_native_layer_map.c"
   "$N/redlite_native_router.c"
   "$N/redlite_native_router_exec.c"

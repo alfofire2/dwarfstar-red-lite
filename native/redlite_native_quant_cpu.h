@@ -3,7 +3,8 @@
 /*
  * Scalar CPU reference arithmetic for the dense GGML quant formats used by the
  * Qwen3-Next engine outside the routed experts:
- *   F32 (0), F16 (1), Q8_0 (8), Q2_K (10), Q4_K (12), Q5_K (13), Q6_K (14), IQ2_XXS (16).
+ *   F32 (0), F16 (1), Q8_0 (8), Q2_K (10), Q4_K (12), Q5_K (13), Q6_K (14), IQ2_XXS (16),
+ *   and since dev31 IQ3_XXS (18), IQ3_S (21), IQ2_S (22), IQ4_XS (23) through redlite_native_iq3.c.
  * Block layouts follow the pinned llama.cpp ggml-common.h; dot products accumulate
  * in double so they can serve as an independent oracle for the Metal kernels.
  */

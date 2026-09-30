@@ -9,6 +9,8 @@
 //   redlite-ref-llama MODEL tokenize --text "..." [--no-special]
 //   redlite-ref-llama MODEL tokenize --file CORPUS [--no-special]   (one input per line, \n \t \\ escapes)
 //   redlite-ref-llama MODEL greedy --tokens a,b,c --max N [--ctx N]
+//   redlite-ref-llama MODEL dequant --tensor NAME [--row-first N] [--rows N] --out FILE
+//       rows of a tensor dequantized by ggml's own to_float (dev31: bitwise check of the native CPU reference)
 //   redlite-ref-llama MODEL bench --tokens a,b,c [--max N] [--ctx N]
 //       throughput of the pinned llama.cpp on the same ids, with its default context parameters
 //       (n_batch 2048, n_ubatch 512, flash attention auto, f16 KV): one prefill of the ids, then N
@@ -18,6 +20,7 @@
 //   [hidden] embedding, [n_layer][hidden] layer outputs, [hidden] result_norm, [vocab] logits
 
 #include "ggml-backend.h"
+#include "gguf.h"
 #include "ggml.h"
 #include "llama.h"
 
@@ -121,7 +124,8 @@ int main(int argc, char **argv) {
     if (argc < 3) { fprintf(stderr, "usage: redlite-ref-llama MODEL logits|tokenize|greedy ...\n"); return 2; }
     const char *model_path = argv[1];
     const std::string cmd = argv[2];
-    const char *tokens_arg = nullptr, *out_path = nullptr, *text = nullptr, *corpus = nullptr;
+    const char *tokens_arg = nullptr, *out_path = nullptr, *text = nullptr, *corpus = nullptr, *tensor_name = nullptr;
+    long row_first = 0, row_count = 16;
     int n_ctx = 64, max_new = 16;
     size_t dump_from = 0;
     int router_layer = -1;
@@ -138,7 +142,47 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--router-layer") == 0) router_layer = atoi(argv[++i]);
         else if (strcmp(argv[i], "--ctx") == 0) n_ctx = atoi(argv[++i]);
         else if (strcmp(argv[i], "--max") == 0) max_new = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--tensor") == 0) tensor_name = argv[++i];
+        else if (strcmp(argv[i], "--row-first") == 0) row_first = atol(argv[++i]);
+        else if (strcmp(argv[i], "--rows") == 0) row_count = atol(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
+    }
+
+    if (cmd == "dequant") {
+        if (!tensor_name || !out_path) { fprintf(stderr, "--tensor and --out required\n"); return 2; }
+        gguf_init_params gp = { /*no_alloc*/ true, /*ctx*/ nullptr };
+        gguf_context *gc = gguf_init_from_file(model_path, gp);
+        if (!gc) { fprintf(stderr, "gguf open failed\n"); return 1; }
+        const int64_t ti = gguf_find_tensor(gc, tensor_name);
+        if (ti < 0) { fprintf(stderr, "tensor not found\n"); return 1; }
+        const ggml_type type = gguf_get_tensor_type(gc, ti);
+        const size_t off = gguf_get_data_offset(gc) + gguf_get_tensor_offset(gc, ti);
+        // ne0 from the tensor size: the rows are ne0 values; the caller passes the row length through the dump size
+        const size_t tbytes = gguf_get_tensor_size(gc, ti);
+        const ggml_type_traits *tr = ggml_get_type_traits(type);
+        if (!tr->to_float) { fprintf(stderr, "no to_float for type %d\n", (int)type); return 1; }
+        // row length: read the shape through a no_alloc ggml context
+        ggml_context *meta = nullptr;
+        gguf_init_params gp2 = { true, &meta };
+        gguf_context *gc2 = gguf_init_from_file(model_path, gp2);
+        ggml_tensor *t = ggml_get_tensor(meta, tensor_name);
+        const int64_t ne0 = t->ne[0];
+        const size_t rb = ggml_row_size(type, ne0);
+        FILE *mf = fopen(model_path, "rb");
+        std::vector<uint8_t> raw(rb);
+        std::vector<float> row((size_t)ne0);
+        FILE *of = fopen(out_path, "wb");
+        for (long r = row_first; r < row_first + row_count; ++r) {
+            if ((size_t)(r + 1) * rb > tbytes) { fprintf(stderr, "row out of range\n"); return 1; }
+            fseeko(mf, (off_t)(off + (size_t)r * rb), SEEK_SET);
+            if (fread(raw.data(), 1, rb, mf) != rb) { fprintf(stderr, "read failed\n"); return 1; }
+            tr->to_float(raw.data(), row.data(), ne0);
+            fwrite(row.data(), sizeof(float), (size_t)ne0, of);
+        }
+        fclose(of); fclose(mf);
+        printf("dequantized %s (%s) rows %ld..%ld, %lld columns\n", tensor_name, ggml_type_name(type), row_first, row_first + row_count - 1, (long long)ne0);
+        gguf_free(gc2); ggml_free(meta); gguf_free(gc);
+        return 0;
     }
 
     llama_log_set([](ggml_log_level level, const char *msg, void *) { if (level >= GGML_LOG_LEVEL_ERROR) fputs(msg, stderr); }, nullptr);

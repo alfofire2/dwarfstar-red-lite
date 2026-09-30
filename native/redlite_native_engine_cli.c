@@ -13,6 +13,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_quant_cpu.h"
 #include "redlite_native_tokenizer.h"
 
 #include <errno.h>
@@ -98,6 +99,9 @@ static void usage(FILE *out) {
         "  redlite-engine prefill MODEL --tokens a,b,c [--batch N] [--cpu] [--context N] [--cache-mib N]\n"
         "      batched Metal prefill vs token-by-token Metal steps (and the CPU oracle with --cpu): last-token layer outputs, router ids, logits\n"
         "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n"
+        "  redlite-engine dequant MODEL --tensor NAME [--row-first N] [--rows N] --out FILE\n"
+        "      development: rows of a tensor (flattened to [rows][ne0]) dequantized to f32 by the CPU reference, for a bitwise\n"
+        "      comparison with llama.cpp (redlite-ref-llama MODEL dequant); no engine is opened\n"
         "  redlite-engine kernel-selftest\n"
         "      model-free: decode GEMV kernels (block and sub-block), early-out guard, rl_copy_f32, rl_route and decode attention vs the CPU reference\n");
 }
@@ -136,7 +140,8 @@ int main(int argc, char **argv) {
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
     const char *out_path = NULL;
-    const char *text = NULL, *corpus = NULL;
+    const char *text = NULL, *corpus = NULL, *tensor_name = NULL;
+    uint32_t row_first = 0, row_count = 16;
     int report_layers = 0, no_special = 0, chat = 0, dump_last = 0, with_cpu = 0;
     uint32_t dump_from = 0, batch = 0, repeat = 1;
     int router_layer = -1;
@@ -157,6 +162,9 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--out") == 0) out_path = argv[++i];
         else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
         else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
+        else if (strcmp(argv[i], "--tensor") == 0) tensor_name = argv[++i];
+        else if (strcmp(argv[i], "--row-first") == 0) { if (!parse_u32(argv[++i], &row_first)) return 2; }
+        else if (strcmp(argv[i], "--rows") == 0) { if (!parse_u32(argv[++i], &row_count) || !row_count) return 2; }
         else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
         else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &batch)) return 2; }
         else if (strcmp(argv[i], "--repeat") == 0) { if (!parse_u32(argv[++i], &repeat) || !repeat) return 2; }
@@ -164,6 +172,39 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     char error[512] = {0};
+
+    if (strcmp(cmd, "dequant") == 0) {
+        if (!tensor_name || !out_path) { usage(stderr); return 2; }
+        rl_gguf_model g;
+        if (!rl_gguf_model_open(model, &g, error, sizeof(error))) { fprintf(stderr, "GGUF open failed: %s\n", error); return 1; }
+        if (!rl_gguf_model_map(&g, error, sizeof(error))) { fprintf(stderr, "GGUF map failed: %s\n", error); rl_gguf_model_close(&g); return 1; }
+        const rl_gguf_tensor *t = rl_gguf_find(&g, tensor_name);
+        int rc = 1;
+        if (!t) fprintf(stderr, "tensor %s not found\n", tensor_name);
+        else {
+            uint64_t rows = 1;
+            for (uint32_t d = 1; d < t->n_dims; ++d) rows *= t->shape[d];
+            const uint32_t ncols = (uint32_t)t->shape[0];
+            const size_t rb = rl_gguf_row_bytes(t->ggml_type, ncols);
+            const uint8_t *data = rl_gguf_tensor_data(&g, t);
+            float *buf = (float *)malloc((size_t)ncols * sizeof(float));
+            FILE *out = fopen(out_path, "wb");
+            if (!rb || !data || !buf || !out || (uint64_t)row_first + row_count > rows) fprintf(stderr, "cannot dequantize %s (type %s)\n", tensor_name, rl_gguf_type_name(t->ggml_type));
+            else {
+                rc = 0;
+                for (uint32_t r = row_first; r < row_first + row_count && !rc; ++r) {
+                    if (!rl_quant_dequant_row(t->ggml_type, data + (size_t)r * rb, ncols, NULL, buf)) { fprintf(stderr, "type %s has no CPU dequantizer\n", rl_gguf_type_name(t->ggml_type)); rc = 1; }
+                    else fwrite(buf, sizeof(float), ncols, out);
+                }
+                if (!rc) printf("dequantized %s (%s) rows %u..%u of %llu, %u columns\n", tensor_name, rl_gguf_type_name(t->ggml_type),
+                    row_first, row_first + row_count - 1u, (unsigned long long)rows, ncols);
+            }
+            if (out) fclose(out);
+            free(buf);
+        }
+        rl_gguf_model_close(&g);
+        return rc;
+    }
 
     if (strcmp(cmd, "info") == 0) {
         cfg.enable_cpu = 0; cfg.enable_gpu = 0;
