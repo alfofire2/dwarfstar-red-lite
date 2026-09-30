@@ -352,6 +352,16 @@ Run tests:
 make test
 ```
 
+GitHub CI (`.github/workflows/ci.yml`) runs the model-free checks on Linux for every push
+and pull request: ruff, `make native`, `make sanitize`, `make test`. Everything that needs
+Metal or the model runs locally with `scripts/regress_m4.sh MODEL`.
+
+Build a binary release tarball (Apple Silicon only; `-mcpu=apple-m1`, macOS ≥ 14):
+
+```bash
+scripts/package_release.sh          # dist/redlite-<version>-macos-arm64.tar.gz + .sha256
+```
+
 Inspect the launch command without executing it:
 
 ```bash

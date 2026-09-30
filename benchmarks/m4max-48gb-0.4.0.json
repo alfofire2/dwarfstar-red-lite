@@ -1,0 +1,43 @@
+{
+ "machine": "Apple M4 Max, 48 GiB unified memory (daily machine)",
+ "model": "models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf (19298972128 bytes)",
+ "method": "scripts/dev/bench_m4.sh MODEL --reps 3 --cool 90 [--only prefill8192|llama]; median of 3 cooled runs; decode = 256 greedy tokens after the rainbow chat prompt; prefill = batched prefill (chunks of 512, 4 GiB cache) of the first N ids of tests/fixtures/long_context_prompt.txt (repeated for 8192); llama = redlite-ref-llama bench on the same ids (pinned llama.cpp, default context params, fully resident)",
+ "baseline_0.3.0": {
+  "commit": "48c96cd",
+  "date": "2026-09-30",
+  "decode22_tok_s": 71.5,
+  "decode22_runs": [
+   68.63,
+   71.5,
+   72.41
+  ],
+  "decode4_tok_s": 47.93,
+  "decode4_runs": [
+   41.76,
+   47.93,
+   48.51
+  ],
+  "prefill1100_tok_s": 307.3,
+  "prefill8192_tok_s": 212.6,
+  "llama_cpp": {
+   "prefill1100_tok_s": 858.34,
+   "prefill8192_tok_s": 893.71,
+   "decode_tok_s": 72.46
+  },
+  "profile_prefill1100_single_run": {
+   "tok_s": 279.7,
+   "dense_gpu_ms": 1629.1,
+   "recurrent_wall_ms": 1290.0,
+   "attention_wall_ms": 474.3,
+   "experts_gpu_ms": 1924.5,
+   "expert_load_ms": 682.3
+  },
+  "profile_prefill8192_single_run": {
+   "tok_s": 201.3,
+   "dense_gpu_ms": 25629.4,
+   "recurrent_wall_ms": 8936.3,
+   "attention_wall_ms": 17273.1,
+   "experts_gpu_ms": 13509.6
+  }
+ }
+}

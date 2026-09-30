@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (0.4.0 cycle, branch `dev/0.4`)
+
+### dev28 — Linux CI, release tarball, same-prompt llama.cpp baseline (M4 Max 48 GiB)
+
+- `.github/workflows/ci.yml` runs on every push and pull request: one Linux job with ruff,
+  compileall, `make native` and `make sanitize` (warnings fail) and `make test`. macOS
+  hosted jobs and `lint.yml` removed; the self-hosted M4 workflow stays manual.
+  **Not green on GitHub**: GitHub refuses to start hosted jobs on this account (billing);
+  the same commands pass in a Linux container locally.
+- `scripts/package_release.sh`: `dist/redlite-<version>-macos-arm64.tar.gz` with
+  `redlite-generate`, `redlite-server`, `redlite-engine` (`-mcpu=apple-m1`, macOS ≥ 14),
+  `INSTALL.md`, `BUILDINFO`, and a `.sha256` file. `REDLITE_MCPU` / `REDLITE_BUILD_OUT`
+  for the build scripts.
+- `redlite-ref-llama bench` and `bench_m4.sh --only prefill8192|llama`: llama.cpp is now
+  measured on the exact ids of the native benchmark. Baseline (0.3.0, medians of three
+  cooled runs): native decode 71.50 / 47.93 tok/s (22 / 4 GiB), prefill 307.30 (1100) and
+  212.60 (8192) tok/s; llama.cpp prefill 858.34 / 893.71 tok/s, decode 72.46 tok/s.
+  See `docs/REDLITE_DEV28_CI_RELEASE.md`.
+
 ## 0.3.0 — 2026-09-30
 
 First release of the **native runtime**: Red Lite's own C11 / Objective-C / Metal

@@ -81,6 +81,13 @@ bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py 
 .deps/redmetal/redlite-layer-audit     MODEL --tensors
 ```
 
+GitHub CI (`.github/workflows/ci.yml`, dev28) runs on every push and PR on Linux only:
+ruff, compileall, `make native` and `make sanitize` with warnings as failures, `make test`.
+`scripts/package_release.sh` builds the arm64 release tarball (`-mcpu=apple-m1`,
+`REDLITE_MCPU` / `REDLITE_BUILD_OUT` select the CPU and the output directory of the
+build scripts). `scripts/dev/bench_m4.sh MODEL --only llama` measures the pinned llama.cpp
+on the same ids as the native benchmark (`redlite-ref-llama MODEL bench`).
+
 The full list of invocations that constitute "field validation" is the step list in
 `.github/workflows/mac-m4-field-validation.yml` (self-hosted M4 Pro runner, reads
 `REDLITE_MODEL_PATH`). When you add a new native stage, add its parity step there.
