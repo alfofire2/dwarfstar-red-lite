@@ -527,7 +527,6 @@ int redmetal_ffn_pool_load_expert(
                           base + baseOffset + gate_bytes + up_bytes, &localBytes, &localCalls);
         const double ms = ffn_now_ms() - t0;
         if (!ok) return 0;
-        [slab didModifyRange:NSMakeRange(baseOffset, (NSUInteger)payload)];
         @synchronized (p) {
             p->_bytesRead += localBytes;
             p->_readCalls += localCalls;

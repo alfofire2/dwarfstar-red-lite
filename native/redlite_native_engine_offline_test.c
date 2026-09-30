@@ -155,6 +155,30 @@ static int sampler_selftest(char *error, size_t cap) {
     for (int i = 0; i < 256 && ok; ++i) { const uint32_t id = rl_sampler_sample(&s, logits); ok = id == 777u || id == 4000u; }
     rl_sampler_free(&s);
     if (!ok) { snprintf(error, cap, "top-p sample left the nucleus"); return 0; }
+
+    /* min-p (llama.cpp rule: keep logit >= max + log(min_p)) and the exact distribution API */
+    p.top_k = 0u; p.top_p = 1.0f; p.temperature = 1.0f; p.min_p = 0.5f;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    const uint32_t *ids = NULL;
+    const float *probs = NULL;
+    uint32_t n = rl_sampler_distribution(&s, logits, &ids, &probs);
+    const double p777 = 1.0 / (1.0 + exp(-0.5));
+    ok = n == 2u && ids[0] == 777u && ids[1] == 4000u && fabs(probs[0] - p777) < 1e-6 && fabs(probs[1] - (1.0 - p777)) < 1e-6;
+    for (int i = 0; i < 256 && ok; ++i) { const uint32_t id = rl_sampler_sample(&s, logits); ok = id == 777u || id == 4000u; }
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "min-p 0.5 must keep exactly the two dominant ids with softmax weights"); return 0; }
+    p.min_p = 0.7f; /* log(0.7) = -0.357 < -0.5: only the argmax survives */
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    n = rl_sampler_distribution(&s, logits, &ids, &probs);
+    ok = n == 1u && ids[0] == 777u && probs[0] == 1.0f;
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "min-p 0.7 must keep only the argmax"); return 0; }
+    p.temperature = 0.0f; p.min_p = 0.0f;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    n = rl_sampler_distribution(&s, logits, &ids, &probs);
+    ok = n == 1u && ids[0] == 777u && probs[0] == 1.0f;
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "greedy distribution must be the argmax with probability 1"); return 0; }
     return 1;
 }
 
@@ -181,7 +205,7 @@ int main(int argc, char **argv) {
     if (!synthetic_gguf_test(error, sizeof(error))) { fprintf(stderr, "synthetic GGUF test failed: %s\n", error); return 1; }
     printf("synthetic GGUF parse  : OK (token_type length mismatch rejected)\n");
     if (!sampler_selftest(error, sizeof(error))) { fprintf(stderr, "sampler selftest failed: %s\n", error); return 1; }
-    printf("sampler selftest      : OK (greedy, top-k selection, top-p nucleus)\n");
+    printf("sampler selftest      : OK (greedy, top-k selection, top-p nucleus, min-p, distribution)\n");
     if (argc < 2) return 0;
 
     rl_gguf_model m;

@@ -70,4 +70,9 @@ fi
 
 "$OUT/redlite-engine-offline-test"
 echo "Built $OUT/redlite-engine-offline-test"
+# model-free sampler distribution tool (compared with llama.cpp by scripts/dev/compare_sampler.py)
+if [[ "$(uname -s)" == "Darwin" ]]; then SD_CC=(xcrun --sdk macosx clang -mcpu=native); else SD_CC=("$CC_BIN" -march=native); fi
+"${SD_CC[@]}" "${FLAGS[@]}" "$ROOT/native/redlite_native_sampler_dist_cli.c" "$ROOT/native/redlite_native_sampler.c" \
+  -lm -o "$OUT/redlite-sampler-dist"
+echo "Built $OUT/redlite-sampler-dist"
 if [[ "$(uname -s)" == "Darwin" ]]; then echo "Built $OUT/redlite-engine"; echo "Built $OUT/redlite-generate"; fi

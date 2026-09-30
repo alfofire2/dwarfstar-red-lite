@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased (v0.3-streaming, after 0.3.0.dev21)
+
+Product surface (part of the dev25 scope) and model-free robustness work (part
+of the dev26 scope). See `docs/REDLITE_DEV25_PRODUCT.md` and
+`docs/REDLITE_DEV26_ROBUSTNESS.md`. Implemented and tested model-free on Linux
+x86_64 (cloud container, gcc 13.3 / clang 18.1). Validated with the real model on the
+M4 Max 48 GiB (macOS 27, commit `7d96db1`): `scripts/regress_m4.sh` 44/44 after a clean
+build, plus manual checks of `redlite chat` defaults, `redlite serve --native` streaming
+and interactive Ctrl-C. Not run on the M4 Pro. Version unchanged.
+
+- macOS 27 SDK: removed the no-op `didModifyRange:` calls on Shared Metal buffers, so
+  `make native` and `make redmetal` are warning-free again. `make sanitize` now works
+  on macOS.
+
+- `redlite chat` picks the expert cache from RAM when `--cache-mib` is omitted:
+  22528 MiB (full residency, preloaded) at ≥ 40 GiB, 4096 MiB below. `--batch`
+  and `--json` are passed through.
+- Ctrl-C now stops the current answer. `redlite-generate` closes the answer like
+  a `--max-tokens` stop, so the conversation continues. Ctrl-C at the prompt
+  quits cleanly, and non-interactive runs exit 130. Previously the Python
+  launcher killed the runtime on the first Ctrl-C.
+- `redlite-generate --json`: one statistics object per answer on stderr. The
+  interactive chat is now English, like the rest of the runtime. The GGUF
+  `tokenizer.chat_template` is checked for ChatML (not interpreted) with the
+  built-in ChatML as fallback.
+- Native OpenAI-compatible server:
+  - `redlite-server` provides `/v1/chat/completions` with SSE streaming, plus
+    `/v1/models` and `/health`, in portable C on `rl_engine`;
+  - `redlite serve --native` launches it;
+  - `redlite-server-fake` (echo backend) with `tests/test_native_server.py`
+    tests the protocol without a model.
+- `regress_m4.sh` gains `server.stream_greedy`, `generate.json` and
+  `generate.sigint`.
+- Sampler parity with the pinned llama.cpp:
+  - the native sampler gains min-p and follows llama.cpp's chain order and float
+    arithmetic (top-k → top-p → min-p → temperature → draw);
+  - `rl_sampler_distribution()` exposes the exact distribution;
+  - `--min-p` is exposed in `redlite-generate` and `redlite chat`, and `min_p` in
+    `redlite-server`; the default stays 0.
+- `scripts/dev/compare_sampler.py` compares `redlite-sampler-dist` against the
+  real pinned libllama chain (`redlite-ref-sampler`). On Linux the probabilities
+  are identical on every grid point; tie handling and the PRNG are documented
+  differences. `regress_m4.sh` gains `sampler.vs_llama`.
+
+- Fixed the portable `make native` build (DeltaNet state/tail CLIs used Metal
+  telemetry outside `#ifdef __APPLE__`). The Linux build is now warning-clean
+  under gcc and clang.
+- Hardened both GGUF readers against corrupt files:
+  - directory, kv and tokenizer-array counts are bounded by the file size;
+  - expert-map tensor offsets beyond EOF are rejected (they could wrap
+    `data_base + offset`);
+  - out-of-range `token_type` values are rejected instead of converted with UB;
+  - nested arrays are rejected.
+- Added `redlite-gguf-fuzz` (truncations, boundary values and seeded mutations
+  against both readers; run by `make native`) and `make sanitize` (ASan + UBSan
+  build and run of every model-free test and the fuzz). `regress_m4.sh` gains
+  `selftest.gguf_fuzz` and `selftest.sanitize`.
+
 ## 0.3.0.dev21 — 2026-09-11
 
 GPU-routed decode with full expert residency on `v0.3-streaming`. See

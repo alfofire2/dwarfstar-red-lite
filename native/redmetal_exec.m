@@ -504,7 +504,6 @@ int redmetal_exec_pool_load_expert(
                            base + baseOffset + gate_bytes + up_bytes, &localBytes, &localCalls);
         const double ms = exec_now_ms() - t0;
         if (!ok) return 0;
-        [slab didModifyRange:NSMakeRange(baseOffset, (NSUInteger)payload)];
         @synchronized (p) {
             p->_bytesRead += localBytes;
             p->_readCalls += localCalls;
@@ -556,10 +555,6 @@ int redmetal_exec_pool_bind_expert(
         gate[expert] = gpuBase;
         up[expert] = gpuBase + gate_bytes;
         down[expert] = gpuBase + gate_bytes + up_bytes;
-        const NSRange r = NSMakeRange((NSUInteger)expert * sizeof(uint64_t), sizeof(uint64_t));
-        [p->_gateTables[layer] didModifyRange:r];
-        [p->_upTables[layer] didModifyRange:r];
-        [p->_downTables[layer] didModifyRange:r];
         return 1;
     }
 }
@@ -575,10 +570,6 @@ int redmetal_exec_pool_unbind_expert(
         ((uint64_t *)[p->_gateTables[layer] contents])[expert] = 0;
         ((uint64_t *)[p->_upTables[layer] contents])[expert] = 0;
         ((uint64_t *)[p->_downTables[layer] contents])[expert] = 0;
-        const NSRange r = NSMakeRange((NSUInteger)expert * sizeof(uint64_t), sizeof(uint64_t));
-        [p->_gateTables[layer] didModifyRange:r];
-        [p->_upTables[layer] didModifyRange:r];
-        [p->_downTables[layer] didModifyRange:r];
         return 1;
     }
 }

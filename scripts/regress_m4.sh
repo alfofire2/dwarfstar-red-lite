@@ -73,6 +73,8 @@ run selftest.router "$BIN/redlite-router-offline-test"
 run selftest.shared "$BIN/redlite-shared-exec-offline-test"
 run selftest.engine "$BIN/redlite-engine-offline-test"
 run selftest.attention "$BIN/redlite-attention" --selftest
+run selftest.gguf_fuzz "$BIN/redlite-gguf-fuzz" --iterations 20000
+run selftest.sanitize bash "$ROOT/scripts/sanitize_offline.sh"
 
 echo "== stage parity (real GGUF) =="
 expect_line topk.parity "parity match       : YES" "$BIN/redlite-native" topk-parity "$MODEL"
@@ -116,6 +118,24 @@ PROMPT="Explain in one sentence why the sky is blue."
 expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,12884,374,6303,13,151645,198,151644,77091,198$" \
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
+expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
+expect_line generate.json '"batch":512,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
+# Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
+"$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
+  --cache-mib 2048 --json >"$LOG/generate.sigint.log" 2>&1 &
+SIGINT_PID=$!
+for _ in $(seq 1 240); do
+  [[ $(wc -c <"$LOG/generate.sigint.log") -gt 200 ]] && break
+  kill -0 "$SIGINT_PID" 2>/dev/null || break
+  sleep 0.5
+done
+kill -INT "$SIGINT_PID" 2>/dev/null
+wait "$SIGINT_PID"; SIGINT_RC=$?
+if [[ "$SIGINT_RC" == 130 ]] && grep -q '"finish":"interrupted"' "$LOG/generate.sigint.log"; then
+  echo "PASS  generate.sigint"; PASS=$((PASS + 1))
+else
+  echo "FAIL  generate.sigint  (exit $SIGINT_RC; see $LOG/generate.sigint.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.sigint)
+fi
 # an empty prompt must be refused instead of sampling from uninitialised logits
 if "$BIN/redlite-generate" "$MODEL" --prompt "" --raw --max-tokens 4 --cache-mib 256 >"$LOG/generate.empty.log" 2>&1; then
   echo "FAIL  generate.empty_prompt (exit 0; see $LOG/generate.empty.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.empty_prompt)
@@ -126,6 +146,8 @@ fi
 if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
   echo "== pinned llama.cpp oracle ($LLAMA_DIR) =="
   run build.ref env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_llama.sh"
+  run build.ref_sampler env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_sampler.sh"
+  expect_line sampler.vs_llama "SAMPLER PARITY: YES" python3 "$ROOT/scripts/dev/compare_sampler.py" --bin "$BIN" --draws 20000
   if [[ -x "$BIN/redlite-ref-llama" ]]; then
     REF_TOK="$("$BIN/redlite-ref-llama" "$MODEL" tokenize --text "$PROMPT" 2>/dev/null | head -1)"
     NAT_TOK="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" | head -1)"

@@ -447,6 +447,14 @@ int rl_tokenizer_chat_prompt(const char *system_prompt, const char *user_prompt,
     return n > 0 && (size_t)n < out_cap;
 }
 
+const char *rl_tokenizer_chat_template_source(const char *gguf_template, int *from_gguf) {
+    const int chatml = gguf_template && strstr(gguf_template, "<|im_start|>") && strstr(gguf_template, "<|im_end|>");
+    if (from_gguf) *from_gguf = chatml;
+    return chatml ? "ChatML (matches the GGUF tokenizer.chat_template)"
+                  : gguf_template ? "built-in ChatML (the GGUF tokenizer.chat_template is not ChatML)"
+                                  : "built-in ChatML (the GGUF has no tokenizer.chat_template)";
+}
+
 int rl_tokenizer_chat_continuation(const char *user_prompt, char *out, size_t out_cap) {
     if (!user_prompt || !out) return 0;
     const int n = snprintf(out, out_cap,

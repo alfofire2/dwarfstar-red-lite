@@ -97,11 +97,29 @@ redlite chat --stats
 ```
 
 Inside the chat use `/reset` to clear the conversation, `/help` for commands and
-`/quit` to exit. The friendly defaults are a 4096-position context, a 4096 MiB
-expert cache, 256 tokens per answer and temperature 0.7. Use `--temperature 0`
+`/quit` to exit; Ctrl-C stops the current answer (the conversation continues) and quits
+at the prompt. The defaults are a 4096-position context, 256 tokens per answer,
+temperature 0.7 and an expert cache chosen from RAM: 22528 MiB (every expert resident
+and preloaded) with 40 GiB or more, 4096 MiB otherwise. Use `--temperature 0`
 for deterministic greedy output. Options: `--prompt`, `--system`, `--max-tokens`,
-`--temperature`, `--top-k`, `--top-p`, `--seed`, `--context`, `--cache-mib`,
-`--no-stream` and `--stats`. Greedy output is token-identical to the pinned llama.cpp on the
+`--temperature`, `--top-k`, `--top-p`, `--min-p`, `--seed`, `--context`, `--cache-mib`,
+`--batch`, `--no-stream`, `--stats` and `--json` (per-answer statistics as JSON on stderr).
+The sampler applies llama.cpp's chain (top-k → top-p → min-p → temperature) with the same
+arithmetic, so the candidate distribution matches the pinned llama.cpp for equal parameters.
+min-p is off by default here and 0.05 in llama.cpp (`docs/REDLITE_DEV26_ROBUSTNESS.md`).
+The RAM-based defaults, Ctrl-C handling and `--json` are new since dev21 and are
+validated on the M4 Max 48 GiB, not on the M4 Pro (`docs/REDLITE_DEV25_PRODUCT.md`).
+
+An OpenAI-compatible server on the same runtime (`POST /v1/chat/completions` with SSE
+streaming, `GET /v1/models`) starts with:
+
+```bash
+redlite serve --native models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --port 8080
+```
+
+It serves one request at a time and re-ingests the conversation on every request. Its
+protocol is tested with a fake engine. With the real model on the M4 Max, the streamed
+greedy answer is byte-identical to `redlite-generate`. Greedy output is token-identical to the pinned llama.cpp on the
 validated prompts; on the M4 Pro / 24 GiB it generates at roughly 25–28 tok/s
 with the default 4 GiB expert cache (physical footprint ~4.4 GiB); see
 `benchmarks/m4pro-24gb-native-dev18.json`. On an M4 Max / 48 GiB the same
@@ -113,6 +131,9 @@ every routed expert (`--cache-mib 22528` on 48 GiB) the experts are preloaded at
 each token is routed on the GPU in one command buffer: 54–57 tok/s decode on the M4 Max
 (`docs/REDLITE_DEV21_GPU_ROUTED_DECODE.md`). Details, validation numbers and limits:
 `docs/REDLITE_DEV18_ENGINE.md`; regression suite: `scripts/regress_m4.sh MODEL.gguf`.
+The GGUF readers are fuzzed by `make native`, and `make sanitize` runs every model-free
+native test under ASan/UBSan; both also work on Linux
+(`docs/REDLITE_DEV26_ROBUSTNESS.md`).
 
 ## Requirements
 

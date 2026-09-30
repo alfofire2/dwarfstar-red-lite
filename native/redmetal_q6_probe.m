@@ -116,10 +116,6 @@ int rl_native_q6_gpu_rows(
         const int ok = pread_full(fd, weights.contents, matrix_bytes, tensor->tensor_offset);
         close(fd);
         if (!ok) { set_error(error, error_cap, "Q6 probe matrix pread failed"); return 0; }
-#if TARGET_OS_OSX
-        [weights didModifyRange:NSMakeRange(0, matrix_bytes)];
-        [xbuf didModifyRange:NSMakeRange(0, (NSUInteger)ncols * sizeof(float))];
-#endif
         id<MTLCommandBuffer> cb = [queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         [enc setComputePipelineState:pipe];

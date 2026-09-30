@@ -35,5 +35,28 @@ class NativeChatRunnerTests(unittest.TestCase):
         self.assertIn("--no-stream", command)
 
 
+class ForegroundCallTests(unittest.TestCase):
+    def test_ctrl_c_reaches_only_the_native_child(self):
+        import signal
+        import sys
+        from redlite.runner import call_native_foreground
+
+        # The child delivers SIGINT to its parent and to itself (what the terminal does to the
+        # foreground group) and exits 130 from its own handler; the parent must neither die nor
+        # raise KeyboardInterrupt.
+        child = (
+            "import os, signal, sys, time\n"
+            "signal.signal(signal.SIGINT, lambda *a: sys.exit(130))\n"
+            "os.kill(os.getppid(), signal.SIGINT)\n"
+            "time.sleep(0.2)\n"
+            "os.kill(os.getpid(), signal.SIGINT)\n"
+            "time.sleep(5)\n"
+        )
+        before = signal.getsignal(signal.SIGINT)
+        rc = call_native_foreground([sys.executable, "-c", child])
+        self.assertEqual(rc, 130)
+        self.assertIs(signal.getsignal(signal.SIGINT), before)
+
+
 if __name__ == "__main__":
     unittest.main()

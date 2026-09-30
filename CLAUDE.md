@@ -33,14 +33,18 @@ make redmetal                   # build .deps/redmetal/libredmetal.dylib (ctypes
 make native                     # build every standalone native executable into .deps/redmetal/ and run selftests
 bash scripts/build_engine.sh    # rebuild just the engine (redlite-engine, redlite-generate, engine offline test)
 bash scripts/build_decoder_stack.sh   # rebuild just one native tool (one script per tool, see scripts/build_*.sh)
-scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (36 checks + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+scripts/regress_m4.sh MODEL [--quick] # complete M4 regression suite (43 checks with the llama.cpp oracle + the GPU-routed decode check on >= 40 GiB machines; --quick skips the 48-layer stack and the 1200-token long-context check)
+make sanitize                   # ASan+UBSan build and run of every model-free native test, the GGUF fuzz and the server protocol tests (macOS or Linux)
+bash scripts/build_server.sh    # redlite-server (OpenAI HTTP on rl_engine) + redlite-server-fake (echo backend for tests/test_native_server.py)
 bash scripts/dev/build_ref_llama.sh   # dev-only oracle linked against the bootstrapped llama.cpp (never used at runtime)
 make bootstrap                  # clone+build the pinned llama.cpp and oversized-moe-runtime into .deps/ (Apple Silicon only, slow)
 ```
 
 Python tests never need a model file or Metal; they use synthetic fixtures and fake pools.
 `make native` also runs model-free C tests (`redlite-native selftest`, the
-`*-offline-test` binaries). On Linux it builds only the portable subset and the
+`*-offline-test` binaries, `redlite-gguf-fuzz`). Any change to the GGUF readers must
+keep `make sanitize` clean; the fuzz's invariants (seeds accepted, truncations
+rejected, accepted mutants mappable) are the readers' contract. On Linux it builds only the portable subset and the
 Metal-only `build_*.sh` scripts exit 0 with a skip message.
 
 Real-model parity tools all follow the same shape and only work on macOS with the GGUF present:
@@ -54,6 +58,10 @@ Real-model parity tools all follow the same shape and only work on macOS with th
 .deps/redmetal/redlite-engine prefill MODEL --tokens 9707,11,1879 --batch 8 [--cpu]            # dev20 batched prefill vs token-by-token Metal (and CPU oracle)
 .deps/redmetal/redlite-generate MODEL --prompt "..." --batch 512   # prompt chunk size for the batched prefill (default 512; 1 = token by token)
 RL_ENGINE_PROFILE=1 .deps/redmetal/redlite-generate ...   # per-stage GPU time profile
+.deps/redmetal/redlite-generate MODEL --prompt "..." --json   # machine-readable stats on stderr; Ctrl-C stops the answer (exit 130)
+.deps/redmetal/redlite-server MODEL --port 8080 --cache-mib 4096   # OpenAI /v1/chat/completions (SSE); `redlite serve --native MODEL` launches it
+python3 scripts/dev/server_check.py MODEL   # server greedy stream == redlite-generate greedy text, clean SIGINT
+bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py   # sampler distribution vs the pinned llama.cpp chain (needs only libllama, no model; macOS or Linux)
 .deps/redmetal/redlite-decoder-stack parity models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-attention-block parity MODEL --layer 3 --position 7 --top-k 10 --cache-mib 256
 .deps/redmetal/redlite-deltanet-layer  parity MODEL --layer 0
@@ -114,6 +122,12 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
    Dense weights are wrapped in place from the mmap; routed experts go through the
    top-k LRU pool with one GPU sync per layer (prepare/encode/release API). The stage
    CLIs stay as regression tools; the engine reuses their kernel arithmetic.
+
+5. **Native HTTP server** (dev25: `redlite_native_server.[ch]` portable HTTP/SSE/JSON core
+   behind `rl_server_backend`; `redlite_native_server_cli.c` binds it to `rl_engine`,
+   `redlite_native_server_fake.c` to a deterministic echo backend used by
+   `tests/test_native_server.py`). Protocol changes are tested against the fake backend;
+   the real-model check is `server.stream_greedy` in `regress_m4.sh`.
 
 ### Native source conventions
 

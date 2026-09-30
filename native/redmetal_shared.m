@@ -228,15 +228,9 @@ int rl_native_shared_gpu_execute(
         const double rs = now_ms();
         for (uint32_t k = 0; k < 4; ++k) {
             if (!pread_full(fd, wb[k].contents, bytes[k], tensors[k].tensor_offset, &calls)) { close(fd); set_error(error, error_cap, "pread shared Metal weights failed"); return 0; }
-#if TARGET_OS_OSX
-            [wb[k] didModifyRange:NSMakeRange(0, bytes[k])];
-#endif
         }
         const double re = now_ms();
         close(fd);
-#if TARGET_OS_OSX
-        [xbuf didModifyRange:NSMakeRange(0, (NSUInteger)hidden * sizeof(float))];
-#endif
 
         id<MTLCommandBuffer> cb = [queue commandBuffer];
         if (!cb) { set_error(error, error_cap, "failed to create shared Metal command buffer"); return 0; }

@@ -9,6 +9,7 @@ void rl_sampler_params_default(rl_sampler_params *p) {
     p->temperature = 0.0f;
     p->top_k = 40u;
     p->top_p = 0.95f;
+    p->min_p = 0.0f;
     p->seed = 0u;
 }
 
@@ -26,14 +27,15 @@ int rl_sampler_init(rl_sampler *s, const rl_sampler_params *p, uint32_t vocab) {
     s->rng_state = s->params.seed ? s->params.seed : 0x243F6A8885A308D3ull;
     s->vocab = vocab;
     s->scratch = (float *)malloc((size_t)vocab * sizeof(float));
+    s->probs = (float *)malloc((size_t)vocab * sizeof(float));
     s->index = (uint32_t *)malloc((size_t)vocab * sizeof(uint32_t));
-    if (!s->scratch || !s->index) { rl_sampler_free(s); return 0; }
+    if (!s->scratch || !s->probs || !s->index) { rl_sampler_free(s); return 0; }
     return 1;
 }
 
 void rl_sampler_free(rl_sampler *s) {
     if (!s) return;
-    free(s->scratch); free(s->index);
+    free(s->scratch); free(s->probs); free(s->index);
     memset(s, 0, sizeof(*s));
 }
 
@@ -73,51 +75,87 @@ static uint32_t select_top_k(rl_sampler *s, const float *logits, uint32_t k) {
     return filled;
 }
 
-/* Order follows the default llama.cpp sampler chain: top-k, top-p (nucleus over the softmax of the
- * raw logits), then temperature and a categorical draw. Greedy (temperature <= 0) is the argmax. */
-uint32_t rl_sampler_sample(rl_sampler *s, const float *logits) {
+/*
+ * Candidate filtering in the order and float arithmetic of the pinned llama.cpp chain
+ * (top_k -> top_p -> min_p -> temp -> dist, src/llama-sampler.cpp):
+ *   top-p: float softmax of the raw logits over the top-k candidates, float running sum, keep up
+ *          to the first index where the sum reaches p;
+ *   min-p: keep candidates with logit >= max_logit + logf(min_p);
+ *   temp : logit / temperature, then float weights expf(l - max) summed in double.
+ * Leaves the candidates in index[0..count) and their unnormalized weights in scratch; *sum_out
+ * receives the weight sum. Returns 0 for greedy.
+ */
+static uint32_t candidates(rl_sampler *s, const float *logits, double *sum_out) {
     const uint32_t n = s->vocab;
-    uint32_t best = 0;
-    for (uint32_t i = 1; i < n; ++i) if (logits[i] > logits[best]) best = i;
-    if (s->params.temperature <= 0.0f) return best;
+    if (s->params.temperature <= 0.0f) return 0;
 
-    /* candidate set: top-k by logit (or all when disabled) */
     const uint32_t k = s->params.top_k && s->params.top_k < n ? s->params.top_k : n;
     uint32_t count = select_top_k(s, logits, k);
-    if (!count) return best;
+    if (!count) return 0;
 
-    /* top-p nucleus on the untempered distribution over the candidates */
-    if (s->params.top_p > 0.0f && s->params.top_p < 1.0f && count > 1u) {
-        const double max_logit = logits[s->index[0]];
-        double sum = 0.0;
+    if (s->params.top_p < 1.0f && count > 1u) {
+        const float max_logit = logits[s->index[0]];
+        float sum = 0.0f;
         for (uint32_t i = 0; i < count; ++i) {
-            const double p = exp((double)logits[s->index[i]] - max_logit);
-            s->scratch[i] = (float)p;
-            sum += p;
+            s->scratch[i] = expf(logits[s->index[i]] - max_logit);
+            sum += s->scratch[i];
         }
-        double cum = 0.0;
-        uint32_t keep = count;
+        float cum = 0.0f;
         for (uint32_t i = 0; i < count; ++i) {
-            cum += (double)s->scratch[i] / sum;
-            if (cum >= (double)s->params.top_p) { keep = i + 1u; break; }
+            cum += s->scratch[i] / sum;
+            if (cum >= s->params.top_p) { count = i + 1u; break; }
         }
+    }
+
+    if (s->params.min_p > 0.0f && count > 1u) {
+        const float min_logit = logits[s->index[0]] + logf(s->params.min_p);
+        uint32_t keep = 1u; /* the first candidate always stays */
+        while (keep < count && logits[s->index[keep]] >= min_logit) ++keep;
         count = keep;
     }
 
-    /* temperature, then softmax over what is left */
-    const double inv_t = 1.0 / (double)s->params.temperature;
-    const double max_logit = logits[s->index[0]];
+    const float t = s->params.temperature;
+    const float max_scaled = logits[s->index[0]] / t;
     double sum = 0.0;
     for (uint32_t i = 0; i < count; ++i) {
-        const double p = exp(((double)logits[s->index[i]] - max_logit) * inv_t);
-        s->scratch[i] = (float)p;
-        sum += p;
+        s->scratch[i] = expf(logits[s->index[i]] / t - max_scaled);
+        sum += s->scratch[i];
     }
-    const double r = (double)(splitmix64(&s->rng_state) >> 11) * (1.0 / 9007199254740992.0) * sum;
+    *sum_out = sum;
+    return count;
+}
+
+static uint32_t argmax(const float *logits, uint32_t n) {
+    uint32_t best = 0;
+    for (uint32_t i = 1; i < n; ++i) if (logits[i] > logits[best]) best = i;
+    return best;
+}
+
+uint32_t rl_sampler_distribution(rl_sampler *s, const float *logits, const uint32_t **ids, const float **probs) {
+    double sum = 0.0;
+    uint32_t count = candidates(s, logits, &sum);
+    if (!count) {
+        s->index[0] = argmax(logits, s->vocab);
+        s->probs[0] = 1.0f;
+        count = 1u;
+    } else {
+        for (uint32_t i = 0; i < count; ++i) s->probs[i] = (float)(s->scratch[i] / sum);
+    }
+    if (ids) *ids = s->index;
+    if (probs) *probs = s->probs;
+    return count;
+}
+
+uint32_t rl_sampler_sample(rl_sampler *s, const float *logits) {
+    double sum = 0.0;
+    const uint32_t count = candidates(s, logits, &sum);
+    if (!count) return argmax(logits, s->vocab);
+    /* like llama.cpp's dist: the first candidate whose running weight reaches u * sum, u in [0, 1) */
+    const double target = (double)(splitmix64(&s->rng_state) >> 11) * (1.0 / 9007199254740992.0) * sum;
     double acc = 0.0;
     for (uint32_t i = 0; i < count; ++i) {
         acc += s->scratch[i];
-        if (r < acc) return s->index[i];
+        if (acc >= target) return s->index[i];
     }
     return s->index[count - 1u];
 }

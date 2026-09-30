@@ -264,7 +264,6 @@ int redmetal_quant_rows(
         const double local_io_ms = quant_now_ms() - t_io;
         close(fd);
         if (!read_ok) return 0;
-        [matrix didModifyRange:NSMakeRange(0, (NSUInteger)matrix_bytes)];
         memset([out_buffer contents], 0, (size_t)row_count * sizeof(float));
 
         id<MTLCommandBuffer> cb = [queue commandBuffer];
