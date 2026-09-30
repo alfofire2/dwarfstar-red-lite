@@ -85,7 +85,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     -Wall -Wextra -Wpedantic \
     -Wno-overlength-strings \
     -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native \
+    -mcpu="${REDLITE_MCPU:-native}" \
     -fobjc-arc \
     -I"$ROOT/native" \
     "${COMMON[@]}" \
@@ -98,38 +98,38 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   xcrun --sdk macosx clang \
     -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    -Wall -Wextra -Wpedantic -mcpu="${REDLITE_MCPU:-native}" -I"$ROOT/native" \
     "${OFFLINE_TEST[@]}" \
     -o "$OUT/redlite-native-offline-test"
 
   xcrun --sdk macosx clang \
     -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    -Wall -Wextra -Wpedantic -mcpu="${REDLITE_MCPU:-native}" -I"$ROOT/native" \
     "${ROUTER_AUDIT[@]}" \
     -o "$OUT/redlite-router-audit"
 
   xcrun --sdk macosx clang \
     -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    -Wall -Wextra -Wpedantic -mcpu="${REDLITE_MCPU:-native}" -I"$ROOT/native" \
     "${SHARED_AUDIT[@]}" \
     -o "$OUT/redlite-shared-audit"
 
   xcrun --sdk macosx clang \
     -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    -Wall -Wextra -Wpedantic -mcpu="${REDLITE_MCPU:-native}" -I"$ROOT/native" \
     "${ROUTER_OFFLINE[@]}" -lm \
     -o "$OUT/redlite-router-offline-test"
 
   xcrun --sdk macosx clang \
     -O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
-    -Wall -Wextra -Wpedantic -mcpu=native -I"$ROOT/native" \
+    -Wall -Wextra -Wpedantic -mcpu="${REDLITE_MCPU:-native}" -I"$ROOT/native" \
     "${SHARED_EXEC_OFFLINE[@]}" -lm \
     -o "$OUT/redlite-shared-exec-offline-test"
 
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "${ROUTER_PARITY_COMMON[@]}" \
     "$ROOT/native/redlite_native_metal.c" \
     "$ROOT/native/redmetal_topk.m" \
@@ -140,7 +140,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "${SHARED_PARITY_COMMON[@]}" \
     "$ROOT/native/redmetal_shared.m" \
     -framework Foundation -framework Metal -lm \
@@ -149,7 +149,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "${Q6_PROBE_COMMON[@]}" \
     "$ROOT/native/redmetal_q6_probe.m" \
     -framework Foundation -framework Metal -lm \
@@ -158,7 +158,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "${FFN_PARITY_COMMON[@]}" \
     "$ROOT/native/redlite_native_metal.c" \
     "$ROOT/native/redmetal_topk.m" \
@@ -212,7 +212,7 @@ fi
 
 # Model-free GGUF reader fuzz (both readers; truncations, boundary values, seeded mutations).
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  FUZZ_CC=(xcrun --sdk macosx clang -mcpu=native)
+  FUZZ_CC=(xcrun --sdk macosx clang -mcpu="${REDLITE_MCPU:-native}")
 else
   FUZZ_CC=("$CC_BIN" -march=native)
 fi

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/.deps/redmetal"
+OUT="${REDLITE_BUILD_OUT:-$ROOT/.deps/redmetal}"   # REDLITE_BUILD_OUT: release packaging builds elsewhere
 mkdir -p "$OUT"
 
 CC_BIN="${CC:-cc}"
@@ -36,11 +36,11 @@ ENGINE=(
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  xcrun --sdk macosx clang "${FLAGS[@]}" -mcpu=native "${OFFLINE[@]}" -lm -o "$OUT/redlite-engine-offline-test"
+  xcrun --sdk macosx clang "${FLAGS[@]}" -mcpu="${REDLITE_MCPU:-native}" "${OFFLINE[@]}" -lm -o "$OUT/redlite-engine-offline-test"
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "${ENGINE[@]}" \
     "$ROOT/native/redmetal_topk.m" \
     "$ROOT/native/redmetal_router.m" \
@@ -55,7 +55,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk macosx clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
     "$ROOT/native/redlite_native_generate_cli.c" \
     "$ROOT/native/redlite_native_sampler.c" \
     "${GEN[@]}" \
@@ -73,7 +73,7 @@ fi
 "$OUT/redlite-engine-offline-test"
 echo "Built $OUT/redlite-engine-offline-test"
 # model-free sampler distribution tool (compared with llama.cpp by scripts/dev/compare_sampler.py)
-if [[ "$(uname -s)" == "Darwin" ]]; then SD_CC=(xcrun --sdk macosx clang -mcpu=native); else SD_CC=("$CC_BIN" -march=native); fi
+if [[ "$(uname -s)" == "Darwin" ]]; then SD_CC=(xcrun --sdk macosx clang -mcpu="${REDLITE_MCPU:-native}"); else SD_CC=("$CC_BIN" -march=native); fi
 "${SD_CC[@]}" "${FLAGS[@]}" "$ROOT/native/redlite_native_sampler_dist_cli.c" "$ROOT/native/redlite_native_sampler.c" \
   -lm -o "$OUT/redlite-sampler-dist"
 echo "Built $OUT/redlite-sampler-dist"

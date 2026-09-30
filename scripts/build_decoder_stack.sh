@@ -13,7 +13,7 @@ fi
 xcrun --sdk macosx clang \
   -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
   -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-  -mcpu=native -fobjc-arc -I"$ROOT/native" \
+  -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
   "$ROOT/native/redlite_native_decoder_stack_cli.c" \
   "$ROOT/native/redlite_native_decoder_stack_runtime.c" \
   "$ROOT/native/redlite_native_layer_map.c" \
