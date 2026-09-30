@@ -35,6 +35,7 @@
 #define GGML_TYPE_IQ1_M 29u
 #define QK_IQ 256u
 #define REDMETAL_TOPK_SLICE 4u   /* must match RM_S in the kernel source */
+#define REDMETAL_TOPK_MM_SLICE 16u  /* pairs per tile of the dev30 matrix kernels (their xs[16 * 32]) */
 #define REDMETAL_TOPK_MAX 512u   /* experts per encoded plan (a batched-prefill union of several tokens) */
 
 static __thread char g_topk_error[512];
@@ -410,6 +411,97 @@ static NSString * const kTopKSource = @
 "    }\n"
 "}\n"
 "\n"
+/* ---- dev30 batched prefill experts on simdgroup matrices ----
+ * Tile = up to 16 consecutive (expert, token) pairs of one expert (slice) x 32 weight rows.
+ * Per K step of 32 columns the 128 threads decode the tile's weights (one rm_group8 each per matrix)
+ * and stage the pairs' activations in threadgroup memory; each simdgroup owns 8 weight rows. */
+"kernel void redmetal_topk_gateup_mm(\n"
+"    device const redmetal_topk_slots3 &slots [[buffer(0)]], constant uint &ncols [[buffer(1)]], constant uint &rows [[buffer(2)]],\n"
+"    device const float *x [[buffer(4)]], device float *act [[buffer(5)]], device const char *grid [[buffer(6)]],\n"
+"    constant uint &type [[buffer(8)]], device const uint *pair_token [[buffer(10)]], device const uint *pair_expert [[buffer(11)]],\n"
+"    device const uint *slice_first [[buffer(13)]], device const uint *slice_count [[buffer(14)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float xs[16 * 32]; threadgroup float wg[32 * 32]; threadgroup float wu[32 * 32]; threadgroup float og[32 * 16]; threadgroup float ou[32 * 16];\n"
+"    const uint row0 = tg.x * 32u; const uint p0 = slice_first[tg.y]; const uint cnt = slice_count[tg.y];\n"
+"    const uint expert = pair_expert[p0];\n"
+"    const uint blocks = ncols / 256u; const ulong block_bytes = type == 17u ? 74ul : 56ul; const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint wr = tid >> 2; const uint wq = tid & 3u;          /* decoder: weight row wr, 8-column group wq of the K step */\n"
+"    const uint xr = tid >> 3; const uint xq = (tid & 7u) * 4u;    /* loader: pair xr, 4 columns */\n"
+"    device const uchar *grow = slots.gate[expert] + ulong(row0 + wr) * row_bytes;\n"
+"    device const uchar *urow = slots.up[expert] + ulong(row0 + wr) * row_bytes;\n"
+"    device const float *xrow = x + ulong(pair_token[p0 + min(xr, cnt - 1u)]) * ncols;\n"
+"    simdgroup_float8x8 ag[2][4], au[2][4]; for (uint j = 0; j < 2u; ++j) for (uint q = 0; q < 4u; ++q) { ag[j][q] = simdgroup_float8x8(0.0f); au[j][q] = simdgroup_float8x8(0.0f); }\n"
+"    for (uint k0 = 0; k0 < ncols; k0 += 32u) {\n"
+"        const uint b = k0 >> 8; const uint gi = ((k0 & 255u) >> 3) + wq;\n"
+"        float4 v0, v1;\n"
+"        rm_group8(type, grow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        *(threadgroup float4 *)(wg + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wg + wr * 32u + wq * 8u + 4u) = v1;\n"
+"        rm_group8(type, urow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        *(threadgroup float4 *)(wu + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wu + wr * 32u + wq * 8u + 4u) = v1;\n"
+"        *(threadgroup float4 *)(xs + xr * 32u + xq) = xr < cnt ? *(device const float4 *)(xrow + k0 + xq) : float4(0.0f);\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        simdgroup_float8x8 a_g, a_u, bx;\n"
+"        for (uint q = 0; q < 4u; ++q) {\n"
+"            simdgroup_load(a_g, wg + uint(sg) * 8u * 32u + q * 8u, 32); simdgroup_load(a_u, wu + uint(sg) * 8u * 32u + q * 8u, 32);\n"
+"            for (uint j = 0; j < 2u; ++j) {\n"
+"                simdgroup_load(bx, xs + j * 8u * 32u + q * 8u, 32, ulong2(0, 0), true);\n"
+"                simdgroup_multiply_accumulate(ag[j][q], a_g, bx, ag[j][q]); simdgroup_multiply_accumulate(au[j][q], a_u, bx, au[j][q]);\n"
+"            }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    {   /* (a0 + a1) + (a2 + a3) in registers: x * I + y is exact */\n"
+"        const simdgroup_float8x8 id = simdgroup_float8x8(1.0f); simdgroup_float8x8 t0, t1;\n"
+"        for (uint j = 0; j < 2u; ++j) {\n"
+"            simdgroup_multiply_accumulate(t0, ag[j][0], id, ag[j][1]); simdgroup_multiply_accumulate(t1, ag[j][2], id, ag[j][3]); simdgroup_multiply_accumulate(t0, t0, id, t1);\n"
+"            simdgroup_store(t0, og + uint(sg) * 8u * 16u + j * 8u, 16);\n"
+"            simdgroup_multiply_accumulate(t0, au[j][0], id, au[j][1]); simdgroup_multiply_accumulate(t1, au[j][2], id, au[j][3]); simdgroup_multiply_accumulate(t0, t0, id, t1);\n"
+"            simdgroup_store(t0, ou + uint(sg) * 8u * 16u + j * 8u, 16);\n"
+"        }\n"
+"    }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    for (uint i = tid; i < 32u * 16u; i += 128u) { const uint r = i >> 4; const uint n = i & 15u; if (n >= cnt || row0 + r >= rows) continue;\n"
+"        const float g = og[i]; act[ulong(p0 + n) * rows + row0 + r] = (g / (1.0f + exp(-g))) * ou[i]; }\n"
+"}\n"
+"kernel void redmetal_topk_down_mm(\n"
+"    device const redmetal_topk_slots3 &slots [[buffer(0)]], constant uint &ncols [[buffer(1)]], constant uint &rows [[buffer(2)]],\n"
+"    device const float *act [[buffer(4)]], device float *tmp [[buffer(5)]], device const char *grid [[buffer(6)]],\n"
+"    constant uint &type [[buffer(8)]], device const uint *pair_expert [[buffer(10)]],\n"
+"    device const uint *slice_first [[buffer(12)]], device const uint *slice_count [[buffer(13)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float xs[16 * 32]; threadgroup float wd[32 * 32]; threadgroup float od[32 * 16];\n"
+"    const uint row0 = tg.x * 32u; const uint p0 = slice_first[tg.y]; const uint cnt = slice_count[tg.y];\n"
+"    const uint expert = pair_expert[p0];\n"
+"    const uint blocks = ncols / 256u; const ulong block_bytes = type == 17u ? 74ul : 56ul; const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint wr = tid >> 2; const uint wq = tid & 3u; const uint xr = tid >> 3; const uint xq = (tid & 7u) * 4u;\n"
+"    device const uchar *drow = slots.down[expert] + ulong(row0 + wr) * row_bytes;\n"
+"    device const float *xrow = act + ulong(p0 + min(xr, cnt - 1u)) * ncols;\n"
+"    simdgroup_float8x8 ad[2][4]; for (uint j = 0; j < 2u; ++j) for (uint q = 0; q < 4u; ++q) ad[j][q] = simdgroup_float8x8(0.0f);\n"
+"    for (uint k0 = 0; k0 < ncols; k0 += 32u) {\n"
+"        const uint b = k0 >> 8; const uint gi = ((k0 & 255u) >> 3) + wq;\n"
+"        float4 v0, v1;\n"
+"        rm_group8(type, drow + ulong(b) * block_bytes, gi, grid, v0, v1);\n"
+"        *(threadgroup float4 *)(wd + wr * 32u + wq * 8u) = v0; *(threadgroup float4 *)(wd + wr * 32u + wq * 8u + 4u) = v1;\n"
+"        *(threadgroup float4 *)(xs + xr * 32u + xq) = xr < cnt ? *(device const float4 *)(xrow + k0 + xq) : float4(0.0f);\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        simdgroup_float8x8 a, bx;\n"
+"        for (uint q = 0; q < 4u; ++q) {\n"
+"            simdgroup_load(a, wd + uint(sg) * 8u * 32u + q * 8u, 32);\n"
+"            for (uint j = 0; j < 2u; ++j) { simdgroup_load(bx, xs + j * 8u * 32u + q * 8u, 32, ulong2(0, 0), true); simdgroup_multiply_accumulate(ad[j][q], a, bx, ad[j][q]); }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    {\n"
+"        const simdgroup_float8x8 id = simdgroup_float8x8(1.0f); simdgroup_float8x8 t0, t1;\n"
+"        for (uint j = 0; j < 2u; ++j) {\n"
+"            simdgroup_multiply_accumulate(t0, ad[j][0], id, ad[j][1]); simdgroup_multiply_accumulate(t1, ad[j][2], id, ad[j][3]); simdgroup_multiply_accumulate(t0, t0, id, t1);\n"
+"            simdgroup_store(t0, od + uint(sg) * 8u * 16u + j * 8u, 16);\n"
+"        }\n"
+"    }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    for (uint i = tid; i < 32u * 16u; i += 128u) { const uint r = i >> 4; const uint n = i & 15u; if (n >= cnt || row0 + r >= rows) continue;\n"
+"        tmp[ulong(p0 + n) * rows + row0 + r] = od[i]; }\n"
+"}\n"
 /* out[t][r] = sum_k weight[pair_k] * tmp[pair_k][r] over the token's top-k pairs in selection order */
 "kernel void redmetal_topk_sum_b(\n"
 "    device const float *tmp [[buffer(0)]],\n"
@@ -454,6 +546,8 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _gateupBPipeline;
     id<MTLComputePipelineState> _downBPipeline;
     id<MTLComputePipelineState> _sumBPipeline;
+    id<MTLComputePipelineState> _gateupMMPipeline, _downMMPipeline;   /* dev30 simdgroup-matrix batched experts */
+    int _useMM;                                                       /* RL_PREFILL_EXPERT_MM != 0 (default) */
     id<MTLBuffer> _slotTable3;
     id<MTLBuffer> _residency;
     uint32_t _residencyLayers, _residencyExperts;
@@ -563,7 +657,9 @@ static NSString * const kTopKSource = @
     id<MTLFunction> gateupB = [library newFunctionWithName:@"redmetal_topk_gateup_b"];
     id<MTLFunction> downB = [library newFunctionWithName:@"redmetal_topk_down_b"];
     id<MTLFunction> sumB = [library newFunctionWithName:@"redmetal_topk_sum_b"];
-    if (!gateup || !down || !sum || !gateupB || !downB || !sumB || !gateupG || !downG || !sumG) {
+    id<MTLFunction> gateupMM = [library newFunctionWithName:@"redmetal_topk_gateup_mm"];
+    id<MTLFunction> downMM = [library newFunctionWithName:@"redmetal_topk_down_mm"];
+    if (!gateup || !down || !sum || !gateupB || !downB || !sumB || !gateupG || !downG || !sumG || !gateupMM || !downMM) {
         topk_set_error("one or more top-k Metal functions were not found");
         return nil;
     }
@@ -601,6 +697,10 @@ static NSString * const kTopKSource = @
     pipelineError = nil;
     _sumBPipeline = [_device newComputePipelineStateWithFunction:sumB error:&pipelineError];
     if (!_sumBPipeline) { topk_set_error("failed to create batched top-k sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
+    _gateupMMPipeline = [_device newComputePipelineStateWithFunction:gateupMM error:&pipelineError];
+    _downMMPipeline = [_device newComputePipelineStateWithFunction:downMM error:&pipelineError];
+    if (!_gateupMMPipeline || !_downMMPipeline) { topk_set_error("failed to create batched top-k matrix pipelines: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
+    { const char *mm = getenv("RL_PREFILL_EXPERT_MM"); _useMM = !mm || atoi(mm) != 0; }
     _iq2Grid = [_device newBufferWithBytes:iq2Grid length:iq2GridCount options:MTLResourceStorageModeShared];
     _iq1Grid = [_device newBufferWithBytes:iq1Grid length:iq1GridCount options:MTLResourceStorageModeShared];
     _slotTable = [_device newBufferWithLength:REDMETAL_TOPK_MAX * sizeof(uint64_t) options:MTLResourceStorageModeShared];
@@ -1128,6 +1228,9 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     memcpy(p->_expertStartBuf.contents, expert_start, (size_t)(n_expert + 1u) * sizeof(uint32_t));
     memcpy(p->_tokPairBuf.contents, tok_pair, (size_t)ntok * top_k * sizeof(uint32_t));
     uint32_t n_slices = 0;
+    /* dev30: the matrix kernels take slices of up to 16 pairs and need 32-row / 32-column tiles */
+    const int mm = p->_useMM && hidden_size % 256u == 0u && ffn_size % 256u == 0u;
+    const uint32_t slice = mm ? REDMETAL_TOPK_MM_SLICE : REDMETAL_TOPK_SLICE;
     {
         /* slices of at most REDMETAL_TOPK_SLICE consecutive pairs of the same expert: one decoded weight serves all of them */
         uint32_t *pe = (uint32_t *)p->_pairExpertBuf.contents;
@@ -1135,9 +1238,9 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
         uint32_t *sc = (uint32_t *)p->_sliceCountBuf.contents;
         for (uint32_t u = 0; u < n_expert; ++u) {
             for (uint32_t q = expert_start[u]; q < expert_start[u + 1u]; ++q) pe[q] = u;
-            for (uint32_t q = expert_start[u]; q < expert_start[u + 1u]; q += REDMETAL_TOPK_SLICE) {
+            for (uint32_t q = expert_start[u]; q < expert_start[u + 1u]; q += slice) {
                 const uint32_t left = expert_start[u + 1u] - q;
-                sf[n_slices] = q; sc[n_slices] = left >= REDMETAL_TOPK_SLICE ? REDMETAL_TOPK_SLICE : left; n_slices++;
+                sf[n_slices] = q; sc[n_slices] = left >= slice ? slice : left; n_slices++;
             }
         }
     }
@@ -1166,7 +1269,12 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     [enc setBuffer:p->_sliceFirstBuf offset:0 atIndex:13];
     [enc setBuffer:p->_sliceCountBuf offset:0 atIndex:14];
     [enc setBytes:&n_slices length:sizeof(n_slices) atIndex:15];
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)((ffn_size + 3u) / 4u) * gate_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    if (mm) {
+        [enc setComputePipelineState:p->_gateupMMPipeline];
+        [enc dispatchThreadgroups:MTLSizeMake(ffn_size / 32u, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    } else {
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)((ffn_size + 3u) / 4u) * gate_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    }
     [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
@@ -1187,7 +1295,12 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
     [enc setBuffer:p->_sliceFirstBuf offset:0 atIndex:12];
     [enc setBuffer:p->_sliceCountBuf offset:0 atIndex:13];
     [enc setBytes:&n_slices length:sizeof(n_slices) atIndex:14];
-    [enc dispatchThreads:MTLSizeMake((NSUInteger)((hidden_size + 3u) / 4u) * down_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    if (mm) {
+        [enc setComputePipelineState:p->_downMMPipeline];
+        [enc dispatchThreadgroups:MTLSizeMake(hidden_size / 32u, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    } else {
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)((hidden_size + 3u) / 4u) * down_lanes, n_slices, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    }
     [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
