@@ -189,6 +189,32 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    for (uint j = 0; j < 4u; ++j) simdgroup_store(acc[j], out + ulong(t0 + j * 8u) * rows + row0, rows, ulong2(0, 0), true);\n"
 "}\n"
+/* dev30: the same product staged through threadgroup memory: 64 rows x 32 tokens per threadgroup, K steps of 32;
+ * each simdgroup owns 16 rows x 32 tokens (8 accumulators) and reads its 8x8 tiles from threadgroup memory.
+ * The k order inside every accumulator is that of rl_gemm_wt. */
+"kernel void rl_gemm_tg(device const float *W [[buffer(0)]], device const float *X [[buffer(1)]], device float *out [[buffer(2)]],\n"
+"    constant uint &rows [[buffer(3)]], constant uint &K [[buffer(4)]], constant uint &ntok_pad [[buffer(5)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float wa[64 * 32]; threadgroup float xb[32 * 32];\n"
+"    const uint row0 = tg.x * 64u; const uint t0 = tg.y * 32u;\n"
+"    simdgroup_float8x8 acc[2][4]; for (uint r = 0; r < 2u; ++r) for (uint j = 0; j < 4u; ++j) acc[r][j] = simdgroup_float8x8(0.0f);\n"
+"    simdgroup_float8x8 a[2], b;\n"
+"    for (uint k0 = 0; k0 < K; k0 += 32u) {\n"
+"        for (uint i = tid; i < 64u * 8u; i += 128u) { const uint r = i >> 3; const uint c = (i & 7u) * 4u;\n"
+"            *(threadgroup float4 *)(wa + r * 32u + c) = *(device const float4 *)(W + ulong(row0 + r) * K + k0 + c); }\n"
+"        for (uint i = tid; i < 32u * 8u; i += 128u) { const uint r = i >> 3; const uint c = (i & 7u) * 4u;\n"
+"            *(threadgroup float4 *)(xb + r * 32u + c) = *(device const float4 *)(X + ulong(t0 + r) * K + k0 + c); }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        for (uint kk = 0; kk < 32u; kk += 8u) {\n"
+"            simdgroup_load(a[0], wa + (uint(sg) * 16u) * 32u + kk, 32); simdgroup_load(a[1], wa + (uint(sg) * 16u + 8u) * 32u + kk, 32);\n"
+"            for (uint j = 0; j < 4u; ++j) { simdgroup_load(b, xb + (j * 8u) * 32u + kk, 32, ulong2(0, 0), true);\n"
+"                simdgroup_multiply_accumulate(acc[0][j], a[0], b, acc[0][j]); simdgroup_multiply_accumulate(acc[1][j], a[1], b, acc[1][j]); }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    for (uint r = 0; r < 2u; ++r) for (uint j = 0; j < 4u; ++j)\n"
+"        simdgroup_store(acc[r][j], out + ulong(t0 + j * 8u) * rows + row0 + uint(sg) * 16u + r * 8u, rows, ulong2(0, 0), true);\n"
+"}\n"
 /* ---- norms / residuals: one threadgroup per token ---- */
 "kernel void rl_rms_b(device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
 "    constant uint &n [[buffer(3)]], constant float &eps [[buffer(4)]], uint t [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -459,7 +485,8 @@ struct rl_metal_prefill {
     id<MTLLibrary> lib;
     uint32_t cap_pad;        /* token capacity rounded up to the 32-token GEMM tile */
     id<MTLComputePipelineState> p_rowsb_f32, p_rowsb_q8, p_rowsb_q4k, p_rowsb_q5k, p_rowsb_q6k, p_rowsb_iq2xxs;
-    id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm;
+    id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm, p_gemm_tg;
+    int gemm_tg;             /* dev30: threadgroup-staged dense GEMM (RL_PREFILL_GEMM_TG=0 -> rl_gemm_wt) */
     id<MTLBuffer> wdq;       /* dequantized f32 copy of the current dense matrix */
     size_t wdq_floats;
     /* mapped experts: the routed gate/up/down tensors of every layer wrapped in place from the mmap (no copy) */
@@ -489,7 +516,7 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
     pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
     pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
-    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = nil; pf->wdq = nil;
+    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
     pf->router_logits = pf->sh_gate = pf->sh_up = pf->sh_act = pf->sh_out = pf->scalar = pf->routed = nil;
@@ -585,7 +612,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"}, {&pf->p_attn_fa, @"attn_fa_b"},
         {&pf->p_sh_scalar, @"sh_scalar_gate_b"}, {&pf->p_sh_silu, @"sh_silu_mul_b"},
         {&pf->p_dq_q8, @"rl_dq_q8"}, {&pf->p_dq_q4k, @"rl_dq_q4k"}, {&pf->p_dq_q5k, @"rl_dq_q5k"}, {&pf->p_dq_q6k, @"rl_dq_q6k"},
-        {&pf->p_dq_iq2xxs, @"rl_dq_iq2xxs"}, {&pf->p_gemm, @"rl_gemm_wt"},
+        {&pf->p_dq_iq2xxs, @"rl_dq_iq2xxs"}, {&pf->p_gemm, @"rl_gemm_wt"}, {&pf->p_gemm_tg, @"rl_gemm_tg"},
     };
     for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
         *pipes[i].slot = make_pipe(m->dev, pf->lib, pipes[i].name, error, ecap);
@@ -631,6 +658,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
     { const char *at = getenv("RL_PREFILL_ATTN_TILE"); pf->attn_tiled = (!at || atoi(at) != 0) && in->head_dim == 256u; }
     pf->profile = getenv("RL_PREFILL_PROFILE") != NULL;
+    { const char *gt = getenv("RL_PREFILL_GEMM_TG"); pf->gemm_tg = !gt || atoi(gt) != 0; }
     { const char *ss = getenv("RL_PREFILL_STATE_SG"); pf->state_sg = (!ss || atoi(ss) != 0) && in->d_state == 128u; }
     return pf;
 }
@@ -714,15 +742,17 @@ static void enc_gemm(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLComm
         wbuf = pf->wdq; woff = 0;
     }
     const uint32_t ntok_pad = (ntok + 31u) & ~31u;
+    const int tgk = pf->gemm_tg && w->rows % 64u == 0u && w->cols % 32u == 0u;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_gemm];
+    [enc setComputePipelineState:tgk ? pf->p_gemm_tg : pf->p_gemm];
     [enc setBuffer:wbuf offset:woff atIndex:0];
     [enc setBuffer:x offset:0 atIndex:1];
     [enc setBuffer:out offset:0 atIndex:2];
     [enc setBytes:&w->rows length:4 atIndex:3];
     [enc setBytes:&w->cols length:4 atIndex:4];
     [enc setBytes:&ntok_pad length:4 atIndex:5];
-    [enc dispatchThreadgroups:MTLSizeMake((w->rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    if (tgk) [enc dispatchThreadgroups:MTLSizeMake(w->rows / 64u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((w->rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
     [enc endEncoding];
 }
 
