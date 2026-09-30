@@ -81,7 +81,8 @@ static void usage(FILE *out) {
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N       routed-expert cache budget in MiB (default 4096)\n"
-        "  --batch N           prompt tokens per batched Metal prefill chunk (default 512, 1 = token by token)\n"
+        "  --batch N           prompt tokens per batched Metal prefill chunk (default 2048 when every expert is\n"
+        "                      preloaded, else 512; 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
         "  --json              write the statistics as one JSON object per answer on stderr\n"
@@ -461,7 +462,7 @@ int main(int argc, char **argv) {
             spec_tokens, spec_fallbacks, (unsigned long long)hits, (unsigned long long)misses,
             (unsigned long long)(st.expert_loads - loads_start), (double)(st.ssd_bytes - ssd_start) / (1024.0 * 1024.0),
             (double)peak_rss_bytes() / (1024.0 * 1024.0), (double)phys_footprint_bytes() / (1024.0 * 1024.0),
-            (unsigned long long)cfg.cache_mib, in->context, cfg.prefill_batch ? cfg.prefill_batch : 512u,
+            (unsigned long long)cfg.cache_mib, in->context, rl_engine_prefill_batch(e),
             interrupted ? "interrupted" : stopped_on_eog ? "stop" : "length");
     }
     rl_sampler_free(&sampler);

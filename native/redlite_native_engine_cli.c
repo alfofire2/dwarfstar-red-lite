@@ -231,14 +231,15 @@ int main(int argc, char **argv) {
         FILE *out = out_path ? fopen(out_path, "wb") : NULL;
         if (out_path && !out) { fprintf(stderr, "cannot open %s\n", out_path); rl_engine_close(e); return 1; }
         uint32_t first = 0;
-        if (gpu && batch > 1u && dump_from > 0u) {
+        const uint32_t chunk = rl_engine_prefill_batch(e);   /* --batch, or the engine default (dev30: 2048 with full residency) */
+        if (gpu && chunk > 1u && dump_from > 0u) {
             const uint32_t n = dump_from < token_count ? dump_from : token_count - 1u;
             rl_engine_step_stats st;
             const double t0 = rl_engine_now_ms_public();
             if (!rl_engine_prefill(e, RL_BACKEND_GPU, tokens, n, NULL, &st, error, sizeof(error))) {
                 fprintf(stderr, "prefill failed: %s\n", error); rl_engine_close(e); return 1;
             }
-            printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, batch, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
+            printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, chunk, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
             printf("prefill split: dense wall %.1f (rec %.1f attn %.1f) dense GPU %.1f | router select %.1f | experts wall %.1f "
                    "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u\n",
                 st.recurrent_ms + st.attention_ms, st.recurrent_ms, st.attention_ms, st.gpu_ms, st.router_ms, st.routed_ms,

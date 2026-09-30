@@ -194,6 +194,11 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
         "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --batch 1100 --cache-mib 4096 --context 1536 >"$LOG/logits.long.native.log" 2>&1
         "$BIN/redlite-ref-llama" "$MODEL" logits --tokens "$LONG_IDS" --out "$LOG/ref.long.bin" --dump-from 1100 --ctx 1536 >"$LOG/logits.long.ref.log" 2>&1
         expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+        if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
+          # dev30: full residency uses the engine's default chunk (2048 tokens, one chunk here) and the preloaded pool
+          "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.full.bin" --dump-from 1100 --cache-mib 22528 --context 1536 >"$LOG/logits.long.full.native.log" 2>&1
+          expect_line logits.long_context_full_residency "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.full.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+        fi
       else
         echo "FAIL  logits.long_context_vs_llama (prompt only $LONG_N tokens)"; FAIL=$((FAIL + 1)); FAILED+=(logits.long_context_vs_llama)
       fi

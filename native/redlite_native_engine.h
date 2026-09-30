@@ -32,7 +32,8 @@ typedef struct {
     int enable_cpu;        /* keep a CPU oracle backend */
     int enable_gpu;        /* create the Metal backend */
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
-    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 512, 1 -> token-by-token); larger chunks amortize the per-layer expert union */
+    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 2048 when every expert is preloaded, else 512;
+                             * 1 -> token-by-token); larger chunks amortize the per-layer expert union */
 } rl_engine_config;
 
 typedef struct {
@@ -120,6 +121,8 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_bac
 /* dev21: 1 when the Metal backend preloaded every routed expert at open (full residency); preload_ms receives the time. */
 int rl_engine_experts_preloaded(const rl_engine *engine, double *preload_ms);
 
+/* Effective prefill chunk: cfg.prefill_batch, or the default for this engine (dev30: 2048 with full residency, else 512). */
+uint32_t rl_engine_prefill_batch(const rl_engine *engine);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
 

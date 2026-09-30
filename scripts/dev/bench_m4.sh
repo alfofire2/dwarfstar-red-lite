@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Development benchmark for the native runtime on the local Mac (not part of regress_m4.sh).
 #
-#   scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill|prefill8192|llama] [--json FILE] [--cool SECONDS]
+#   scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill|prefill8192|prefill22|llama] [--json FILE] [--cool SECONDS]
 #                           [--cache-mib N]
 #
 # decode22 : redlite-generate greedy, 256 tokens, --cache-mib 22528 (full residency, GPU-routed)
@@ -9,7 +9,10 @@
 #            is in the page cache, as in the dev19/dev21 records
 # prefill  : redlite-engine logits, first 1100 tokens of tests/fixtures/long_context_prompt.txt
 #            ingested by the batched prefill in chunks of 512 (the default), --cache-mib 4096
+#            (one untimed warm-up run first, as for decode4, so the page cache state does not decide the number)
 # prefill8192 : same, 8192 ids (the fixture ids repeated, as in long_positions.sh)
+# prefill22 : 1100 and 8192 ids with the full-residency cache (--cache-mib, default 22528) and the engine's
+#            default chunk (2048 with every expert preloaded, dev30): the configuration of a >= 40 GiB Mac
 # llama    : the pinned llama.cpp (redlite-ref-llama bench, its default context parameters, fully
 #            resident) on the same 1100 and 8192 prefill ids and 256 greedy tokens after the same chat
 #            prompt; not part of the default set (needs scripts/dev/build_ref_llama.sh)
@@ -60,12 +63,14 @@ fixture_ids() { # N: the fixture ids repeated and cut to N
   python3 -c "import sys; b=sys.argv[1].split(','); n=int(sys.argv[2]); print(','.join((b*(n//len(b)+1))[:n]))" "$base" "$1"
 }
 
-prefill() { # N label
-  local n="$1" label="$2" ids vals=()
+prefill() { # N label [cache] [chunk]: chunk "" = the engine default
+  local n="$1" label="$2" cache="${3:-4096}" chunk="${4-512}" ids vals=()
   ids="$(fixture_ids $((n + 1)))"
+  local bargs=(); [[ -n "$chunk" ]] && bargs=(--batch "$chunk")
+  [[ "$cache" == 4096 ]] && "$BIN/redlite-engine" logits "$MODEL" --tokens "$ids" --backend gpu --dump-from "$n" ${bargs[@]+"${bargs[@]}"} --cache-mib "$cache" --context $((n + 256)) >/dev/null 2>&1
   for i in $(seq 1 "$REPS"); do
     sleep "$COOL"
-    local line; line="$("$BIN/redlite-engine" logits "$MODEL" --tokens "$ids" --backend gpu --dump-from "$n" --batch 512 --cache-mib 4096 --context $((n + 256)) 2>&1 | grep '^prefill [0-9]')"
+    local line; line="$("$BIN/redlite-engine" logits "$MODEL" --tokens "$ids" --backend gpu --dump-from "$n" ${bargs[@]+"${bargs[@]}"} --cache-mib "$cache" --context $((n + 256)) 2>&1 | grep '^prefill [0-9]')"
     local tps; tps="$(echo "$line" | sed -E 's/.*\(([0-9.]+) tok\/s\).*/\1/')"
     echo "$label run $i: $line"
     vals+=("$tps")
@@ -99,6 +104,7 @@ echo "commit $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --qui
 [[ -z "$ONLY" || "$ONLY" == decode4 ]] && decode 4096 decode4
 [[ -z "$ONLY" || "$ONLY" == prefill ]] && prefill 1100 prefill1100
 [[ "$ONLY" == prefill8192 ]] && prefill 8192 prefill8192
+[[ "$ONLY" == prefill22 ]] && { prefill 1100 prefill1100_full "$FULL" ""; prefill 8192 prefill8192_full "$FULL" ""; }
 [[ "$ONLY" == llama ]] && llama
 if [[ -n "$JSON" ]]; then
   python3 - "$TMP/summary" "$JSON" "$(git -C "$ROOT" rev-parse --short HEAD)" <<'EOF'

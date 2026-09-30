@@ -1177,7 +1177,7 @@ done:
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
                             rl_engine_step_stats *stats, char *error, size_t cap) {
     if (!e || !m || !tokens || !count) { set_error(error, cap, "invalid prefill request"); return 0; }
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
+    const uint32_t batch = rl_engine_prefill_batch(e);
     if (!m->pf || m->pf->cap < batch) {
         if (m->pf) {
             if (m->engine_rs) {

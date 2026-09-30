@@ -335,7 +335,7 @@ int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens,
     rl_engine_step_stats local;
     if (!stats) stats = &local;
     memset(stats, 0, sizeof(*stats));
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
+    const uint32_t batch = rl_engine_prefill_batch(e);
     if (b == RL_BACKEND_CPU || batch == 1u) {
         for (uint32_t i = 0; i < count; ++i) {
             rl_engine_step_stats one;
@@ -400,6 +400,14 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *e, rl_engine_backend 
 }
 
 double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
+
+uint32_t rl_engine_prefill_batch(const rl_engine *e) {
+    if (!e) return 512u;
+    if (e->cfg.prefill_batch) return e->cfg.prefill_batch;
+    /* dev30: with every expert resident there are no loads to bound, and 2048-token chunks give each expert tile more
+     * pairs (1100-token prompt, M4 Max: ~663 tok/s in chunks of 512, ~811 in one chunk); scratch ~0.26 MiB per token */
+    return rl_engine_experts_preloaded(e, NULL) ? 2048u : 512u;
+}
 
 int rl_engine_experts_preloaded(const rl_engine *e, double *preload_ms) {
     if (preload_ms) *preload_ms = 0.0;
