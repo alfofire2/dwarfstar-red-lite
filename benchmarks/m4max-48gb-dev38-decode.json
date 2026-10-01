@@ -1,0 +1,13 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev38",
+  "command": "redlite-generate MODEL --prompt <cache_trace_prompts.txt line 1> --max-tokens 256 --cache-mib full|4096 --no-stream --json (alternated, 45 s cooling)",
+  "full_residency_decode_tok_s": {
+    "IQ3_XXS": {"dev37": [69.02, 70.37, 70.39], "lanes_serial": [74.88, 75.44, 74.59], "lanes_concurrent": [79.08, 79.03, 80.54]},
+    "IQ2_XXS": {"dev37": [75.26, 75.36, 73.53], "lanes_serial": [78.39, 80.10, 81.18], "lanes_concurrent": [80.95, 84.57, 82.59]}
+  },
+  "cache_4096_decode_tok_s": {"IQ2_XXS": {"dev37": [33.09, 54.88, 52.51], "dev38": [59.82, 59.91, 59.27], "note": "33.09: first run, cold page cache"}},
+  "down_lanes_sweep_single_runs_IQ2_XXS": {"32": 79.31, "16": 83.62, "8": 84.82, "4": 83.89},
+  "bounds": {"per_token_wall_ms": 12.14, "per_token_gpu_ms": 11.70, "no_barrier_concurrent_tok_s": [119.58, 117.85], "serial_tok_s": [73.79, 74.46]},
+  "profile_IQ2_XXS_ms_per_token": {"experts": 4.071, "dn_proj": 1.748, "shared": 1.071, "dn_tail": 0.890, "dn_state": 0.583, "head": 0.567, "attn_gqa": 0.551, "router": 0.512, "attn_proj": 0.488, "rms": 0.449, "resid_rms": 0.378, "dn_prestate": 0.378, "attn_out": 0.228, "attn_norm_rope": 0.063}
+}

@@ -27,6 +27,8 @@ them.
 | dev33 | `uchar4` codebook loads in the IQ2_XXS dense GEMV | 25.6 / 27.5 vs 27.3 / 25.1 µs | not the bound; the IQ2_XXS GEMV stays at ~169 GB/s ([DEV33](REDLITE_DEV33_IQ_KERNELS.md)) |
 | dev36 | IQ2_XXS dense GEMV with two rows per lane (one activation load serves both rows) | 25.4 vs 25.5 µs (8192 × 2048, warm kernel-bench) | third attempt on this kernel without gain; activation loads are not the bound. The IQ2_XXS dense GEMV stays at ~169 GB/s |
 | dev37 | smarter expert replacement than LRU (simulated on routing traces, 4 GiB): decayed frequency (the Mira-style score), segmented LRU | best 60.9 vs 64.1 misses/token (−5 %); long half-lives and a 95 % protected segment are worse than LRU | decode routing is recency-dominated; the real waste was slot padding, fixed instead (dev37) |
+| dev38 | two more concurrent-encoder groups ({ssm_out, conv-state copy}, {layer-output copy, next RMSNorm}) | 83.72 vs 83.77 tok/s | the removed barriers were not on the critical path |
+| dev38 | (bound, not a change) concurrent decode encoder with no barriers at all | 74 → 118 tok/s, wrong output | most dispatches depend on the previous one; the kept version gains 2–6 % |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -91,6 +93,8 @@ them.
   Qwen3-VL vision encoder, BF16 safetensors); Qwen3-Next-80B is text-only and cannot consume vision
   tokens, so the idea cannot be applied to this model without a second model family in the runtime.
 - **OLED-MoE (2609.33385): not applicable.** Its inter-iteration expert retention targets diffusion LLMs.
+- **Overlapping CPU encoding with GPU execution (dev38): not attempted.** At full residency the CPU
+  gap between GPU-routed tokens is 0.44 ms of 12.1 ms.
 - **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan
   accepts and add ~0.5 GB of scratch (dev34).
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)
