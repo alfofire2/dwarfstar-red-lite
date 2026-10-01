@@ -1,0 +1,7 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev39",
+  "command": "redlite-generate IQ2_XXS --prompt <cache_trace_prompts.txt line 1> --max-tokens 256 --cache-mib full --json, RL_ENGINE_FUSE_TAIL=0/1 alternated, 60 s cooling",
+  "parallel_tail_kept": {"off": [82.97, 85.86, 84.15], "on": [84.39, 86.91, 85.52], "excluded_contended_pairs": {"off": [84.19, 41.82], "on": [30.13, 45.35]}},
+  "single_threadgroup_tail_reverted": {"off": [84.40, 83.73, 84.96, 83.46, 84.90], "on": [80.01, 78.21, 79.32, 77.91, 79.12]}
+}

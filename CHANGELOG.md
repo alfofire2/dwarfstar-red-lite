@@ -2,6 +2,13 @@
 
 ## Unreleased (after 0.4.0, branches `dev/iq3-kernels` … `dev/iq3m`)
 
+### dev39 — fused expert tail (M4 Max 48 GiB)
+
+- GPU-routed layers end with one `rl_moe_tail` dispatch (weighted expert sum + residual + layer-output
+  copy) instead of three (`RL_ENGINE_FUSE_TAIL=0` restores them): IQ2_XXS full residency median
+  84.2 → 85.5 tok/s (+1.6 %, three clean pairs). A single-threadgroup variant that also fused the next
+  RMSNorm was 6 % slower and reverted. See `docs/REDLITE_DEV39_EXPERT_TAIL.md`.
+
 ### dev38 — decode: expert lanes and concurrent encoders (M4 Max 48 GiB)
 
 - Expert down-projection rows use 8 lanes instead of 32 (at most 4 lanes per 256-value block), and
