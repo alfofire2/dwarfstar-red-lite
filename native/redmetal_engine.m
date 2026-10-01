@@ -453,11 +453,49 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        part_acc[part * head_dim + tid] = acc;\n"
 "    }\n"
 "}\n"
+/* dev35: the same partials, one threadgroup per (block of blk <= 256 positions, KV head) for all the query heads sharing
+ * that KV head (8 here): each K and V row is read once instead of once per query head. Scores: one thread per position,
+ * float4 K loads, one accumulator per query head. Values: one thread per dimension. head_dim == 256, <= 8 heads per group. */
+"kernel void attn_gqa_split_g(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
+"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
+"    constant uint &blk [[buffer(9)]], uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    threadgroup float4 qv[8 * 64]; threadgroup float sc[8 * 256];\n"
+"    const uint block = tg.x, kvh = tg.y, nblocks = (seq_len + blk - 1u) / blk, G = query_heads / kv_heads;\n"
+"    if (kvh >= kv_heads || block >= nblocks) return;\n"
+"    const uint start = block * blk, len = min(blk, seq_len - start); const float scale = rsqrt(float(head_dim));\n"
+"    for (uint i = tid; i < G * 64u; i += 256u) qv[i] = ((device const float4 *)(query + (kvh * G + i / 64u) * 256u))[i % 64u];\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (tid < len) {\n"
+"        device const float4 *kr = (device const float4 *)(key_cache + ulong((start + tid) * kv_heads + kvh) * 256u);\n"
+"        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
+"        for (uint i = 0; i < 64u; ++i) { const float4 k = kr[i]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] += dot(qv[h * 64u + i], k); }\n"
+"        for (uint h = 0; h < 8u; ++h) if (h < G) sc[h * 256u + tid] = a[h] * scale;\n"
+"    }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (simd_id < G) {   /* simdgroup h: softmax statistics of query head h over the block */\n"
+"        const uint h = simd_id; float bm = -INFINITY;\n"
+"        for (uint p = simd_lane; p < len; p += 32u) bm = max(bm, sc[h * 256u + p]);\n"
+"        bm = simd_max(bm); float e = 0.0f;\n"
+"        for (uint p = simd_lane; p < len; p += 32u) { const float v = exp(sc[h * 256u + p] - bm); sc[h * 256u + p] = v; e += v; }\n"
+"        e = simd_sum(e);\n"
+"        if (simd_lane == 0) part_ml[ulong(kvh * G + h) * nblocks + block] = float2(bm, e);\n"
+"    }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    if (tid < head_dim) {\n"
+"        device const float *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
+"        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
+"        for (uint p = 0; p < len; ++p) { const float v = vc[ulong(p) * stride]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
+"        for (uint h = 0; h < 8u; ++h) if (h < G) part_acc[(ulong(kvh * G + h) * nblocks + block) * 256u + tid] = a[h];\n"
+"    }\n"
+"}\n"
 "kernel void attn_gqa_merge(device uint *rl_abort [[buffer(30)]], device const float2 *part_ml [[buffer(0)]], device const float *part_acc [[buffer(1)]],\n"
 "    device const float *gate [[buffer(2)]], device float *gated [[buffer(3)]], constant uint &head_dim [[buffer(4)]], constant uint &seq_len [[buffer(5)]],\n"
-"    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]]) {\n"
+"    constant uint &blk [[buffer(6)]], uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]]) {\n"
 "    if (rl_abort[0] != 0u) return;\n"
-"    const uint nblocks = (seq_len + 255u) / 256u; if (tid >= head_dim || seq_len == 0u) return;\n"
+"    const uint nblocks = (seq_len + blk - 1u) / blk; if (tid >= head_dim || seq_len == 0u) return;\n"
 "    device const float2 *ml = part_ml + ulong(head) * nblocks;\n"
 "    float M = -INFINITY; for (uint b = 0; b < nblocks; ++b) M = max(M, ml[b].x);\n"
 "    float l = 0.0f, acc = 0.0f;\n"
@@ -727,7 +765,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
             {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
             {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"},
-            {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"},
+            {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
             *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -790,8 +828,10 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         }
         /* dev26 split-K decode attention partials, sized for the whole context; RL_ENGINE_ATTN_SPLIT=0 for A/B runs */
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
+        { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
+        { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u; }
         if (m->attn_split) {
-            const size_t nblocks = ((size_t)in->context + 255u) / 256u;
+            const size_t nblocks = ((size_t)in->context + 31u) / 32u;   /* dev35: blocks of down to 32 positions */
             m->attn_ml = new_buf(m, (size_t)in->n_head * nblocks * 2u * sizeof(float));
             m->attn_acc = new_buf(m, (size_t)in->n_head * nblocks * in->head_dim * sizeof(float));
             if (!m->attn_ml || !m->attn_acc) { set_error(error, cap, "attention partial allocation failed"); rl_metal_engine_destroy(m); return NULL; }
@@ -930,7 +970,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
     m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
-    m->p_attn_split = m->p_attn_merge = nil; m->attn_ml = m->attn_acc = nil;
+    m->p_attn_split = m->p_attn_merge = m->p_attn_split_g = nil; m->attn_ml = m->attn_acc = nil;
     m->keep = nil; m->dev = nil; m->queue = nil; m->lib = nil;
     free(m);
 }
@@ -1075,16 +1115,20 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     if (m->attn_split && seq_len > 256u) {
         /* dev26: one threadgroup per (head, 256-position block), then a per-head merge. Up to one block the
          * single-threadgroup kernel has the same parallelism without the merge dispatch, and measured faster. */
-        const uint32_t nblocks = (seq_len + 255u) / 256u;
-        [enc setComputePipelineState:m->p_attn_split];
+        /* dev35: grouped kernel (one threadgroup per KV head and block, blocks of m->attn_blk positions) */
+        const int grouped = m->attn_group && m->p_attn_split_g && head_dim == 256u && qheads % kvheads == 0u && qheads / kvheads <= 8u;
+        const uint32_t blk = grouped ? m->attn_blk : 256u;
+        const uint32_t nblocks = (seq_len + blk - 1u) / blk;
+        [enc setComputePipelineState:grouped ? m->p_attn_split_g : m->p_attn_split];
         [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
         [enc setBuffer:m->attn_ml offset:0 atIndex:3]; [enc setBuffer:m->attn_acc offset:0 atIndex:4];
         [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
-        [enc dispatchThreadgroups:MTLSizeMake(nblocks, qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [enc setBytes:&blk length:4 atIndex:9];
+        [enc dispatchThreadgroups:MTLSizeMake(nblocks, grouped ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
         [enc setComputePipelineState:m->p_attn_merge];
         [enc setBuffer:m->attn_ml offset:0 atIndex:0]; [enc setBuffer:m->attn_acc offset:0 atIndex:1];
         [enc setBuffer:m->agate offset:0 atIndex:2]; [enc setBuffer:m->gated offset:0 atIndex:3];
-        [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5];
+        [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5]; [enc setBytes:&blk length:4 atIndex:6];
         [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
     } else {
         [enc setComputePipelineState:m->p_attn_gqa];
