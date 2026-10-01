@@ -963,7 +963,9 @@ static void mark_slots(RMTopKPool *p, const uint32_t *slot_ids, uint32_t top_k, 
 static uint32_t lanes_for_blocks(uint32_t blocks) {
     uint32_t lanes = 1u;
     while (lanes < blocks && lanes < 32u) lanes <<= 1;
-    while (lanes * 2u <= 32u && (lanes * 2u) / blocks <= 16u && (lanes * 2u) % blocks == 0u) lanes <<= 1;
+    /* dev38: at most 4 lanes per 256-value block (was 16). The 512-column down rows went from 32 lanes of 16 values
+     * each plus a 5-step shuffle reduction to 8 lanes of 64 values: decode 77.0 -> 84.1 tok/s (IQ2_XXS, full residency) */
+    while (lanes * 2u <= 32u && (lanes * 2u) / blocks <= 4u && (lanes * 2u) % blocks == 0u) lanes <<= 1;
     return lanes;
 }
 
@@ -1731,7 +1733,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
         [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
         [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
-        [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
 
         [enc setComputePipelineState:p->_downGPipeline];
         [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
@@ -1745,7 +1747,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBytes:&top_k length:sizeof(top_k) atIndex:8];
         [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:9];
         [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
-        [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
 
         [enc setComputePipelineState:p->_sumGPipeline];
         [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
@@ -1753,7 +1755,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBuffer:output offset:(NSUInteger)output_offset atIndex:2];
         [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:3];
         [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];
-        [enc dispatchThreads:MTLSizeMake(hidden_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        [enc dispatchThreads:MTLSizeMake(hidden_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
         return 1;
     }
 }
