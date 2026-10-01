@@ -390,6 +390,9 @@ int main(int argc, char **argv) {
     uint64_t hits_start = st.cache_hits, misses_start = st.cache_misses;
     uint32_t spec_tokens = 0, spec_fallbacks = 0;
     int interrupted = 0, stopped_on_eog = 0;
+    /* dev37: RL_ROUTE_TRACE=file appends each decoded token's router ids (n_layer x top_k uint16, layer-major) for
+     * offline expert cache policy studies (scripts/dev/cache_policy_sim.py) */
+    FILE *route_trace = getenv("RL_ROUTE_TRACE") ? fopen(getenv("RL_ROUTE_TRACE"), "ab") : NULL;
     while (generated < max_tokens) {
         if (g_interrupt) { interrupted = 1; break; }
         const uint32_t next = rl_sampler_sample(&sampler, logits);
@@ -409,7 +412,14 @@ int main(int argc, char **argv) {
         }
         spec_tokens += st.speculative; spec_fallbacks += st.speculative_fallback;
         last_routed_ms = st.routed_ms;
+        for (uint32_t l = 0; route_trace && l < in->n_layer; ++l) {
+            const uint32_t *rid = rl_engine_last_router_ids(e, RL_BACKEND_GPU, l);
+            uint16_t row[64];
+            for (uint32_t k = 0; k < in->top_k && k < 64u; ++k) row[k] = (uint16_t)rid[k];
+            fwrite(row, sizeof(uint16_t), in->top_k, route_trace);
+        }
     }
+    if (route_trace) fclose(route_trace);
     const double gen_ms = now_ms() - t_gen;
     text[text_len] = '\0';
     if (!stream) printf("%s", text);

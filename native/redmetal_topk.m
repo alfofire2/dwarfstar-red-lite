@@ -602,6 +602,13 @@ static NSString * const kTopKSource = @
     uint64_t _slotBytes;
     uint32_t _capacity;
     uint32_t _slotsPerSlab;
+    /* dev37: slot size classes (one by default). Class c owns slots [_clsFirst[c], _clsFirst[c + 1]) of _clsBytes[c]
+     * bytes; its slabs are global slab indices from _clsSlab[c]; _slabMap maps a global slab index to _slabs + 1. */
+    uint32_t _nCls;
+    uint32_t _clsFirst[RL_TOPK_MAX_CLASSES + 1];
+    uint64_t _clsBytes[RL_TOPK_MAX_CLASSES];
+    uint32_t _clsSlab[RL_TOPK_MAX_CLASSES + 1];
+    uint32_t *_slabMap;
     uint32_t *_slotInflight;
     uint32_t *_slotGeneration;   /* dev23: bumped by every load into the slot (release checks in-flight slots were not rewritten) */
     uint64_t _allocatedBytes;
@@ -618,6 +625,8 @@ static NSString * const kTopKSource = @
                            iq1Grid:(const int8_t *)iq1Grid
                       iq1GridCount:(uint32_t)iq1GridCount;
 - (id<MTLBuffer>)bufferForSlot:(uint32_t)slot offset:(NSUInteger *)offset;
+- (uint64_t)bytesForSlot:(uint32_t)slot;
+- (int)setClasses:(uint32_t)n slotBytes:(const uint64_t *)bytes capacity:(const uint32_t *)cap;
 - (void)markSlot:(uint32_t)slot delta:(int)delta;
 - (int)ensureScratchHidden:(uint32_t)hidden ffn:(uint32_t)ffn;
 @end
@@ -650,6 +659,9 @@ static NSString * const kTopKSource = @
     _capacity = (uint32_t)(budget / aligned);
     _slotsPerSlab = slotsPerSlab ? slotsPerSlab : 64u;
     if (_slotsPerSlab > _capacity) _slotsPerSlab = _capacity;
+    _nCls = 1u;
+    _clsFirst[0] = 0u; _clsFirst[1] = _capacity; _clsBytes[0] = aligned;
+    _clsSlab[0] = 0u; _clsSlab[1] = (_capacity + _slotsPerSlab - 1u) / _slotsPerSlab;
 
     _device = MTLCreateSystemDefaultDevice();
     if (!_device || ![_device hasUnifiedMemory]) {
@@ -756,7 +768,8 @@ static NSString * const kTopKSource = @
     _fileSize = (uint64_t)st.st_size;
     _slotInflight = calloc(_capacity, sizeof(uint32_t));
     _slotGeneration = calloc(_capacity, sizeof(uint32_t));
-    if (!_slotInflight || !_slotGeneration) {
+    _slabMap = calloc(_clsSlab[1] ? _clsSlab[1] : 1u, sizeof(uint32_t));
+    if (!_slotInflight || !_slotGeneration || !_slabMap) {
         topk_set_error("failed to allocate top-k in-flight table");
         close(_fd);
         _fd = -1;
@@ -780,6 +793,47 @@ static NSString * const kTopKSource = @
     _slotInflight = NULL;
     free(_slotGeneration);
     _slotGeneration = NULL;
+    free(_slabMap);
+    _slabMap = NULL;
+}
+
+/* dev37: replace the uniform layout by size classes; only before any slab exists, within the budget */
+- (int)setClasses:(uint32_t)n slotBytes:(const uint64_t *)bytes capacity:(const uint32_t *)cap {
+    if (!n || n > RL_TOPK_MAX_CLASSES || !bytes || !cap) { topk_set_error("invalid top-k slot classes"); return 0; }
+    @synchronized (self) {
+        if (_slabs.count) { topk_set_error("top-k slot classes must be set before any slab is allocated"); return 0; }
+        uint64_t total = 0; uint32_t slots = 0, slabs = 0;
+        uint32_t first[RL_TOPK_MAX_CLASSES + 1], slab[RL_TOPK_MAX_CLASSES + 1]; uint64_t sz[RL_TOPK_MAX_CLASSES];
+        for (uint32_t c = 0; c < n; ++c) {
+            sz[c] = round_up_u64(bytes[c], 4096u);
+            if (!sz[c] || !cap[c] || (uint64_t)cap[c] > UINT32_MAX - slots || sz[c] * cap[c] > _budgetBytes - total) {
+                topk_set_error("top-k slot classes exceed the cache budget"); return 0;
+            }
+            first[c] = slots; slab[c] = slabs;
+            slots += cap[c]; total += sz[c] * cap[c]; slabs += (cap[c] + _slotsPerSlab - 1u) / _slotsPerSlab;
+        }
+        first[n] = slots; slab[n] = slabs;
+        uint32_t *inflight = calloc(slots, sizeof(uint32_t)), *generation = calloc(slots, sizeof(uint32_t)), *map = calloc(slabs, sizeof(uint32_t));
+        if (!inflight || !generation || !map) { free(inflight); free(generation); free(map); topk_set_error("top-k slot class tables allocation failed"); return 0; }
+        free(_slotInflight); free(_slotGeneration); free(_slabMap);
+        _slotInflight = inflight; _slotGeneration = generation; _slabMap = map;
+        _nCls = n; _capacity = slots;
+        for (uint32_t c = 0; c <= n; ++c) { _clsFirst[c] = first[c]; _clsSlab[c] = slab[c]; }
+        for (uint32_t c = 0; c < n; ++c) _clsBytes[c] = sz[c];
+        _slotBytes = sz[0];
+        for (uint32_t c = 1; c < n; ++c) if (sz[c] > _slotBytes) _slotBytes = sz[c];
+    }
+    return 1;
+}
+
+static uint32_t pool_class_of(const RMTopKPool *p, uint32_t slot) {
+    uint32_t c = 0;
+    while (c + 1u < p->_nCls && slot >= p->_clsFirst[c + 1u]) ++c;
+    return c;
+}
+
+- (uint64_t)bytesForSlot:(uint32_t)slot {
+    return slot < _capacity ? _clsBytes[pool_class_of(self, slot)] : 0u;
 }
 
 - (int)ensureBatchPairs:(uint32_t)pairs experts:(uint32_t)experts tokens:(uint32_t)ntok topk:(uint32_t)top_k hidden:(uint32_t)hidden ffn:(uint32_t)ffn {
@@ -822,15 +876,18 @@ static NSString * const kTopKSource = @
         topk_set_error("top-k slot %u exceeds capacity %u", slot, _capacity);
         return nil;
     }
-    const uint32_t slabIndex = slot / _slotsPerSlab;
-    const uint32_t localSlot = slot % _slotsPerSlab;
+    const uint32_t cls = pool_class_of(self, slot);
+    const uint32_t inClass = slot - _clsFirst[cls];
+    const uint32_t slabIndex = _clsSlab[cls] + inClass / _slotsPerSlab;
+    const uint32_t localSlot = inClass % _slotsPerSlab;
+    const uint64_t clsBytes = _clsBytes[cls];
     @synchronized (self) {
-        while (_slabs.count <= slabIndex) {
+        if (!_slabMap[slabIndex]) {
             const uint32_t newSlab = (uint32_t)_slabs.count;
-            const uint32_t first = newSlab * _slotsPerSlab;
-            const uint32_t remaining = _capacity - first;
+            const uint32_t first = (inClass / _slotsPerSlab) * _slotsPerSlab;
+            const uint32_t remaining = (_clsFirst[cls + 1u] - _clsFirst[cls]) - first;
             const uint32_t count = remaining < _slotsPerSlab ? remaining : _slotsPerSlab;
-            const uint64_t bytes64 = (uint64_t)count * _slotBytes;
+            const uint64_t bytes64 = (uint64_t)count * clsBytes;
             if (!bytes64 || bytes64 > (uint64_t)NSUIntegerMax ||
                 _allocatedBytes > _budgetBytes - bytes64) {
                 topk_set_error("top-k slab allocation would exceed hard budget");
@@ -845,13 +902,14 @@ static NSString * const kTopKSource = @
             }
             slab.label = [NSString stringWithFormat:@"redlite_topk_slab_%u", newSlab];
             [_slabs addObject:slab];
+            _slabMap[slabIndex] = (uint32_t)_slabs.count;
             _allocatedBytes += bytes64;
             if (@available(macOS 15.0, *)) {
                 if (_residencySet) { [_residencySet addAllocation:slab]; [_residencySet commit]; }
             }
         }
-        id<MTLBuffer> slab = _slabs[slabIndex];
-        const uint64_t inner = (uint64_t)localSlot * _slotBytes;
+        id<MTLBuffer> slab = _slabs[_slabMap[slabIndex] - 1u];
+        const uint64_t inner = (uint64_t)localSlot * clsBytes;
         if (inner > (uint64_t)NSUIntegerMax) {
             topk_set_error("top-k slot offset exceeds NSUInteger");
             return nil;
@@ -945,6 +1003,11 @@ void redmetal_topk_pool_destroy(redmetal_topk_pool_t handle) {
     }
 }
 
+int redmetal_topk_pool_set_classes(redmetal_topk_pool_t handle, uint32_t n, const uint64_t *slot_bytes, const uint32_t *capacity) {
+    RMTopKPool *p = topk_obj(handle);
+    return p ? [p setClasses:n slotBytes:slot_bytes capacity:capacity] : 0;
+}
+
 uint32_t redmetal_topk_pool_capacity(redmetal_topk_pool_t handle) {
     RMTopKPool *p = topk_obj(handle); return p ? p->_capacity : 0;
 }
@@ -1001,7 +1064,7 @@ int redmetal_topk_pool_load_expert(
             return 0;
         }
         const uint64_t payload = gate_bytes + up_bytes + down_bytes;
-        if (payload > p->_slotBytes) {
+        if (payload > [p bytesForSlot:slot_id]) {
             topk_set_error("top-k expert payload exceeds slot size");
             return 0;
         }
@@ -1048,7 +1111,7 @@ int redmetal_topk_pool_slot_addresses(
         RMTopKPool *p = topk_obj(handle);
         if (!p || slot_id >= p->_capacity) return 0;
         if (gate_bytes > UINT64_MAX - up_bytes || gate_bytes + up_bytes > UINT64_MAX - down_bytes ||
-            gate_bytes + up_bytes + down_bytes > p->_slotBytes) return 0;
+            gate_bytes + up_bytes + down_bytes > [p bytesForSlot:slot_id]) return 0;
         NSUInteger inner = 0;
         id<MTLBuffer> slab = [p bufferForSlot:slot_id offset:&inner];
         if (!slab) return 0;
@@ -1103,7 +1166,7 @@ static int topk_validate(RMTopKPool *p, const uint32_t *slot_ids, const uint64_t
         }
         if (gate_bytes[i] > UINT64_MAX - up_bytes[i] ||
             gate_bytes[i] + up_bytes[i] > UINT64_MAX - down_bytes[i] ||
-            gate_bytes[i] + up_bytes[i] + down_bytes[i] > p->_slotBytes) {
+            gate_bytes[i] + up_bytes[i] + down_bytes[i] > [p bytesForSlot:slot_ids[i]]) {
             topk_set_error("top-k expert %u exceeds slot bounds", i);
             return 0;
         }

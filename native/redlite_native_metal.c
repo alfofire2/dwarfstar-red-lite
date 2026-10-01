@@ -83,6 +83,44 @@ rl_native_metal_runtime *rl_native_metal_create(
         return NULL;
     }
 
+    /* dev37: one slot size class per distinct 4 KiB-aligned expert triplet size, the same number of slots for every
+     * layer (budget / sum of the layers' slot sizes, at most expert_count). Uniform slots of the largest size wasted
+     * 24% of an IQ2_XXS cache on padding (37 of 48 layers hold smaller IQ1_M experts). Kept uniform when there is
+     * one size, when a layer would get fewer than 16 slots (small stage-tool caches), or with RL_POOL_CLASSES=0. */
+    uint8_t layer_class[RL_LRU_MAX_LAYERS];
+    uint32_t class_cap[RL_LRU_MAX_CLASSES] = {0};
+    uint32_t n_class = 0;
+    {
+        uint64_t size_of[RL_LRU_MAX_CLASSES] = {0}, layer_bytes[RL_LRU_MAX_LAYERS] = {0}, sum = 0;
+        const char *env = getenv("RL_POOL_CLASSES");
+        int ok = (!env || atoi(env) != 0) && map->layer_count && map->layer_count <= RL_LRU_MAX_LAYERS && map->expert_count;
+        for (uint32_t i = 0; ok && i < map->routed_tensor_count; ++i) {
+            if (map->routed[i].layer >= RL_LRU_MAX_LAYERS) ok = 0;
+            else layer_bytes[map->routed[i].layer] += map->routed[i].expert_stride_bytes;
+        }
+        for (uint32_t l = 0; ok && l < map->layer_count; ++l) {
+            const uint64_t b = (layer_bytes[l] + 4095u) & ~(uint64_t)4095u;
+            if (!layer_bytes[l]) { ok = 0; break; }
+            uint32_t c = 0;
+            while (c < n_class && size_of[c] != b) ++c;
+            if (c == n_class) { if (n_class == RL_LRU_MAX_CLASSES) { ok = 0; break; } size_of[n_class++] = b; }
+            layer_class[l] = (uint8_t)c;
+            sum += b;
+        }
+        uint64_t per_layer = ok && sum ? budget_bytes / sum : 0;
+        if (per_layer > map->expert_count) per_layer = map->expert_count;
+        if (!ok || n_class < 2u || per_layer < 16u) {
+            n_class = 0;
+        } else {
+            for (uint32_t l = 0; l < map->layer_count; ++l) class_cap[layer_class[l]] += (uint32_t)per_layer;
+            if (!redmetal_topk_pool_set_classes(pool, n_class, size_of, class_cap)) {
+                redmetal_topk_pool_destroy(pool);
+                set_metal_error(error, error_cap, "failed to set native top-k slot classes");
+                return NULL;
+            }
+        }
+    }
+
     const uint32_t capacity = redmetal_topk_pool_capacity(pool);
     if (!capacity) {
         redmetal_topk_pool_destroy(pool);
@@ -102,6 +140,13 @@ rl_native_metal_runtime *rl_native_metal_create(
         redmetal_topk_pool_destroy(pool);
         free(runtime);
         set_error(error, error_cap, "failed to create native Metal LRU");
+        return NULL;
+    }
+    if (n_class && !rl_native_lru_set_classes(&runtime->lru, n_class, class_cap, layer_class, map->layer_count)) {
+        rl_native_lru_free(&runtime->lru);
+        redmetal_topk_pool_destroy(pool);
+        free(runtime);
+        set_error(error, error_cap, "failed to set native Metal LRU classes");
         return NULL;
     }
     if (error && error_cap) error[0] = '\0';

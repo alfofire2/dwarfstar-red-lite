@@ -24,7 +24,32 @@ int rl_native_lru_init(rl_native_lru *cache, uint32_t capacity) {
     if (!cache->index) { free(cache->entries); cache->entries = NULL; return 0; }
     cache->index_mask = size - 1u;
     cache->capacity = capacity;
+    cache->n_class = 1u;
+    cache->class_first[1] = capacity;
     return 1;
+}
+
+int rl_native_lru_set_classes(rl_native_lru *cache, uint32_t n_class, const uint32_t *class_capacity,
+                              const uint8_t *layer_class, uint32_t n_layer) {
+    if (!cache || !cache->entries || cache->resident || !n_class || n_class > RL_LRU_MAX_CLASSES || !class_capacity ||
+        !layer_class || n_layer > RL_LRU_MAX_LAYERS) return 0;
+    uint32_t sum = 0;
+    for (uint32_t c = 0; c < n_class; ++c) {
+        if (!class_capacity[c] || class_capacity[c] > cache->capacity - sum) return 0;
+        sum += class_capacity[c];
+    }
+    if (sum != cache->capacity) return 0;
+    for (uint32_t l = 0; l < n_layer; ++l) if (layer_class[l] >= n_class) return 0;
+    cache->n_class = n_class;
+    cache->class_first[0] = 0;
+    for (uint32_t c = 0; c < n_class; ++c) cache->class_first[c + 1u] = cache->class_first[c] + class_capacity[c];
+    memset(cache->layer_class, 0, sizeof(cache->layer_class));
+    memcpy(cache->layer_class, layer_class, n_layer);
+    return 1;
+}
+
+static uint32_t class_of(const rl_native_lru *cache, rl_cache_key key) {
+    return key.layer < RL_LRU_MAX_LAYERS ? cache->layer_class[key.layer] : 0u;
 }
 
 void rl_native_lru_free(rl_native_lru *cache) {
@@ -106,10 +131,12 @@ int rl_native_lru_set_inflight(rl_native_lru *cache, uint32_t slot_id, uint32_t 
 static int planned_victim_entry(
         const rl_native_lru *cache,
         const uint8_t *reserved,
+        uint32_t lo,
+        uint32_t hi,
         uint64_t *blocked) {
     int victim = -1;
     uint64_t oldest = UINT64_MAX;
-    for (uint32_t i = 0; i < cache->capacity; ++i) {
+    for (uint32_t i = lo; i < hi; ++i) {
         const rl_cache_entry *entry = &cache->entries[i];
         if (!entry->valid || reserved[i]) continue;
         if (entry->inflight) {
@@ -145,9 +172,13 @@ int rl_native_lru_prepare_many(
         set_error(error, error_cap, "native LRU transaction is already active");
         return 0;
     }
-    if (count > cache->capacity) {
-        set_error(error, error_cap, "native cache capacity is smaller than current top-k selection");
-        return 0;
+    uint32_t per_class[RL_LRU_MAX_CLASSES] = {0};
+    for (uint32_t i = 0; i < count; ++i) per_class[class_of(cache, keys[i])]++;
+    for (uint32_t c = 0; c < cache->n_class; ++c) {
+        if (per_class[c] > cache->class_first[c + 1u] - cache->class_first[c]) {
+            set_error(error, error_cap, "native cache capacity is smaller than current top-k selection");
+            return 0;
+        }
     }
     for (uint32_t i = 0; i < count; ++i) {
         for (uint32_t j = i + 1; j < count; ++j) {
@@ -179,16 +210,19 @@ int rl_native_lru_prepare_many(
             reserved[existing] = 1;
         }
     }
-    /* pass 2: misses take free entries first, then the oldest unreserved, not-in-flight entries */
-    uint32_t free_scan = 0;
+    /* pass 2: misses take free entries of their class first, then its oldest unreserved, not-in-flight entries */
+    uint32_t free_scan[RL_LRU_MAX_CLASSES];
+    for (uint32_t c = 0; c < cache->n_class; ++c) free_scan[c] = cache->class_first[c];
     for (uint32_t i = 0; i < count; ++i) {
         if (items[i].hit) continue;
+        const uint32_t c = class_of(cache, keys[i]);
+        const uint32_t hi = cache->class_first[c + 1u];
         int index = -1;
-        for (; free_scan < cache->capacity; ++free_scan) {
-            if (!cache->entries[free_scan].valid && !reserved[free_scan]) { index = (int)free_scan; break; }
+        for (; free_scan[c] < hi; ++free_scan[c]) {
+            if (!cache->entries[free_scan[c]].valid && !reserved[free_scan[c]]) { index = (int)free_scan[c]; break; }
         }
         if (index < 0) {
-            index = planned_victim_entry(cache, reserved, &blocked);
+            index = planned_victim_entry(cache, reserved, cache->class_first[c], hi, &blocked);
         }
         if (index < 0) {
             free(items);

@@ -407,7 +407,19 @@ double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
 uint64_t rl_engine_full_residency_mib(const rl_engine *e) {
     if (!e || !e->expert_map.max_expert_triplet_bytes) return 0;
     const uint64_t slot = (e->expert_map.max_expert_triplet_bytes + 4095u) & ~(uint64_t)4095u;   /* redmetal_topk slot alignment */
-    const uint64_t bytes = slot * e->expert_map.layer_count * e->expert_map.expert_count;
+    uint64_t bytes = slot * e->expert_map.layer_count * e->expert_map.expert_count;
+    /* dev37: slots of each layer's own size (rl_native_metal_create size classes), unless RL_POOL_CLASSES=0 */
+    const char *env = getenv("RL_POOL_CLASSES");
+    if (!env || atoi(env) != 0) {
+        uint64_t per[256] = {0}, sum = 0;
+        int ok = e->expert_map.layer_count <= 256u;
+        for (uint32_t i = 0; ok && i < e->expert_map.routed_tensor_count; ++i) {
+            if (e->expert_map.routed[i].layer >= 256u) ok = 0;
+            else per[e->expert_map.routed[i].layer] += e->expert_map.routed[i].expert_stride_bytes;
+        }
+        for (uint32_t l = 0; ok && l < e->expert_map.layer_count; ++l) sum += (per[l] + 4095u) & ~(uint64_t)4095u;
+        if (ok && sum) bytes = sum * e->expert_map.expert_count;
+    }
     return (bytes + (1024u * 1024u) - 1u) / (1024u * 1024u);
 }
 

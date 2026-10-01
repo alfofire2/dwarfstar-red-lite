@@ -1,0 +1,17 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev37",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "switch": "RL_POOL_CLASSES=0 (uniform slots) vs default (size classes)",
+  "simulation": {"command": "scripts/dev/cache_policy_sim.py --slots 4723 trace*.bin", "traces": "6 prompts x 511 decoded tokens", "misses_per_token": {"LRU": 64.1, "decay1000": 60.9, "slru0.8": 61.1, "OPT": 34.7, "LRU_size_classes_equal_slots_per_layer": 50.5}},
+  "cache_4096_six_prompts_512_tokens": {
+    "prefetch_off": {"uniform": {"hit": 0.8749, "misses_per_token": 60.0}, "classes": {"hit": 0.9053, "misses_per_token": 45.4}},
+    "prefetch_on": {"uniform": {"hit": 0.9184, "misses_per_token": 39.2}, "classes": {"hit": 0.938, "misses_per_token": 29.8}}
+  },
+  "decode_ab_cooled": [
+    {"cache_mib": 4096, "prefetch": 0, "prompt": "Italian prose (tests/fixtures/cache_trace_prompts.txt line 4)", "uniform_tok_s": [46.89, 49.52, 49.85], "classes_tok_s": [51.06, 51.29, 49.75], "misses": {"uniform": 18545, "classes": 12884}},
+    {"cache_mib": 4096, "prefetch": 1, "prompt": "arithmetic (line 3)", "uniform_tok_s": [47.48, 46.85, 46.26], "classes_tok_s": [47.10, 48.31, 49.12], "misses": {"uniform": 64864, "classes": 51221}},
+    {"cache_mib": "full", "prefetch": 1, "prompt": "transformer explanation (line 1)", "uniform_tok_s": [70.58, 72.33, 72.31], "classes_tok_s": [72.63, 71.61, 72.21], "phys_footprint_mib": {"uniform": 22445, "classes": 18447}}
+  ],
+  "full_residency_mib": {"IQ2_XXS": [21312, 17316], "IQ3_XXS": [29376, 28800], "IQ3_M": [34944, 33312]}
+}

@@ -33,6 +33,7 @@ Developed on the `dev/0.4` branch; M4 Max 48 GiB only.
 | dev34 bounded-cache prefill: fewer expert reloads | [REDLITE_DEV34_BOUNDED_PREFILL.md](REDLITE_DEV34_BOUNDED_PREFILL.md) |
 | dev35 long-context decode: grouped split-K attention | [REDLITE_DEV35_LONG_DECODE.md](REDLITE_DEV35_LONG_DECODE.md) |
 | [REDLITE_DEV36_IQ3M.md](REDLITE_DEV36_IQ3M.md) | dev36: IQ3_M GGUF supported (Q4_K experts), measured, not chosen on 48 GiB |
+| [REDLITE_DEV37_EXPERT_SLOTS.md](REDLITE_DEV37_EXPERT_SLOTS.md) | dev37: expert slots of each layer's own size (4 GiB cache −24 % misses; full residency −3.9 GiB) |
 
 ## Native runtime milestones (v0.3, released as 0.3.0)
 

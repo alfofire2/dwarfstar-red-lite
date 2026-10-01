@@ -201,8 +201,8 @@ class NativeResidency:
 def native_residency(model_path: str | Path) -> NativeResidency | None:
     """Full-residency cache of a GGUF from its real expert payload (dev31).
 
-    Same formula as rl_engine_full_residency_mib() in the native engine: layers x experts pool slots of the largest
-    gate+up+down expert triplet, rounded up to 4 KiB. None when the file is not a readable Qwen3-Next MoE GGUF.
+    Same formula as rl_engine_full_residency_mib() in the native engine: experts x the sum over layers of the layer's
+    gate+up+down expert triplet rounded up to 4 KiB (dev37 slot size classes; before, every slot had the largest size). None when the file is not a readable Qwen3-Next MoE GGUF.
     """
     from .expert_map import build_expert_map
 
@@ -215,8 +215,8 @@ def native_residency(model_path: str | Path) -> NativeResidency | None:
     triplets: dict[int, int] = {}
     for t in emap.expert_tensors:
         triplets[t.layer] = triplets.get(t.layer, 0) + t.expert_stride_bytes
-    slot = -(-max(triplets.values()) // NATIVE_SLOT_ALIGNMENT) * NATIVE_SLOT_ALIGNMENT
-    total = slot * len(triplets) * emap.expert_count
+    # dev37: every layer's slots have that layer's own aligned size (native slot size classes)
+    total = sum(-(-b // NATIVE_SLOT_ALIGNMENT) * NATIVE_SLOT_ALIGNMENT for b in triplets.values()) * emap.expert_count
     size = Path(model_path).stat().st_size
     return NativeResidency(-(-total // (1024 * 1024)), max(0, size - emap.total_routed_payload_bytes))
 
