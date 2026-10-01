@@ -29,12 +29,14 @@ struct rl_metal_engine {
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
+    id<MTLComputePipelineState> p_moe_tail;                    /* dev39: fused end of a GPU-routed layer */
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
     id<MTLComputePipelineState> p_attn_split_g;               /* dev35: one threadgroup per KV head and block */
     int attn_group;                                           /* RL_ENGINE_ATTN_GROUP != 0 (default) */
+    int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
     uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK, default 128) */
     id<MTLBuffer> attn_ml, attn_acc;                          /* per (head, 256-position block) partials */

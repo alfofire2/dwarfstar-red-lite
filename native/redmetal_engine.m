@@ -56,6 +56,17 @@ static NSString * const kEngineSource = @
 "    return uchar2((s[j + 4u] & 15u) | ((s[j - 4u] >> 6) << 4), (s[j + 4u] >> 4) | ((s[j] >> 6) << 4));\n"
 "}\n"
 /* ---- norms / residuals (validated block ops) ---- */
+/* dev39: weighted expert sum + residual add + layer-output copy in one dispatch (was the pool's sum, rl_scale_add and
+ * rl_copy_f32): routed = sum_e weights[e] * tmp[e][i] in the pool's order, x = resid + (routed + shared * scalar) */
+"kernel void rl_moe_tail(device uint *rl_abort [[buffer(30)]], device const float *tmp [[buffer(0)]], device const float *weights [[buffer(1)]],\n"
+"    device const float *resid [[buffer(2)]], device const float *shared [[buffer(3)]], device const float *scalar [[buffer(4)]], device float *x [[buffer(5)]],\n"
+"    device float *layer_out [[buffer(6)]], constant uint &n [[buffer(7)]], constant uint &top_k [[buffer(8)]], uint i [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u || i >= n) return;\n"
+"    float routed = 0.0f;\n"
+"    for (uint e = 0; e < top_k; ++e) routed += weights[e] * tmp[e * n + i];\n"
+"    const float v = resid[i] + (routed + shared[i] * scalar[0]);\n"
+"    x[i] = v; layer_out[i] = v;\n"
+"}\n"
 "kernel void rl_rms(device uint *rl_abort [[buffer(30)]], device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
 "    constant uint &n [[buffer(3)]], constant float &eps [[buffer(4)]], uint tid [[thread_position_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
@@ -765,7 +776,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             rl_metal_engine_destroy(m); return NULL;
         }
         struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
-            {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"},
+            {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"}, {&m->p_moe_tail, @"rl_moe_tail"},
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
             {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
@@ -837,6 +848,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         /* dev26 split-K decode attention partials, sized for the whole context; RL_ENGINE_ATTN_SPLIT=0 for A/B runs */
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
+        { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u; }
         if (m->attn_split) {
@@ -976,6 +988,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
+    m->p_moe_tail = nil;
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
     m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
@@ -1221,6 +1234,7 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
     const float eps = in->rms_eps;
     const size_t hb = (size_t)hidden * sizeof(float);
+    const int fused = m->fuse_tail && m->p_moe_tail;
     for (uint32_t l = first; l < in->n_layer; ++l) {
         const rl_layer_tensors *t = &e->layers[l];
         const mlayer *w = &m->layers[l];
@@ -1249,8 +1263,19 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
         if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
                 (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
                 li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
-                (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
+                (__bridge void *)m->ffn_in, 0u, fused ? NULL : (__bridge void *)m->routed, 0u)) {
             snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); return 0;
+        }
+        if (fused) {
+            id<MTLComputeCommandEncoder> enc = em_enc(em);
+            [enc setComputePipelineState:m->p_moe_tail];
+            [enc setBuffer:(__bridge id<MTLBuffer>)redmetal_topk_pool_tmp_buffer(rl_native_metal_pool_handle(m->experts)) offset:0 atIndex:0];
+            [enc setBuffer:m->plan_weights offset:weights_off atIndex:1];
+            [enc setBuffer:m->resid offset:0 atIndex:2]; [enc setBuffer:m->sh_out offset:0 atIndex:3]; [enc setBuffer:m->scalar offset:0 atIndex:4];
+            [enc setBuffer:m->x offset:0 atIndex:5]; [enc setBuffer:m->layer_out_gpu offset:(NSUInteger)l * hb atIndex:6];
+            [enc setBytes:&hidden length:4 atIndex:7]; [enc setBytes:&topk length:4 atIndex:8];
+            enc_1d(enc, m->p_moe_tail, hidden, 64u);
+            continue;
         }
         emit_scale_add(e, em);
         em_copy(em, m->x, 0, m->layer_out_gpu, (NSUInteger)l * hb, hidden);
