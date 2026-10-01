@@ -9,14 +9,15 @@ import subprocess
 import sys
 
 from . import __version__
-from .hardware import detect
+from .hardware import GIB, detect
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import native_defaults, plan_for
+from .planner import native_defaults, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
 
-DEFAULT_NATIVE_MODEL = ROOT / "models" / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
+NATIVE_MODELS_DIR = ROOT / "models"
+DEFAULT_NATIVE_MODEL = NATIVE_MODELS_DIR / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -174,14 +175,22 @@ def cmd_run(args) -> int:
 
 
 def cmd_chat(args) -> int:
-    hw = detect(Path(args.model).parent)
+    hw = detect(Path(args.model).parent if args.model else NATIVE_MODELS_DIR)
     _require_apple(hw)
-    model = Path(args.model).expanduser()
+    if args.model:
+        model = Path(args.model).expanduser()
+    else:
+        # dev31: the best model present in models/ that this machine can hold
+        picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes)
+        if picked is None:
+            _die(f"No native model found in {NATIVE_MODELS_DIR} (expected {DEFAULT_NATIVE_MODEL.name})")
+        model = picked
+        print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes)
+        defaults = native_defaults(hw.ram_bytes, model)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     try:
@@ -215,7 +224,7 @@ def _serve_native(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes)
+        defaults = native_defaults(hw.ram_bytes, model)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     try:
@@ -305,16 +314,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("chat", help="Chat with the persistent native Red Lite runtime")
     s.add_argument(
-        "model", nargs="?", default=str(DEFAULT_NATIVE_MODEL),
-        help=f"Path to the Qwen3-Next GGUF (default: {DEFAULT_NATIVE_MODEL})",
+        "model", nargs="?", default=None,
+        help=f"Path to the Qwen3-Next GGUF (default: the best one in {NATIVE_MODELS_DIR}: IQ3_XXS when RAM >= 40 GiB "
+             "and its experts fit, else IQ2_XXS)",
     )
     s.add_argument("-p", "--prompt", help="Optional first user message")
     s.add_argument("--system", help="Optional system prompt")
     s.add_argument("-c", "--context", type=int, default=4096, help="Context positions (default: 4096)")
     s.add_argument(
         "--cache-mib", type=int, default=None,
-        help="Routed-expert cache in MiB (default: 22528 = every expert resident and preloaded "
-             "when RAM >= 40 GiB, otherwise 4096)",
+        help="Routed-expert cache in MiB (default: every expert resident and preloaded when RAM >= 40 GiB and the "
+             "model's expert payload fits, e.g. 21312 for IQ2_XXS / 29376 for IQ3_XXS; otherwise 4096)",
     )
     s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 512; 1 = token by token)")
     s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")
@@ -336,7 +346,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--native", action="store_true",
                    help="Serve with the native Red Lite runtime (redlite-server) instead of llama-server")
     s.add_argument("--cache-mib", type=int, default=None,
-                   help="--native: routed-expert cache in MiB (default: 22528 when RAM >= 40 GiB, otherwise 4096)")
+                   help="--native: routed-expert cache in MiB (default: the model's full-residency cache when RAM >= 40 GiB "
+                        "and it fits, otherwise 4096)")
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 512)")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")

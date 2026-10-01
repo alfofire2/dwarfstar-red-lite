@@ -11,7 +11,8 @@ extern "C" {
 
 typedef struct {
     uint32_t layer;
-    uint32_t ggml_type;
+    uint32_t ggml_type;    /* gate and up */
+    uint32_t down_type;    /* dev31: may differ from ggml_type */
     uint32_t hidden_size;
     uint32_t ffn_size;
     uint32_t expert_count;

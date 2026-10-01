@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "redlite_native_reference.h"
+#include "redlite_native_iq3.h"
 
 #include "redlite_native_model.h"
 #include "redlite_native_tables.h"
@@ -71,7 +72,7 @@ size_t rl_native_row_bytes(uint32_t ggml_type, uint32_t ncols) {
     if (!ncols || ncols % QK_IQ) return 0;
     if (ggml_type == 17u) return (size_t)(ncols / QK_IQ) * 74u;
     if (ggml_type == 29u) return (size_t)(ncols / QK_IQ) * 56u;
-    return 0;
+    return rl_iq3_row_bytes(ggml_type, ncols);   /* dev31: IQ3_XXS / IQ3_S experts (0 for other types) */
 }
 
 static double input_value(const float *xf, const double *xd, int use_double, uint32_t index) {
@@ -91,9 +92,19 @@ static int row_dot_impl(
         double *out,
         char *error,
         size_t error_cap) {
-    if (!row || !grid || !out || (!input_f && !input_d)) {
+    if (!row || !out || (!input_f && !input_d) || (!grid && !rl_iq3_supported(ggml_type))) {
         set_error(error, error_cap, "invalid native quant row-dot arguments");
         return 0;
+    }
+    if (rl_iq3_supported(ggml_type)) {   /* dev31: exact f32 dequantization (bit-identical to ggml), double accumulation */
+        (void)grid_count;
+        if (row_bytes != rl_iq3_row_bytes(ggml_type, ncols) ||
+            !(use_double ? rl_iq3_row_dot_d(ggml_type, row, input_d, ncols, out) : rl_iq3_row_dot(ggml_type, row, input_f, ncols, out))) {
+            set_error(error, error_cap, "native IQ3 row dot failed");
+            return 0;
+        }
+        if (error && error_cap) error[0] = '\0';
+        return 1;
     }
     const size_t expected = rl_native_row_bytes(ggml_type, ncols);
     if (!expected || row_bytes != expected) {
@@ -261,11 +272,14 @@ static int reference_expert_fd(
         uint32_t row_start,
         uint32_t row_count,
         const float *input,
-        const int8_t *grid,
-        size_t grid_count,
+        const rl_native_quant_tables *tables,
         double *out,
         char *error,
         size_t error_cap) {
+    const int8_t *grid = layout->ggml_type == 17u ? tables->iq2_xs : layout->ggml_type == 29u ? tables->iq1_m : NULL;
+    const size_t grid_count = layout->ggml_type == 17u ? RL_IQ2_XS_GRID_COUNT : RL_IQ1_M_GRID_COUNT;
+    const int8_t *dgrid = layout->down_type == 17u ? tables->iq2_xs : layout->down_type == 29u ? tables->iq1_m : NULL;
+    const size_t dgrid_count = layout->down_type == 17u ? RL_IQ2_XS_GRID_COUNT : RL_IQ1_M_GRID_COUNT;
     double *gate = (double *)malloc((size_t)ffn_size * sizeof(double));
     double *up = (double *)malloc((size_t)ffn_size * sizeof(double));
     double *act = (double *)malloc((size_t)ffn_size * sizeof(double));
@@ -282,8 +296,8 @@ static int reference_expert_fd(
                                up, error, error_cap);
     if (ok) {
         for (uint32_t i = 0; i < ffn_size; ++i) act[i] = silu_mul(gate[i], up[i]);
-        ok = reference_rows_fd(fd, layout->down_offset, layout->ggml_type, ffn_size,
-                               row_start, row_count, NULL, act, 1, grid, grid_count,
+        ok = reference_rows_fd(fd, layout->down_offset, layout->down_type, ffn_size,
+                               row_start, row_count, NULL, act, 1, dgrid, dgrid_count,
                                out, error, error_cap);
     }
     free(gate); free(up); free(act);
@@ -320,8 +334,6 @@ int rl_native_reference_topk(
 
     rl_native_quant_tables tables;
     if (!rl_native_quant_tables_init(&tables, error, error_cap)) return 0;
-    const int8_t *grid = info.ggml_type == 17u ? tables.iq2_xs : tables.iq1_m;
-    const size_t grid_count = info.ggml_type == 17u ? RL_IQ2_XS_GRID_COUNT : RL_IQ1_M_GRID_COUNT;
 
     int fd = open(model_path, O_RDONLY);
     if (fd < 0) {
@@ -348,9 +360,9 @@ int rl_native_reference_topk(
         }
         rl_expert_layout layout;
         if (!rl_native_expert_layout(map, layer, expert_ids[i], &layout, error, error_cap) ||
-            layout.ggml_type != info.ggml_type ||
+            layout.ggml_type != info.ggml_type || layout.down_type != info.down_type ||
             !reference_expert_fd(fd, &layout, info.hidden_size, info.ffn_size,
-                                 row_start, row_count, input, grid, grid_count,
+                                 row_start, row_count, input, &tables,
                                  expert_out, error, error_cap)) {
             ok = 0;
             break;

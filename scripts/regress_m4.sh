@@ -30,10 +30,15 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 BIN="$ROOT/.deps/redmetal"
 LLAMA_DIR="${REDLITE_LLAMA_DIR:-$ROOT/.deps/llama.cpp}"
-LOG="${REDLITE_REGRESS_LOG:-$ROOT/.deps/regress}"
+# the reference GGUF keeps .deps/regress (scripts/dev/quick_parity.sh reads its llama.cpp dumps there);
+# any other file gets its own directory so the two sets of dumps never mix
+MODEL_BASE="$(basename "$MODEL" .gguf)"
+if [[ "$MODEL_BASE" == "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS" ]]; then DEFAULT_LOG="$ROOT/.deps/regress"; else DEFAULT_LOG="$ROOT/.deps/regress-$MODEL_BASE"; fi
+LOG="${REDLITE_REGRESS_LOG:-$DEFAULT_LOG}"
 mkdir -p "$LOG"
 PASS=0
 FAIL=0
+SKIP=0
 FAILED=()
 
 run() {
@@ -63,6 +68,8 @@ expect_line() {
   fi
 }
 
+skip() { echo "SKIP  $1  ($2)"; SKIP=$((SKIP + 1)); }
+
 echo "== build =="
 run build.native make -C "$ROOT" native
 
@@ -78,25 +85,36 @@ run selftest.sanitize bash "$ROOT/scripts/sanitize_offline.sh"
 expect_line selftest.engine_kernels "ENGINE KERNEL SELFTEST: OK" "$BIN/redlite-engine" kernel-selftest
 
 echo "== stage parity (real GGUF) =="
+# The dense stage tools of dev11-dev17 check the tensor types of the reference IQ2_XXS GGUF (IQ2_XXS attn_qkv,
+# Q4_K ssm_out, ...). On another file (dev31: IQ3_XXS) they are skipped; the engine checks below (CPU oracle
+# vs Metal on all 48 layers, llama.cpp logits / greedy / long context) cover every layer of it.
+QKV_TYPE="$("$BIN/redlite-engine" dequant "$MODEL" --tensor blk.0.attn_qkv.weight --rows 1 --out /dev/null 2>/dev/null | grep -o '(IQ2_XXS)' || true)"
+LEGACY_DENSE=0; [[ -n "$QKV_TYPE" ]] && LEGACY_DENSE=1
+LEGACY_REASON="stage tool for the reference IQ2_XXS dense layout; covered by the engine checks"
 expect_line topk.parity "parity match       : YES" "$BIN/redlite-native" topk-parity "$MODEL"
 expect_line router.parity "router parity      : YES" "$BIN/redlite-router" router-parity "$MODEL"
 expect_line routed.parity "routed parity      : YES" "$BIN/redlite-router" routed-parity "$MODEL"
-expect_line ffn.layer0 "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 0 --top-k 10 --rows 8 --cache-mib 256
-expect_line ffn.layer0.full "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 0 --top-k 10 --rows 2048 --cache-mib 256
-expect_line ffn.layer6 "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 6 --top-k 10 --rows 8 --cache-mib 256
-expect_line deltanet.proj "projection parity  : YES" "$BIN/redlite-deltanet-proj" parity "$MODEL" --layer 0 --rows 8
-expect_line deltanet.prestate "prestate parity    : YES" "$BIN/redlite-deltanet-prestate" parity "$MODEL" --layer 0
-expect_line deltanet.state "state parity       : YES" "$BIN/redlite-deltanet-state" parity "$MODEL" --layer 0
-expect_line deltanet.tail "tail parity        : YES" "$BIN/redlite-deltanet-tail" parity "$MODEL" --layer 0
-expect_line deltanet.layer "COMPLETE DELTANET   : YES" "$BIN/redlite-deltanet-layer" parity "$MODEL" --layer 0
-expect_line recurrent.block "COMPLETE BLOCK       : YES" "$BIN/redlite-recurrent-block" parity "$MODEL" --layer 0 --top-k 10 --cache-mib 256
-expect_line attention.ctx1 "FULL ATTENTION     : YES" "$BIN/redlite-attention" parity "$MODEL" --layer 3 --position 0
-expect_line attention.ctx16 "FULL ATTENTION     : YES" "$BIN/redlite-attention" parity "$MODEL" --layer 3 --position 15
-expect_line attention.block "COMPLETE FULL ATTENTION BLOCK: YES" "$BIN/redlite-attention-block" parity "$MODEL" --layer 3 --position 7 --top-k 10 --cache-mib 256
-if [[ $QUICK -eq 1 ]]; then
-  expect_line decoder.stack.partial "PARTIAL DECODER STACK : YES" "$BIN/redlite-decoder-stack" parity "$MODEL" --layers 4
+if [[ $LEGACY_DENSE -eq 1 ]]; then
+  expect_line ffn.layer0 "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 0 --top-k 10 --rows 8 --cache-mib 256
+  expect_line ffn.layer0.full "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 0 --top-k 10 --rows 2048 --cache-mib 256
+  expect_line ffn.layer6 "COMPLETE FFN parity: YES" "$BIN/redlite-ffn" parity "$MODEL" --layer 6 --top-k 10 --rows 8 --cache-mib 256
+  expect_line deltanet.proj "projection parity  : YES" "$BIN/redlite-deltanet-proj" parity "$MODEL" --layer 0 --rows 8
+  expect_line deltanet.prestate "prestate parity    : YES" "$BIN/redlite-deltanet-prestate" parity "$MODEL" --layer 0
+  expect_line deltanet.state "state parity       : YES" "$BIN/redlite-deltanet-state" parity "$MODEL" --layer 0
+  expect_line deltanet.tail "tail parity        : YES" "$BIN/redlite-deltanet-tail" parity "$MODEL" --layer 0
+  expect_line deltanet.layer "COMPLETE DELTANET   : YES" "$BIN/redlite-deltanet-layer" parity "$MODEL" --layer 0
+  expect_line recurrent.block "COMPLETE BLOCK       : YES" "$BIN/redlite-recurrent-block" parity "$MODEL" --layer 0 --top-k 10 --cache-mib 256
+  expect_line attention.ctx1 "FULL ATTENTION     : YES" "$BIN/redlite-attention" parity "$MODEL" --layer 3 --position 0
+  expect_line attention.ctx16 "FULL ATTENTION     : YES" "$BIN/redlite-attention" parity "$MODEL" --layer 3 --position 15
+  expect_line attention.block "COMPLETE FULL ATTENTION BLOCK: YES" "$BIN/redlite-attention-block" parity "$MODEL" --layer 3 --position 7 --top-k 10 --cache-mib 256
+  if [[ $QUICK -eq 1 ]]; then
+    expect_line decoder.stack.partial "PARTIAL DECODER STACK : YES" "$BIN/redlite-decoder-stack" parity "$MODEL" --layers 4
+  else
+    expect_line decoder.stack "COMPLETE 48-LAYER DECODER STACK: YES" "$BIN/redlite-decoder-stack" parity "$MODEL" --position 7 --top-k 10 --cache-mib 256
+  fi
 else
-  expect_line decoder.stack "COMPLETE 48-LAYER DECODER STACK: YES" "$BIN/redlite-decoder-stack" parity "$MODEL" --position 7 --top-k 10 --cache-mib 256
+  for name in ffn.layer0 ffn.layer0.full ffn.layer6 deltanet.proj deltanet.prestate deltanet.state deltanet.tail deltanet.layer \
+      recurrent.block attention.ctx1 attention.ctx16 attention.block decoder.stack; do skip "$name" "$LEGACY_REASON"; done
 fi
 
 echo "== persistent engine =="
@@ -105,7 +123,7 @@ expect_line engine.parity "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine"
 
 if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   echo "== GPU-routed decode (dev21, full residency; >= 40 GiB) =="
-  expect_line engine.parity.gpu_routed "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib 22528 --context 64 --repeat 2
+  expect_line engine.parity.gpu_routed "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib full --context 64 --repeat 2
   grep -q "GPU-routed tokens     : 12 speculative" "$LOG/engine.parity.gpu_routed.log" || { echo "FAIL  engine.parity.gpu_routed.count (expected 12 GPU-routed tokens)"; FAIL=$((FAIL + 1)); FAILED+=(engine.parity.gpu_routed.count); }
 fi
 
@@ -123,6 +141,8 @@ expect_line tokenize.chat "^151644,872,198,840,20772,304,825,11652,3170,279,1288
   "$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat
 expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 40 --cache-mib 2048 --no-stream --stats
 expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
+# dev29: the second turn reuses the first turn's state and answers exactly like a reset engine (same run, same log)
+if grep -q "multi-turn reuse: identical greedy answer" "$LOG/server.stream_greedy.log"; then echo "PASS  server.reuse_greedy"; PASS=$((PASS + 1)); else echo "FAIL  server.reuse_greedy (see $LOG/server.stream_greedy.log)"; FAIL=$((FAIL + 1)); FAILED+=(server.reuse_greedy); fi
 expect_line generate.json '"batch":512,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
 # Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
 "$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
@@ -168,6 +188,8 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
     fi
     "$BIN/redlite-engine" logits "$MODEL" --tokens 9707,11,1879 --backend gpu --out "$LOG/native.bin" --cache-mib 1024 --context 64 >"$LOG/logits.native.log" 2>&1
     "$BIN/redlite-ref-llama" "$MODEL" logits --tokens 9707,11,1879 --out "$LOG/ref.bin" --ctx 64 >"$LOG/logits.ref.log" 2>&1
+    # dev31: CPU dequantization of one tensor of every quant type of the file vs ggml's to_float, bit for bit
+    expect_line dequant.vs_llama "DEQUANT PARITY: YES" bash "$ROOT/scripts/dev/dequant_check.sh" "$MODEL"
     expect_line logits.vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.bin" "$LOG/ref.bin"
     CHAT_IDS="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat | head -1)"
     CHAT_N="$(echo "$CHAT_IDS" | tr ',' '\n' | wc -l | tr -d ' ')"
@@ -192,6 +214,11 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
         "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --batch 1100 --cache-mib 4096 --context 1536 >"$LOG/logits.long.native.log" 2>&1
         "$BIN/redlite-ref-llama" "$MODEL" logits --tokens "$LONG_IDS" --out "$LOG/ref.long.bin" --dump-from 1100 --ctx 1536 >"$LOG/logits.long.ref.log" 2>&1
         expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+        if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
+          # dev30: full residency uses the engine's default chunk (2048 tokens, one chunk here) and the preloaded pool
+          "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.full.bin" --dump-from 1100 --cache-mib full --context 1536 >"$LOG/logits.long.full.native.log" 2>&1
+          expect_line logits.long_context_full_residency "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.full.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+        fi
       else
         echo "FAIL  logits.long_context_vs_llama (prompt only $LONG_N tokens)"; FAIL=$((FAIL + 1)); FAILED+=(logits.long_context_vs_llama)
       fi
@@ -202,7 +229,7 @@ else
 fi
 
 echo
-echo "regression summary: pass=$PASS fail=$FAIL"
+echo "regression summary: pass=$PASS fail=$FAIL skip=$SKIP"
 if [[ $FAIL -ne 0 ]]; then
   printf '  failed: %s\n' "${FAILED[@]}"
   exit 3

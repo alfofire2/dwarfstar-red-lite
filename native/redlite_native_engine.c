@@ -4,6 +4,7 @@
 
 #include "redlite_native_engine_internal.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -99,7 +100,8 @@ static int expect_dense(const rl_gguf_tensor *t, const char *what, uint32_t dims
         char *error, size_t cap) {
     if (!t) { snprintf(error, cap, "missing tensor %s", what); return 0; }
     const uint32_t ty = t->ggml_type;
-    const int supported = ty == 0u || ty == 1u || ty == 8u || ty == 10u || ty == 12u || ty == 13u || ty == 14u || ty == 16u;
+    const int supported = ty == 0u || ty == 1u || ty == 8u || ty == 10u || ty == 12u || ty == 13u || ty == 14u || ty == 16u ||
+                          rl_iq3_supported(ty);   /* dev31: IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS */
     if (!supported) { snprintf(error, cap, "tensor %s has unsupported dense type %u", t->name, ty); return 0; }
     return expect(t, what, ty, dims, d0, d1, error, cap);
 }
@@ -245,6 +247,7 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
 
     if (!audit_layers(e, error, cap)) { rl_engine_close(e); return NULL; }
     if (!rl_native_build_expert_map(model_path, in->n_expert, &e->expert_map, error, cap)) { rl_engine_close(e); return NULL; }
+    if (e->cfg.cache_mib == RL_ENGINE_CACHE_FULL) e->cfg.cache_mib = rl_engine_full_residency_mib(e);   /* dev31 */
     if (!e->expert_map.all_slice_safe || e->expert_map.layer_count != in->n_layer) {
         set_error(error, cap, "routed expert map is not slice-safe for every layer"); rl_engine_close(e); return NULL;
     }
@@ -335,7 +338,7 @@ int rl_engine_prefill(rl_engine *e, rl_engine_backend b, const uint32_t *tokens,
     rl_engine_step_stats local;
     if (!stats) stats = &local;
     memset(stats, 0, sizeof(*stats));
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
+    const uint32_t batch = rl_engine_prefill_batch(e);
     if (b == RL_BACKEND_CPU || batch == 1u) {
         for (uint32_t i = 0; i < count; ++i) {
             rl_engine_step_stats one;
@@ -400,6 +403,31 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *e, rl_engine_backend 
 }
 
 double rl_engine_now_ms_public(void) { return rl_engine_now_ms(); }
+
+uint64_t rl_engine_full_residency_mib(const rl_engine *e) {
+    if (!e || !e->expert_map.max_expert_triplet_bytes) return 0;
+    const uint64_t slot = (e->expert_map.max_expert_triplet_bytes + 4095u) & ~(uint64_t)4095u;   /* redmetal_topk slot alignment */
+    const uint64_t bytes = slot * e->expert_map.layer_count * e->expert_map.expert_count;
+    return (bytes + (1024u * 1024u) - 1u) / (1024u * 1024u);
+}
+
+int rl_engine_parse_cache_mib(const char *text, uint64_t *out) {
+    if (!text || !out || !*text) return 0;
+    if (strcmp(text, "full") == 0) { *out = RL_ENGINE_CACHE_FULL; return 1; }
+    char *end = NULL;
+    const unsigned long long v = strtoull(text, &end, 10);
+    if (!end || *end || !v || v > 1048576ull) return 0;
+    *out = (uint64_t)v;
+    return 1;
+}
+
+uint32_t rl_engine_prefill_batch(const rl_engine *e) {
+    if (!e) return 512u;
+    if (e->cfg.prefill_batch) return e->cfg.prefill_batch;
+    /* dev30: with every expert resident there are no loads to bound, and 2048-token chunks give each expert tile more
+     * pairs (1100-token prompt, M4 Max: ~663 tok/s in chunks of 512, ~811 in one chunk); scratch ~0.26 MiB per token */
+    return rl_engine_experts_preloaded(e, NULL) ? 2048u : 512u;
+}
 
 int rl_engine_experts_preloaded(const rl_engine *e, double *preload_ms) {
     if (preload_ms) *preload_ms = 0.0;

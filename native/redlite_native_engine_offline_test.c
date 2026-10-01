@@ -11,6 +11,7 @@
 #include "redlite_native_gguf_dir.h"
 #include "redlite_native_iq2_xxs.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_sampler.h"
 
 #include <inttypes.h>
@@ -202,6 +203,8 @@ int main(int argc, char **argv) {
     char error[512] = {0};
     if (!rl_quant_selftest(error, sizeof(error))) { fprintf(stderr, "quant selftest failed: %s\n", error); return 1; }
     printf("quant selftest        : OK (Q8_0 Q2_K Q4_K Q5_K Q6_K IQ2_XXS)\n");
+    if (!rl_iq3_selftest(error, sizeof(error))) { fprintf(stderr, "IQ3 selftest failed: %s\n", error); return 1; }
+    printf("IQ3 selftest          : OK (IQ3_XXS IQ3_S IQ2_S IQ4_XS block sizes, codebooks, decode)\n");
     if (!synthetic_gguf_test(error, sizeof(error))) { fprintf(stderr, "synthetic GGUF test failed: %s\n", error); return 1; }
     printf("synthetic GGUF parse  : OK (token_type length mismatch rejected)\n");
     if (!sampler_selftest(error, sizeof(error))) { fprintf(stderr, "sampler selftest failed: %s\n", error); return 1; }

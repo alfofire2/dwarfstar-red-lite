@@ -8,7 +8,12 @@
 3. POST /v1/chat/completions stream=true temperature=0: the concatenated deltas must equal
    the reference text byte for byte, the stream must end with finish_reason + [DONE]
 4. the same request with stream=false must return the same content
-5. SIGINT: the server must exit 0 ("shut down cleanly")
+5. dev29 state reuse: a second turn that extends that conversation (first answer + a new user
+   message) is answered with usage.prompt_tokens_details.cached_tokens > 0 (the first turn's ids
+   are reused, only the new suffix is prefilled); a second server started with --no-reuse
+   answers the same second turn from a reset engine (cached_tokens == 0). The two greedy answers
+   must be identical, and the first-token latencies of both are printed
+6. SIGINT: the server must exit 0 ("shut down cleanly")
 Prints "SERVER CHECK: YES" on success.
 """
 from __future__ import annotations
@@ -21,8 +26,10 @@ import re
 import signal
 import subprocess
 import sys
+import time
 
 PROMPT = "Why is the sky blue? Answer in one sentence."
+FOLLOW_UP = "Now explain it to a five-year-old, in two sentences."
 
 
 def post(port: int, body: dict) -> tuple[int, bytes]:
@@ -33,6 +40,80 @@ def post(port: int, body: dict) -> tuple[int, bytes]:
     data = resp.read()
     conn.close()
     return resp.status, data
+
+
+def stream_chat(port: int, body: dict) -> tuple[str, dict, float]:
+    """Streams one request; returns (content, final usage, seconds to the first content delta)."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
+    t0 = time.monotonic()
+    conn.request("POST", "/v1/chat/completions", body=json.dumps({**body, "stream": True}).encode(),
+                 headers={"Content-Type": "application/json"})
+    resp = conn.getresponse()
+    content, usage, ttft, buf = "", {}, -1.0, b""
+    while True:
+        chunk = resp.read1(65536) if hasattr(resp, "read1") else resp.read(65536)
+        if not chunk:
+            break
+        buf += chunk
+        while b"\n\n" in buf:
+            block, buf = buf.split(b"\n\n", 1)
+            payload = block.decode("utf-8")[len("data: "):]
+            if payload == "[DONE]":
+                continue
+            event = json.loads(payload)
+            delta = event["choices"][0]["delta"].get("content", "")
+            if delta and ttft < 0:
+                ttft = time.monotonic() - t0
+            content += delta
+            usage = event.get("usage", usage)
+    conn.close()
+    return content, usage, ttft
+
+
+def start_server(bin_dir: Path, model: str, cache_mib: str, *extra: str):
+    srv = subprocess.Popen(
+        [str(bin_dir / "redlite-server"), model, "--port", "0", "--cache-mib", cache_mib, *extra],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    line = srv.stdout.readline()
+    m = re.search(r":(\d+) ", line)
+    if not m:
+        print(f"server did not start: {line!r}\n{srv.stderr.read()}")
+        srv.kill()
+        return None, 0
+    return srv, int(m.group(1))
+
+
+def stop_server(srv) -> tuple[int, str]:
+    srv.send_signal(signal.SIGINT)
+    try:
+        rc = srv.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        srv.kill()
+        rc = -1
+    return rc, srv.stderr.read()
+
+
+def multi_turn(bin_dir: Path, model: str, cache_mib: str, port: int, max_tokens: int) -> bool:
+    first = [{"role": "user", "content": PROMPT}]
+    base = {"temperature": 0, "max_tokens": max_tokens}
+    reply, _, _ = stream_chat(port, {**base, "messages": first})
+    second = first + [{"role": "assistant", "content": reply}, {"role": "user", "content": FOLLOW_UP}]
+    warm, warm_usage, warm_ttft = stream_chat(port, {**base, "messages": second})
+    cold_srv, cold_port = start_server(bin_dir, model, cache_mib, "--no-reuse")
+    if not cold_srv:
+        return False
+    try:
+        cold, cold_usage, cold_ttft = stream_chat(cold_port, {**base, "messages": second})
+    finally:
+        cold_rc, cold_err = stop_server(cold_srv)
+    warm_cached = warm_usage.get("prompt_tokens_details", {}).get("cached_tokens", -1)
+    cold_cached = cold_usage.get("prompt_tokens_details", {}).get("cached_tokens", -1)
+    print(f"turn 2 warm: cached={warm_cached}/{warm_usage.get('prompt_tokens')} ttft={warm_ttft * 1000:.0f} ms content={warm!r}")
+    print(f"turn 2 cold: cached={cold_cached}/{cold_usage.get('prompt_tokens')} ttft={cold_ttft * 1000:.0f} ms content={cold!r}")
+    ok = warm_cached > 0 and cold_cached == 0 and warm == cold and bool(warm) and cold_rc == 0
+    print(f"multi-turn reuse: {'identical greedy answer' if ok else 'MISMATCH'}")
+    return ok
 
 
 def main() -> int:
@@ -79,6 +160,7 @@ def main() -> int:
         print(f"blocking: status={status2} content={plain!r}")
 
         ok = status == 200 and bool(done) and finish in ("stop", "length") and streamed == expected and plain == expected
+        ok = multi_turn(bin_dir, args.model, args.cache_mib, port, args.max_tokens) and ok
     finally:
         srv.send_signal(signal.SIGINT)
         try:

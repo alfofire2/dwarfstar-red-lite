@@ -27,12 +27,14 @@ typedef enum {
 
 typedef struct {
     uint32_t context;      /* KV-cache capacity in positions (default 4096) */
-    uint64_t cache_mib;    /* routed-expert cache budget for the Metal path (default 4096) */
+    uint64_t cache_mib;    /* routed-expert cache budget for the Metal path (default 4096); RL_ENGINE_CACHE_FULL: every
+                            * routed expert of the file (dev31: computed from its expert payload, rl_engine_full_residency_mib) */
     uint32_t top_k;        /* 0 -> model expert_used_count */
     int enable_cpu;        /* keep a CPU oracle backend */
     int enable_gpu;        /* create the Metal backend */
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
-    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 512, 1 -> token-by-token); larger chunks amortize the per-layer expert union */
+    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 2048 when every expert is preloaded, else 512;
+                             * 1 -> token-by-token); larger chunks amortize the per-layer expert union */
 } rl_engine_config;
 
 typedef struct {
@@ -120,6 +122,14 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_bac
 /* dev21: 1 when the Metal backend preloaded every routed expert at open (full residency); preload_ms receives the time. */
 int rl_engine_experts_preloaded(const rl_engine *engine, double *preload_ms);
 
+#define RL_ENGINE_CACHE_FULL UINT64_MAX
+/* MiB of expert cache that holds every routed expert of the opened file: 48 x 512 pool slots of the largest
+ * gate+up+down triplet rounded up to 4 KiB (IQ2_XXS GGUF 21312, IQ3_XXS GGUF 29376). */
+uint64_t rl_engine_full_residency_mib(const rl_engine *engine);
+/* Parse a --cache-mib value: a number of MiB or "full" (RL_ENGINE_CACHE_FULL). Returns 1 on success. */
+int rl_engine_parse_cache_mib(const char *text, uint64_t *out);
+/* Effective prefill chunk: cfg.prefill_batch, or the default for this engine (dev30: 2048 with full residency, else 512). */
+uint32_t rl_engine_prefill_batch(const rl_engine *engine);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
 

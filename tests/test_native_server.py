@@ -101,7 +101,7 @@ class NativeServerProtocolTests(unittest.TestCase):
         subprocess.run(
             [_compiler(), "-O1", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
              f"-I{NATIVE}", str(NATIVE / "redlite_native_server.c"), str(NATIVE / "redlite_native_server_fake.c"),
-             "-lm", "-o", str(cls.binary)],
+             "-lm", "-pthread", "-o", str(cls.binary)],
             check=True, capture_output=True,
         )
         cls.server = FakeServer(cls.binary)
@@ -204,7 +204,9 @@ class NativeServerProtocolTests(unittest.TestCase):
         self.assertEqual(resp.status, 400)
         resp, data = self.server.request("POST", "/v1/chat/completions", {"messages": []})
         self.assert_error(resp, data, 400, "at least one")
-        resp, data = self.server.request("POST", "/v1/chat/completions", user("x", stop=["\n"]))
+        resp, data = self.server.request("POST", "/v1/chat/completions", user("x", stop=["a", "b", "c", "d", "e"]))
+        self.assert_error(resp, data, 400, "at most 4")
+        resp, data = self.server.request("POST", "/v1/chat/completions", user("x", stop=""))
         self.assert_error(resp, data, 400, "stop")
         resp, data = self.server.request("GET", "/v1/chat/completions")
         self.assert_error(resp, data, 405, "POST")
@@ -263,6 +265,108 @@ class NativeServerProtocolTests(unittest.TestCase):
             json.loads(data)  # every answer is valid JSON, even for garbage input
         resp, _ = self.server.request("GET", "/health")
         self.assertEqual(resp.status, 200)
+
+    def test_stop_sequences_cut_the_completion(self):
+        # "Echo: one, two, three" is emitted in 3-byte chunks: ", t" spans chunk boundaries
+        _, data = self.server.request("POST", "/v1/chat/completions", user("one, two, three", stop=", t"))
+        body = json.loads(data)
+        self.assertEqual(body["choices"][0]["message"]["content"], "Echo: one")
+        self.assertEqual(body["choices"][0]["finish_reason"], "stop")
+        _, data = self.server.request("POST", "/v1/chat/completions",
+                                      user("one, two, three", stop=["zzz", "hree", "wo"], stream=True))
+        events, done = parse_sse(data)
+        self.assertTrue(done)
+        content = "".join(e["choices"][0]["delta"].get("content", "") for e in events)
+        self.assertEqual(content, "Echo: one, t")  # earliest match ("wo") wins, nothing after it is sent
+        self.assertEqual(events[-1]["choices"][0]["finish_reason"], "stop")
+        # a held-back partial match that never completes is flushed at the end
+        _, data = self.server.request("POST", "/v1/chat/completions", user("abc ta", stop="tail"))
+        self.assertEqual(json.loads(data)["choices"][0]["message"]["content"], "Echo: abc ta")
+        # multi-byte stop sequence, split across chunks
+        _, data = self.server.request("POST", "/v1/chat/completions", user("x è 😀 y", stop="😀"))
+        self.assertEqual(json.loads(data)["choices"][0]["message"]["content"], "Echo: x è ")
+
+    def test_state_reuse_only_when_the_prompt_extends_the_previous_turn(self):
+        srv = FakeServer(self.binary)
+        try:
+            def chat(messages, **extra):
+                resp, data = srv.request("POST", "/v1/chat/completions", {"messages": messages, **extra})
+                self.assertEqual(resp.status, 200, data)
+                return json.loads(data)
+            first = [{"role": "user", "content": "hi"}]
+            a = chat(first)
+            self.assertEqual(a["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+            reply = a["choices"][0]["message"]["content"]
+            second = first + [{"role": "assistant", "content": reply}, {"role": "user", "content": "more"}]
+            b = chat(second)
+            state = len(("<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n" + reply).encode())
+            self.assertEqual(b["usage"]["prompt_tokens_details"]["cached_tokens"], state)
+            # an edited earlier turn does not extend the state: full reset
+            edited = [{"role": "user", "content": "HI"}, {"role": "assistant", "content": reply}, {"role": "user", "content": "more"}]
+            self.assertEqual(chat(edited)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+            # the same prompt again (not a proper extension) is not reused either
+            self.assertEqual(chat(edited)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+            # a reply cut by a stop sequence differs from the fed-back tokens: no reuse on the next turn
+            c = chat(first, stop="ho")
+            self.assertEqual(c["choices"][0]["message"]["content"], "Ec")
+            nxt = first + [{"role": "assistant", "content": "Ec"}, {"role": "user", "content": "x"}]
+            self.assertEqual(chat(nxt)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+            # a failed request leaves no reusable state
+            chat(first)
+            srv.request("POST", "/v1/chat/completions", {"messages": first + [{"role": "assistant", "content": "Echo: hi"}, {"role": "user", "content": "__fail__"}]})
+            again = first + [{"role": "assistant", "content": "Echo: hi"}, {"role": "user", "content": "ok"}]
+            self.assertEqual(chat(again)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+        finally:
+            srv.stop()
+
+    def test_concurrent_requests_run_in_arrival_order(self):
+        import threading
+        srv = FakeServer(self.binary, "--token-delay-ms", "20")
+        try:
+            done, lock = [], threading.Lock()
+            def worker(tag):
+                resp, data = srv.request("POST", "/v1/chat/completions", user(tag * 12))
+                with lock:
+                    done.append((tag, resp.status, json.loads(data)["choices"][0]["message"]["content"]))
+            threads = []
+            for tag in "ABCD":
+                t = threading.Thread(target=worker, args=(tag,))
+                t.start()
+                threads.append(t)
+                time.sleep(0.05)  # arrival order A, B, C, D
+            # /health is answered while the queue is busy
+            t0 = time.monotonic()
+            resp, _ = srv.request("GET", "/health")
+            self.assertEqual(resp.status, 200)
+            self.assertLess(time.monotonic() - t0, 0.5)
+            for t in threads:
+                t.join(timeout=30)
+            self.assertEqual([d[0] for d in done], list("ABCD"))
+            for tag, status, content in done:
+                self.assertEqual(status, 200)
+                self.assertEqual(content, "Echo: " + tag * 12)
+        finally:
+            srv.stop()
+
+    def test_full_queue_answers_503(self):
+        import threading
+        srv = FakeServer(self.binary, "--token-delay-ms", "40", "--queue", "1")
+        try:
+            results = []
+            def worker():
+                resp, data = srv.request("POST", "/v1/chat/completions", user("x" * 30))
+                results.append(resp.status)
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for t in threads:
+                t.start()
+                time.sleep(0.05)  # one running, one waiting
+            resp, data = srv.request("POST", "/v1/chat/completions", user("third"))
+            self.assert_error(resp, data, 503, "busy")
+            for t in threads:
+                t.join(timeout=30)
+            self.assertEqual(results, [200, 200])
+        finally:
+            srv.stop()
 
     def test_sigint_shuts_down_cleanly(self):
         srv = FakeServer(self.binary)

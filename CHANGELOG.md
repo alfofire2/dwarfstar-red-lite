@@ -1,5 +1,102 @@
 # Changelog
 
+## 0.4.0 — 2026-09-30
+
+The native runtime, faster and with a second, higher-quality GGUF. Work of dev28–dev32
+below, all on the M4 Max 48 GiB (nothing re-measured on the M4 Pro 24 GiB or an M4 Air).
+
+**What 0.4.0 adds**
+
+- **Prefill** (dev30): tiled attention, experts on simdgroup matrices, a faster DeltaNet
+  recurrence and dense GEMM, one residency set, 2048-token chunks with full residency.
+  1100 tokens: 307.3 → 891.9 tok/s; 8192 tokens: 212.6 → 926.9 tok/s (IQ2_XXS, all experts
+  resident; the pinned llama.cpp on the same ids: 858.3 / 893.7). Decode unchanged.
+- **IQ3_XXS GGUF** (dev31): IQ3_XXS, IQ3_S, IQ2_S and IQ4_XS decoded bit-identically to
+  ggml; the 31.7 GB file runs with every expert resident (29,376 MiB, sized from its
+  payload). Perplexity on the same local text 14.29 vs 16.47 for IQ2_XXS; greedy identical
+  to llama.cpp, KL 1.4e-12. `redlite chat` picks it when RAM ≥ 40 GiB.
+- **Server** (dev29): conversation-state reuse (second-turn first token 3.8 s → 0.17 s),
+  stop sequences, FIFO queue.
+- **Distribution** (dev28): model-free Linux CI on every push/PR, `package_release.sh`
+  arm64 tarball with SHA256.
+
+**Milestone targets of the 0.4.0 cycle** (M4 Max 48 GiB):
+
+| Milestone | Target | Result |
+|---|---|---|
+| dev28 | Linux CI on push/PR, green on GitHub; release tarball | CI and tarball done; **green on GitHub not reached** (GitHub does not start hosted jobs on this account: billing) |
+| dev29 | state reuse (greedy identical), TTFT before/after, stop, FIFO, fake + real tests | reached: identical answer, 3833 → 173 ms |
+| dev30 | prefill 1100 ≥ llama.cpp same prompt; 8192 ≥ 280 tok/s; decode 22 GiB not below 0.3.0 | reached with full residency: 891.9 (llama.cpp 858.34), 926.9, decode 71.09 vs 70.47 (A/B); at 4 GiB 1100 tokens 545.8, below llama.cpp |
+| dev31 | better GGUF with full residency, new quant types, greedy = llama.cpp, KL ≤ 1e-5, perplexity both files, chat picks it | reached: IQ3_XXS, KL 1.4e-12, 24/24 greedy, PPL 14.29 vs 16.47 |
+| dev32 | 0.4.0 release, README per model/cache, tarball, PR | done (PR open, not merged) |
+
+
+### dev31 — IQ3_XXS GGUF: new quant types, full residency on 48 GiB (M4 Max 48 GiB)
+
+- Bartowski `…-IQ3_XXS.gguf` (31,726,709,216 bytes, SHA-256 = HF LFS id) runs natively
+  with every expert resident (29,376 MiB, computed from its expert payload).
+- New quant types, CPU reference bit-identical to ggml's `to_float` and Metal kernels:
+  IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS; routed experts may have a down type different from
+  gate/up (type word in the Metal kernels, ABI unchanged).
+- Parity on the IQ3_XXS file: CPU oracle vs Metal YES, GPU-routed YES, logits vs llama.cpp
+  KL 1.4e-12, 24 greedy tokens identical, 1100-position context PASS.
+- Perplexity (pinned llama.cpp, frozen local corpus): IQ2_XXS 16.47, IQ3_XXS 14.29.
+- `--cache-mib full`; `redlite chat` picks IQ3_XXS when RAM ≥ 40 GiB and it fits, else
+  IQ2_XXS; the planner sizes the cache from the payload (no more 22,528 constant).
+- `regress_m4.sh` runs on both files (dequant parity vs ggml added; legacy dense stage
+  tools SKIP on the IQ3_XXS layout). See `docs/REDLITE_DEV31_IQ3.md`.
+
+### dev30 — batched prefill: tiled attention, matrix experts, faster dense pass (M4 Max 48 GiB)
+
+- Tiled causal attention (`attn_fa_b`, flash-attention order on f32 simdgroup matrices),
+  batched experts on simdgroup matrices with split accumulators, DeltaNet recurrence with one
+  simdgroup per state row, threadgroup-staged dense GEMM, one Metal residency set for every
+  engine buffer, 2048-token chunks by default when every expert is preloaded (512 otherwise),
+  no expert prefetch under full residency.
+- Prefill at 22 GiB (full residency, default chunk): **891.9 tok/s** on 1100 tokens
+  (pinned llama.cpp on the same ids: 858.34) and **926.9 tok/s** on 8192 (0.3.0: 307.3 /
+  212.6 at 4 GiB). At 4 GiB with 512-token chunks: 545.8 / 645.6. Decode unchanged
+  (A/B at 22 GiB: 71.09 vs 70.47 for the 0.3.0 binary).
+- Tried and reverted: router selection on the GPU (no measurable gain), skipping empty
+  pair blocks in the expert kernels (slower).
+- `regress_m4.sh`: `logits.long_context_full_residency`; `long_positions.sh` bound 5.0 at
+  ≥ 8192 positions (native self-consistency floor 4.45 measured on 0.3.0);
+  `bench_m4.sh --only prefill22`; `RL_PREFILL_PROFILE=1`. See `docs/REDLITE_DEV30_PREFILL.md`.
+
+### dev29 — server: state reuse across turns, stop sequences, FIFO queue (M4 Max 48 GiB)
+
+- `redlite-server` keeps the engine state between requests when the new prompt's ids extend
+  exactly the ids the state holds (previous prompt + generated tokens that were fed back);
+  otherwise it resets and ingests everything (the DeltaNet state cannot be truncated).
+  `usage.prompt_tokens_details.cached_tokens` reports the reuse; `--no-reuse` disables it.
+  Second turn of a 1185-id conversation: TTFT 3833 → 173 ms (4 GiB cache) and
+  3779 → 167 ms (22 GiB), answer identical to 0.3.0 and to `--no-reuse`.
+- `stop` (string or up to 4 strings) is supported: output ends before the earliest match,
+  `finish_reason: "stop"`; partial matches are held back like incomplete UTF-8.
+- Requests are queued FIFO and run by one worker thread; `/health` and `/v1/models` answer
+  while a generation runs; `--queue N` (default 16) waiting requests, then `503`.
+- Tests: 4 new protocol tests (fake backend, also under ASan/UBSan), selftest cases, and the
+  real-model regress check `server.reuse_greedy` (warm turn 2 == cold turn 2, greedy).
+  `scripts/dev/server_ttft.py` measures the second-turn latency.
+  See `docs/REDLITE_DEV29_SERVER.md`.
+
+### dev28 — Linux CI, release tarball, same-prompt llama.cpp baseline (M4 Max 48 GiB)
+
+- `.github/workflows/ci.yml` runs on every push and pull request: one Linux job with ruff,
+  compileall, `make native` and `make sanitize` (warnings fail) and `make test`. macOS
+  hosted jobs and `lint.yml` removed; the self-hosted M4 workflow stays manual.
+  **Not green on GitHub**: GitHub refuses to start hosted jobs on this account (billing);
+  the same commands pass in a Linux container locally.
+- `scripts/package_release.sh`: `dist/redlite-<version>-macos-arm64.tar.gz` with
+  `redlite-generate`, `redlite-server`, `redlite-engine` (`-mcpu=apple-m1`, macOS ≥ 14),
+  `INSTALL.md`, `BUILDINFO`, and a `.sha256` file. `REDLITE_MCPU` / `REDLITE_BUILD_OUT`
+  for the build scripts.
+- `redlite-ref-llama bench` and `bench_m4.sh --only prefill8192|llama`: llama.cpp is now
+  measured on the exact ids of the native benchmark. Baseline (0.3.0, medians of three
+  cooled runs): native decode 71.50 / 47.93 tok/s (22 / 4 GiB), prefill 307.30 (1100) and
+  212.60 (8192) tok/s; llama.cpp prefill 858.34 / 893.71 tok/s, decode 72.46 tok/s.
+  See `docs/REDLITE_DEV28_CI_RELEASE.md`.
+
 ## 0.3.0 — 2026-09-30
 
 First release of the **native runtime**: Red Lite's own C11 / Objective-C / Metal

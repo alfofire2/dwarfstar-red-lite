@@ -81,6 +81,13 @@ bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py 
 .deps/redmetal/redlite-layer-audit     MODEL --tensors
 ```
 
+GitHub CI (`.github/workflows/ci.yml`, dev28) runs on every push and PR on Linux only:
+ruff, compileall, `make native` and `make sanitize` with warnings as failures, `make test`.
+`scripts/package_release.sh` builds the arm64 release tarball (`-mcpu=apple-m1`,
+`REDLITE_MCPU` / `REDLITE_BUILD_OUT` select the CPU and the output directory of the
+build scripts). `scripts/dev/bench_m4.sh MODEL --only llama` measures the pinned llama.cpp
+on the same ids as the native benchmark (`redlite-ref-llama MODEL bench`).
+
 The full list of invocations that constitute "field validation" is the step list in
 `.github/workflows/mac-m4-field-validation.yml` (self-hosted M4 Pro runner, reads
 `REDLITE_MODEL_PATH`). When you add a new native stage, add its parity step there.
@@ -142,7 +149,10 @@ router near-tie at position 1035 is documented in `docs/REDLITE_DEV18_ENGINE.md`
    behind `rl_server_backend`; `redlite_native_server_cli.c` binds it to `rl_engine`,
    `redlite_native_server_fake.c` to a deterministic echo backend used by
    `tests/test_native_server.py`). Protocol changes are tested against the fake backend;
-   the real-model check is `server.stream_greedy` in `regress_m4.sh`.
+   the real-model check is `server.stream_greedy` in `regress_m4.sh`. dev29: FIFO queue with one
+   worker thread (the accepting thread answers `/health` at once), `stop` sequences
+   (`rl_stop_scan`), and state reuse across requests only when the new prompt ids extend the
+   held ids exactly (`rl_prefix_reuse`; `server.reuse_greedy` checks warm == cold greedy).
 
 ### Native source conventions
 
@@ -187,6 +197,13 @@ executables, so ABI-visible changes there affect both layers.
   expert scale. Router is F32 `(2048, 512)` per layer.
 - Routed expert quant types in the target GGUF are mixed: layers 0–5 and 43–47 are
   IQ2_XS, layers 6–42 are IQ1_M. Dispatch is by the tensor's actual GGML type.
+- dev31: the second supported file is Bartowski's `…-IQ3_XXS.gguf` (31.7 GB): experts
+  gate/up IQ3_XXS, down IQ3_S or IQ3_XXS per layer (the expert layout carries `down_type`;
+  Metal kernels get a type word, gate/up in bits 0–7, down in 8–15), dense IQ3_XXS / IQ2_S /
+  IQ4_XS / Q8_0 / Q6_K, IQ3_S embedding. `redlite_native_iq3.[ch]` decodes them bit-identically
+  to ggml (`scripts/dev/dequant_check.sh`). Full-residency cache = 48 × 512 slots of the largest
+  expert triplet rounded to 4 KiB (`--cache-mib full`: 21312 MiB IQ2_XXS, 29376 MiB IQ3_XXS).
+  `regress_m4.sh MODEL` works on both; dumps of a non-reference file go to `.deps/regress-<name>`.
 - DeltaNet pairs value head `h` with key head `h / (H_v / H_k)` (repeat-interleave,
   as in llama.cpp); `h % H_k` is wrong and was fixed in dev18.
 - Token embedding is Q2_K, the LM head is an untied Q5_K `output.weight`; tokenizer

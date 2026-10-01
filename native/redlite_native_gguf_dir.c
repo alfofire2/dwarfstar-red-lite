@@ -283,6 +283,10 @@ size_t rl_gguf_row_bytes(uint32_t ggml_type, uint64_t ncols) {
         case 14: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 210u;   /* Q6_K */
         case 16: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 66u;    /* IQ2_XXS */
         case 17: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 74u;    /* IQ2_XS */
+        case 18: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 98u;    /* IQ3_XXS (dev31) */
+        case 21: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 110u;   /* IQ3_S */
+        case 22: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 82u;    /* IQ2_S */
+        case 23: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 136u;   /* IQ4_XS */
         case 29: return ncols % 256u ? 0 : (size_t)(ncols / 256u) * 56u;    /* IQ1_M */
         case 30: return (size_t)ncols * 2u;                                  /* BF16 */
         default: return 0;
@@ -293,7 +297,8 @@ const char *rl_gguf_type_name(uint32_t ggml_type) {
     switch (ggml_type) {
         case 0: return "F32"; case 1: return "F16"; case 8: return "Q8_0"; case 10: return "Q2_K";
         case 12: return "Q4_K"; case 13: return "Q5_K"; case 14: return "Q6_K"; case 16: return "IQ2_XXS";
-        case 17: return "IQ2_XS"; case 29: return "IQ1_M"; case 30: return "BF16";
+        case 17: return "IQ2_XS"; case 18: return "IQ3_XXS"; case 21: return "IQ3_S"; case 22: return "IQ2_S";
+        case 23: return "IQ4_XS"; case 29: return "IQ1_M"; case 30: return "BF16";
         default: return "UNKNOWN";
     }
 }

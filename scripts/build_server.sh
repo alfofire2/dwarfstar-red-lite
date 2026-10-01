@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/.deps/redmetal"
+OUT="${REDLITE_BUILD_OUT:-$ROOT/.deps/redmetal}"   # REDLITE_BUILD_OUT: release packaging builds elsewhere
 N="$ROOT/native"
 mkdir -p "$OUT"
 
@@ -17,6 +17,7 @@ ENGINE=(
   "$N/redlite_native_sampler.c"
   "$N/redlite_native_gguf_dir.c"
   "$N/redlite_native_quant_cpu.c"
+  "$N/redlite_native_iq3.c"
   "$N/redlite_native_layer_map.c"
   "$N/redlite_native_router.c"
   "$N/redlite_native_router_exec.c"
@@ -30,12 +31,12 @@ ENGINE=(
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  xcrun --sdk macosx clang -O2 "${FLAGS[@]}" -mcpu=native \
+  xcrun --sdk macosx clang -O2 "${FLAGS[@]}" -mcpu="${REDLITE_MCPU:-native}" \
     "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c" \
-    -lm -o "$OUT/redlite-server-fake"
+    -lm -lpthread -o "$OUT/redlite-server-fake"
   xcrun --sdk macosx clang \
     -O3 "${FLAGS[@]}" -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu=native -fobjc-arc \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc \
     "$N/redlite_native_server_cli.c" "$N/redlite_native_server.c" \
     "${ENGINE[@]}" "$N/redlite_native_metal.c" \
     "$N/redmetal_topk.m" "$N/redmetal_router.m" "$N/redmetal_engine.m" "$N/redmetal_engine_prefill.m" \
@@ -45,7 +46,7 @@ else
   CC_BIN="${CC:-cc}"
   "$CC_BIN" -O2 "${FLAGS[@]}" -march=native \
     "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c" \
-    -lm -o "$OUT/redlite-server-fake"
+    -lm -lpthread -o "$OUT/redlite-server-fake"
   "$CC_BIN" -O2 "${FLAGS[@]}" -Wno-overlength-strings -march=native \
     "$N/redlite_native_server_cli.c" "$N/redlite_native_server.c" \
     "${ENGINE[@]}" \

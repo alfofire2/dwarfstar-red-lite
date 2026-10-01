@@ -9,8 +9,11 @@
  * tested anywhere without a model.
  *
  * Endpoints: GET /health, GET /v1/models, POST /v1/chat/completions (stream true/false).
- * One request at a time (the engine is single-sequence); every response closes the
- * connection. Each request is independent: the backend resets its state per request.
+ * The engine is single-sequence: chat requests are parsed by the accepting thread and run
+ * one at a time, in arrival order, by one worker thread (dev29 FIFO queue; /health and
+ * /v1/models are answered while a generation runs). Every response closes the connection.
+ * A backend may keep its state between requests when the new prompt extends the previous
+ * one exactly (dev29, see rl_prefix_reuse); otherwise it resets.
  */
 #include <signal.h>
 #include <stddef.h>
@@ -21,6 +24,8 @@ extern "C" {
 #endif
 
 #define RL_SERVER_MAX_MESSAGES 256u
+#define RL_SERVER_MAX_STOP 4u          /* OpenAI: up to 4 stop sequences */
+#define RL_SERVER_MAX_STOP_BYTES 256u  /* per stop sequence */
 
 typedef struct {
     char *role;     /* "system" | "user" | "assistant" */
@@ -38,16 +43,19 @@ typedef struct {
     uint64_t seed;
     int has_seed;
     int stream;
+    char *stop[RL_SERVER_MAX_STOP];   /* stop sequences (non-empty UTF-8), not included in the output */
+    uint32_t stop_count;
 } rl_chat_request;
 
 typedef struct {
     uint32_t prompt_tokens;
     uint32_t completion_tokens;
-    int finish_length;     /* 1: stopped by max_tokens, 0: end-of-generation token */
+    int finish_length;     /* 1: stopped by max_tokens, 0: end-of-generation token or stop sequence */
+    uint32_t cached_tokens; /* prompt tokens reused from the previous request's state (usage.prompt_tokens_details) */
 } rl_server_result;
 
 /* Receives generated UTF-8 bytes (any split). Returns 0 when generation must stop
- * (client disconnected or shutdown requested). */
+ * (client disconnected, shutdown requested or a stop sequence matched). */
 typedef int (*rl_server_emit_fn)(void *sink, const char *bytes, size_t len);
 
 typedef struct {
@@ -68,6 +76,7 @@ typedef struct {
     uint32_t default_top_k;
     float default_min_p;
     int read_timeout_s;         /* per-connection receive timeout (default 30) */
+    uint32_t queue_max;         /* chat requests waiting behind the running one before 503 (default 16) */
 } rl_server_config;
 
 void rl_server_config_default(rl_server_config *cfg);
@@ -91,7 +100,18 @@ char *rl_server_chatml(const rl_chat_request *req);
  * sequence (bytes after it must wait for the next token). */
 size_t rl_utf8_complete_prefix(const char *buf, size_t len);
 
-/* Model-free checks of the parser, prompt builder, UTF-8 hold-back and JSON escaping. */
+/* dev29 state reuse: history_len when history[0..history_len) is a proper prefix of
+ * ids[0..count) (the new prompt extends exactly what the backend state holds), else 0.
+ * Recurrent state cannot be rolled back, so any other case needs a reset and a full prefill. */
+uint32_t rl_prefix_reuse(const uint32_t *history, uint32_t history_len, const uint32_t *ids, uint32_t count);
+
+/* Stop-sequence scan of not-yet-sent text. Returns 1 when a stop sequence occurs in buf:
+ * *emit_len is the offset of the earliest occurrence (the text before it is sent, the rest
+ * dropped). Returns 0 otherwise: *emit_len = len minus the longest suffix of buf that is a
+ * proper prefix of some stop sequence (that suffix is held back until more text arrives). */
+int rl_stop_scan(const char *buf, size_t len, char *const *stops, uint32_t stop_count, size_t *emit_len);
+
+/* Model-free checks of the parser, prompt builder, UTF-8 hold-back, stop scan, prefix reuse and JSON escaping. */
 int rl_server_selftest(char *error, size_t error_cap);
 
 #ifdef __cplusplus

@@ -8,6 +8,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -471,6 +472,16 @@ static int number_member(jp *j, double *out, const char *name) {
 
 static int integer_in(double v, double lo, double hi) { return v == floor(v) && v >= lo && v <= hi; }
 
+static int stop_string(jp *j, rl_chat_request *req) {
+    if (req->stop_count >= RL_SERVER_MAX_STOP) return jfail(j, "at most 4 stop sequences are supported");
+    char *s = NULL;
+    if (!jstring(j, &s)) return 0;
+    const size_t n = strlen(s);
+    if (!n || n > RL_SERVER_MAX_STOP_BYTES) { free(s); return jfail(j, "stop sequences must be 1 to 256 bytes long"); }
+    req->stop[req->stop_count++] = s;
+    return 1;
+}
+
 static int request_member(jp *j, const char *key, void *user) {
     rl_chat_request *req = (rl_chat_request *)user;
     double v = NAN;
@@ -531,7 +542,21 @@ static int request_member(jp *j, const char *key, void *user) {
     }
     if (strcmp(key, "stop") == 0) {
         if (jis_null(j)) return jliteral(j, "null");
-        return jfail(j, "stop sequences are not supported; generation stops at the model's end-of-turn token");
+        for (uint32_t i = 0; i < req->stop_count; ++i) { free(req->stop[i]); req->stop[i] = NULL; }
+        req->stop_count = 0;
+        if (j->p < j->end && *j->p == '"') return stop_string(j, req);
+        if (j->p >= j->end || *j->p != '[') return jfail(j, "\"stop\" must be a string or an array of strings");
+        if (++j->depth > RL_JSON_MAX_DEPTH) return jfail(j, "JSON nesting too deep");
+        j->p++;
+        jws(j);
+        if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
+        for (;;) {
+            if (!stop_string(j, req)) return 0;
+            jws(j);
+            if (j->p < j->end && *j->p == ',') { j->p++; jws(j); continue; }
+            if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
+            return jfail(j, "expected ',' or ']' in stop");
+        }
     }
     if (strcmp(key, "tools") == 0 || strcmp(key, "functions") == 0) {
         if (jis_null(j)) return jliteral(j, "null");
@@ -547,6 +572,29 @@ void rl_chat_request_free(rl_chat_request *req) {
         free(req->messages[i].content);
     }
     req->message_count = 0;
+    for (uint32_t i = 0; i < req->stop_count; ++i) { free(req->stop[i]); req->stop[i] = NULL; }
+    req->stop_count = 0;
+}
+
+uint32_t rl_prefix_reuse(const uint32_t *history, uint32_t history_len, const uint32_t *ids, uint32_t count) {
+    if (!history || !ids || !history_len || history_len >= count) return 0;
+    return memcmp(history, ids, (size_t)history_len * sizeof(uint32_t)) == 0 ? history_len : 0u;
+}
+
+int rl_stop_scan(const char *buf, size_t len, char *const *stops, uint32_t stop_count, size_t *emit_len) {
+    size_t first = SIZE_MAX, hold = 0;
+    for (uint32_t i = 0; i < stop_count; ++i) {
+        const size_t n = strlen(stops[i]);
+        if (!n) continue;
+        for (size_t at = 0; at + n <= len && at < first; ++at)
+            if (memcmp(buf + at, stops[i], n) == 0) { first = at; break; }
+        /* longest proper prefix of stops[i] that ends buf */
+        for (size_t k = n - 1u < len ? n - 1u : len; k > hold; --k)
+            if (memcmp(buf + len - k, stops[i], k) == 0) { hold = k; break; }
+    }
+    if (first != SIZE_MAX) { *emit_len = first; return 1; }
+    *emit_len = len - hold;
+    return 0;
 }
 
 int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, char *error, size_t error_cap) {
@@ -736,8 +784,11 @@ typedef struct {
     const char *id;
     const char *model;
     long created;
-    sb pending;   /* bytes held back until they form complete UTF-8 */
+    sb pending;   /* bytes held back until they form complete UTF-8 and cannot start a stop sequence */
     sb text;      /* non-streaming: the whole completion */
+    char *const *stops;
+    uint32_t stop_count;
+    int stop_matched;  /* a stop sequence ended the completion */
 } sink_state;
 
 static int sse_send(sink_state *s, sb *event) {
@@ -781,35 +832,45 @@ static int sse_content(sink_state *s, const char *bytes, size_t n) {
     return ok;
 }
 
+static int sink_out(sink_state *s, const char *bytes, size_t n) {
+    if (!n) return 1;
+    if (s->stream) return sse_content(s, bytes, n);
+    sb_put(&s->text, bytes, n);
+    return !s->text.oom;
+}
+
 static int sink_emit(void *user, const char *bytes, size_t len) {
     sink_state *s = (sink_state *)user;
+    if (s->stop_matched) return 0;
     if (s->client_gone || (s->stop && *s->stop)) { s->stopped = 1; return 0; }
     sb_put(&s->pending, bytes, len);
     if (s->pending.oom) return 0;
-    const size_t k = rl_utf8_complete_prefix(s->pending.data, s->pending.len);
-    if (!k) return 1;
-    int ok = 1;
-    if (s->stream) ok = sse_content(s, s->pending.data, k);
-    else { sb_put(&s->text, s->pending.data, k); ok = !s->text.oom; }
-    memmove(s->pending.data, s->pending.data + k, s->pending.len - k);
-    s->pending.len -= k;
+    size_t k = s->pending.len;
+    if (s->stop_count) {
+        size_t cut = 0;
+        if (rl_stop_scan(s->pending.data, s->pending.len, s->stops, s->stop_count, &cut)) {
+            /* the text before the stop sequence is complete UTF-8 (the stop sequence starts a character) */
+            s->stop_matched = 1;
+            const int ok = sink_out(s, s->pending.data, cut);
+            s->pending.len = 0;
+            (void)ok;
+            return 0;
+        }
+        k = cut;
+    }
+    const size_t u = rl_utf8_complete_prefix(s->pending.data, k);
+    if (!u) return 1;
+    const int ok = sink_out(s, s->pending.data, u);
+    memmove(s->pending.data, s->pending.data + u, s->pending.len - u);
+    s->pending.len -= u;
     return ok;
 }
 
-static void handle_chat(int fd, const rl_server_config *cfg, const rl_server_backend *backend,
-                        const http_request *hreq, volatile sig_atomic_t *stop, unsigned long request_no) {
+/* Runs one parsed chat request (worker thread); frees it. */
+static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *reqp,
+                     volatile sig_atomic_t *stop, unsigned long request_no) {
     char error[512] = {0};
-    rl_chat_request req;
-    if (!rl_chat_request_parse(hreq->body, hreq->body_len, &req, error, sizeof(error))) {
-        send_json_error(fd, 400, error);
-        return;
-    }
-    if (!req.max_tokens) req.max_tokens = cfg->default_max_tokens;
-    if (req.temperature < 0.0f) req.temperature = cfg->default_temperature;
-    if (req.top_p < 0.0f) req.top_p = cfg->default_top_p;
-    if (req.top_k < 0) req.top_k = (int32_t)cfg->default_top_k;
-    if (req.min_p < 0.0f) req.min_p = cfg->default_min_p;
-
+    rl_chat_request req = *reqp;
     char id[64];
     const long created = (long)time(NULL);
     snprintf(id, sizeof(id), "chatcmpl-redlite-%ld-%lu", created, request_no);
@@ -820,19 +881,20 @@ static void handle_chat(int fd, const rl_server_config *cfg, const rl_server_bac
     s.id = id;
     s.model = backend->model_id;
     s.created = created;
+    s.stops = req.stop;
+    s.stop_count = req.stop_count;
 
     rl_server_result result = {0};
     int status = 500;
     const int ok = backend->generate(backend->ctx, &req, sink_emit, &s, &result, &status, error, sizeof(error));
     rl_chat_request_free(&req);
 
-    /* flush a held-back incomplete UTF-8 tail (escaped as U+FFFD) */
-    if (ok && s.pending.len && !s.client_gone) {
-        if (s.stream) sse_content(&s, s.pending.data, s.pending.len);
-        else sb_put(&s.text, s.pending.data, s.pending.len);
+    /* flush a held-back tail: a partial stop-sequence prefix, or incomplete UTF-8 (escaped as U+FFFD) */
+    if (ok && s.pending.len && !s.client_gone && !s.stop_matched) {
+        sink_out(&s, s.pending.data, s.pending.len);
         s.pending.len = 0;
     }
-    const char *finish = result.finish_length ? "length" : "stop";
+    const char *finish = result.finish_length && !s.stop_matched ? "length" : "stop";
 
     if (!ok) {
         if (!error[0]) snprintf(error, sizeof(error), "generation failed");
@@ -853,8 +915,9 @@ static void handle_chat(int fd, const rl_server_config *cfg, const rl_server_bac
         if (sse_headers(&s)) {
             sb b = {0};
             chunk_prefix(&s, &b);
-            sb_printf(&b, "{},\"logprobs\":null,\"finish_reason\":\"%s\"}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u}}\n\ndata: [DONE]\n\n",
-                finish, result.prompt_tokens, result.completion_tokens, result.prompt_tokens + result.completion_tokens);
+            sb_printf(&b, "{},\"logprobs\":null,\"finish_reason\":\"%s\"}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u,"
+                "\"prompt_tokens_details\":{\"cached_tokens\":%u}}}\n\ndata: [DONE]\n\n",
+                finish, result.prompt_tokens, result.completion_tokens, result.prompt_tokens + result.completion_tokens, result.cached_tokens);
             sse_send(&s, &b);
             sb_free(&b);
         }
@@ -866,27 +929,95 @@ static void handle_chat(int fd, const rl_server_config *cfg, const rl_server_bac
         json_str(&b, backend->model_id, strlen(backend->model_id));
         sb_puts(&b, ",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":");
         json_str(&b, s.text.data ? s.text.data : "", s.text.len);
-        sb_printf(&b, "},\"logprobs\":null,\"finish_reason\":\"%s\"}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u}}",
-            finish, result.prompt_tokens, result.completion_tokens, result.prompt_tokens + result.completion_tokens);
+        sb_printf(&b, "},\"logprobs\":null,\"finish_reason\":\"%s\"}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u,"
+            "\"prompt_tokens_details\":{\"cached_tokens\":%u}}}",
+            finish, result.prompt_tokens, result.completion_tokens, result.prompt_tokens + result.completion_tokens, result.cached_tokens);
         if (b.oom) send_json_error(fd, 500, "out of memory");
         else send_response(fd, 200, "application/json", b.data, b.len);
         sb_free(&b);
     }
     if (ok && !s.client_gone) {
-        fprintf(stderr, "[redlite-server] request %lu: prompt=%u completion=%u finish=%s%s\n", request_no,
-            result.prompt_tokens, result.completion_tokens, finish, s.stopped ? " (shutdown)" : "");
+        fprintf(stderr, "[redlite-server] request %lu: prompt=%u cached=%u completion=%u finish=%s%s%s\n", request_no,
+            result.prompt_tokens, result.cached_tokens, result.completion_tokens, finish,
+            s.stop_matched ? " (stop sequence)" : "", s.stopped ? " (shutdown)" : "");
     }
     sb_free(&s.pending);
     sb_free(&s.text);
 }
 
+/* ------------------------------------------------------------------ FIFO request queue (dev29) */
+
+typedef struct chat_job {
+    int fd;
+    unsigned long request_no;
+    rl_chat_request req;
+    struct chat_job *next;
+} chat_job;
+
+typedef struct {
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    chat_job *head, *tail;
+    uint32_t waiting;     /* queued, not yet started */
+    int running;          /* the worker is inside a generation */
+    int closing;
+    const rl_server_backend *backend;
+    volatile sig_atomic_t *stop;
+} chat_queue;
+
+static void close_client(int fd) {
+    shutdown(fd, SHUT_WR);
+    close(fd);
+}
+
+/* A queued client that gave up (closed its socket) is skipped instead of generating for nobody. */
+static int client_closed(int fd) {
+    struct pollfd p = {fd, POLLIN, 0};
+    if (poll(&p, 1, 0) <= 0) return 0;
+    if (p.revents & (POLLHUP | POLLERR)) return 1;
+    char c;
+    const ssize_t r = recv(fd, &c, 1u, MSG_PEEK | MSG_DONTWAIT);
+    return r == 0;
+}
+
+static void *chat_worker(void *user) {
+    chat_queue *q = (chat_queue *)user;
+    for (;;) {
+        pthread_mutex_lock(&q->mu);
+        while (!q->head && !q->closing) pthread_cond_wait(&q->cv, &q->mu);
+        chat_job *job = q->head;
+        if (!job) { pthread_mutex_unlock(&q->mu); break; }
+        q->head = job->next;
+        if (!q->head) q->tail = NULL;
+        q->waiting--;
+        q->running = 1;
+        pthread_mutex_unlock(&q->mu);
+
+        if (q->stop && *q->stop) {
+            send_json_error(job->fd, 503, "server is shutting down");
+            rl_chat_request_free(&job->req);
+        } else if (client_closed(job->fd)) {
+            fprintf(stderr, "[redlite-server] request %lu: client closed the connection while queued\n", job->request_no);
+            rl_chat_request_free(&job->req);
+        } else {
+            run_chat(job->fd, q->backend, &job->req, q->stop, job->request_no);
+        }
+        close_client(job->fd);
+        free(job);
+        pthread_mutex_lock(&q->mu);
+        q->running = 0;
+        pthread_mutex_unlock(&q->mu);
+    }
+    return NULL;
+}
+
 static void handle_connection(int fd, const rl_server_config *cfg, const rl_server_backend *backend,
-                              volatile sig_atomic_t *stop, unsigned long request_no) {
+                              chat_queue *q, unsigned long request_no) {
     char msg[256] = {0};
     http_request req;
     const int status = read_request(fd, &req, msg, sizeof(msg));
-    if (status < 0) return;
-    if (status > 0) { send_json_error(fd, status, msg); return; }
+    if (status < 0) { close_client(fd); return; }
+    if (status > 0) { send_json_error(fd, status, msg); close_client(fd); return; }
 
     if (strcmp(req.path, "/health") == 0 || strcmp(req.path, "/v1/health") == 0) {
         if (strcmp(req.method, "GET") != 0) send_json_error(fd, 405, "use GET");
@@ -902,12 +1033,50 @@ static void handle_connection(int fd, const rl_server_config *cfg, const rl_serv
             sb_free(&b);
         }
     } else if (strcmp(req.path, "/v1/chat/completions") == 0) {
-        if (strcmp(req.method, "POST") != 0) send_json_error(fd, 405, "use POST");
-        else handle_chat(fd, cfg, backend, &req, stop, request_no);
+        if (strcmp(req.method, "POST") != 0) { send_json_error(fd, 405, "use POST"); free(req.body); close_client(fd); return; }
+        chat_job *job = (chat_job *)calloc(1u, sizeof(chat_job));
+        char error[512] = {0};
+        if (!job) { send_json_error(fd, 500, "out of memory"); free(req.body); close_client(fd); return; }
+        if (!rl_chat_request_parse(req.body, req.body_len, &job->req, error, sizeof(error))) {
+            send_json_error(fd, 400, error);
+            free(job); free(req.body); close_client(fd);
+            return;
+        }
+        free(req.body);
+        rl_chat_request *r = &job->req;
+        if (!r->max_tokens) r->max_tokens = cfg->default_max_tokens;
+        if (r->temperature < 0.0f) r->temperature = cfg->default_temperature;
+        if (r->top_p < 0.0f) r->top_p = cfg->default_top_p;
+        if (r->top_k < 0) r->top_k = (int32_t)cfg->default_top_k;
+        if (r->min_p < 0.0f) r->min_p = cfg->default_min_p;
+        job->fd = fd;
+        job->request_no = request_no;
+        pthread_mutex_lock(&q->mu);
+        const uint32_t limit = cfg->queue_max;
+        if (q->waiting + (uint32_t)q->running > limit) {   /* queue_max requests may wait behind the running one */
+            const uint32_t waiting = q->waiting;
+            pthread_mutex_unlock(&q->mu);
+            char busy[128];
+            snprintf(busy, sizeof(busy), "server busy: %u requests already waiting (--queue %u)", waiting, limit);
+            send_json_error(fd, 503, busy);
+            rl_chat_request_free(&job->req);
+            free(job);
+            close_client(fd);
+            return;
+        }
+        const uint32_t ahead = q->waiting + (uint32_t)q->running;
+        if (q->tail) q->tail->next = job; else q->head = job;
+        q->tail = job;
+        q->waiting++;
+        pthread_cond_signal(&q->cv);
+        pthread_mutex_unlock(&q->mu);
+        if (ahead) fprintf(stderr, "[redlite-server] request %lu queued behind %u\n", request_no, ahead);
+        return; /* the worker answers and closes fd */
     } else {
         send_json_error(fd, 404, "unknown endpoint");
     }
     free(req.body);
+    close_client(fd);
 }
 
 void rl_server_config_default(rl_server_config *cfg) {
@@ -920,6 +1089,7 @@ void rl_server_config_default(rl_server_config *cfg) {
     cfg->default_top_k = 40;
     cfg->default_min_p = 0.0f;
     cfg->read_timeout_s = 30;
+    cfg->queue_max = 16;
 }
 
 int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
@@ -940,7 +1110,7 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
         if (lfd < 0) continue;
         const int one = 1;
         setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-        if (bind(lfd, ai->ai_addr, ai->ai_addrlen) == 0 && listen(lfd, 16) == 0) break;
+        if (bind(lfd, ai->ai_addr, ai->ai_addrlen) == 0 && listen(lfd, 64) == 0) break;
         close(lfd);
         lfd = -1;
     }
@@ -954,14 +1124,27 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
         if (bound.ss_family == AF_INET) port = ntohs(((struct sockaddr_in *)&bound)->sin_port);
         else if (bound.ss_family == AF_INET6) port = ntohs(((struct sockaddr_in6 *)&bound)->sin6_port);
     }
+
+    chat_queue q;
+    memset(&q, 0, sizeof(q));
+    q.backend = backend;
+    q.stop = stop;
+    pthread_t worker;
+    if (pthread_mutex_init(&q.mu, NULL) != 0 || pthread_cond_init(&q.cv, NULL) != 0 ||
+        pthread_create(&worker, NULL, chat_worker, &q) != 0) {
+        set_error(error, error_cap, "cannot start the request worker thread");
+        close(lfd);
+        return 0;
+    }
     printf("redlite-server listening on http://%s:%u (model %s)\n", cfg->host, port, backend->model_id);
     fflush(stdout);
 
     unsigned long request_no = 0;
+    int rc = 1;
     while (!(stop && *stop)) {
         struct pollfd p = {lfd, POLLIN, 0};
         const int pr = poll(&p, 1, 250);
-        if (pr < 0 && errno != EINTR) { set_error(error, error_cap, "poll failed: %s", strerror(errno)); close(lfd); return 0; }
+        if (pr < 0 && errno != EINTR) { set_error(error, error_cap, "poll failed: %s", strerror(errno)); rc = 0; break; }
         if (pr <= 0) continue;
         const int cfd = accept(lfd, NULL, NULL);
         if (cfd < 0) continue;
@@ -970,12 +1153,18 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
 #endif
         struct timeval tv = {cfg->read_timeout_s > 0 ? cfg->read_timeout_s : 30, 0};
         setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        handle_connection(cfd, cfg, backend, stop, ++request_no);
-        shutdown(cfd, SHUT_WR);
-        close(cfd);
+        handle_connection(cfd, cfg, backend, &q, ++request_no);
     }
     close(lfd);
-    return 1;
+    /* the running generation sees *stop through its sink; queued requests are answered 503 */
+    pthread_mutex_lock(&q.mu);
+    q.closing = 1;
+    pthread_cond_broadcast(&q.cv);
+    pthread_mutex_unlock(&q.mu);
+    pthread_join(worker, NULL);
+    pthread_cond_destroy(&q.cv);
+    pthread_mutex_destroy(&q.mu);
+    return rc;
 }
 
 /* ------------------------------------------------------------------ selftest */
@@ -1030,7 +1219,10 @@ int rl_server_selftest(char *error, size_t cap) {
         !expect_parse_error("{\"messages\":[]}", "at least one", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"tool\",\"content\":\"x\"}]}", "role", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\"}]}", "content", error, cap) ||
-        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":[\"a\"]}", "stop", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}", "at most 4", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":\"\"}", "1 to 256", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":[1]}", "string", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":5}", "stop", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"n\":2}", "n = 1", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"temperature\":3}", "temperature", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"max_tokens\":0}", "max_tokens", error, cap) ||
@@ -1052,6 +1244,49 @@ int rl_server_selftest(char *error, size_t cap) {
         ok = !deep.oom && expect_parse_error(deep.data, "deep", error, cap);
         sb_free(&deep);
         if (!ok) return 0;
+    }
+
+    /* stop sequences: a string or an array, stored in order */
+    {
+        const char *sb1 = "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":\"END\"}";
+        const char *sb2 = "{\"stop\":[\"\\n\\n\",\"</s>\"],\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}";
+        if (!rl_chat_request_parse(sb1, strlen(sb1), &r, e, sizeof(e))) { set_error(error, cap, "stop string rejected: %s", e); return 0; }
+        ok = r.stop_count == 1u && strcmp(r.stop[0], "END") == 0;
+        rl_chat_request_free(&r);
+        if (ok && !rl_chat_request_parse(sb2, strlen(sb2), &r, e, sizeof(e))) { set_error(error, cap, "stop array rejected: %s", e); return 0; }
+        ok = ok && r.stop_count == 2u && strcmp(r.stop[0], "\n\n") == 0 && strcmp(r.stop[1], "</s>") == 0;
+        if (ok) rl_chat_request_free(&r);
+        if (!ok) { set_error(error, cap, "stop sequences parsed wrongly"); return 0; }
+    }
+    /* stop scan: earliest match wins, partial prefixes at the end are held back */
+    {
+        char *stops[2] = {(char *)"END", (char *)"xyz"};
+        size_t cut = 0;
+        const int m1 = rl_stop_scan("hello E", 7u, stops, 2u, &cut);
+        const size_t c1 = cut;
+        const int m2 = rl_stop_scan("hello EN", 8u, stops, 2u, &cut);
+        const size_t c2 = cut;
+        const int m3 = rl_stop_scan("a xyz b END", 11u, stops, 2u, &cut);
+        const size_t c3 = cut;
+        const int m4 = rl_stop_scan("ENDING", 6u, stops, 2u, &cut);
+        const size_t c4 = cut;
+        const int m5 = rl_stop_scan("plain", 5u, stops, 2u, &cut);
+        const size_t c5 = cut;
+        const int m6 = rl_stop_scan("x", 1u, stops, 2u, &cut);
+        const size_t c6 = cut;
+        if (m1 || c1 != 6u || m2 || c2 != 6u || !m3 || c3 != 2u || !m4 || c4 != 0u || m5 || c5 != 5u || m6 || c6 != 0u) {
+            set_error(error, cap, "stop scan is wrong (%d/%zu %d/%zu %d/%zu %d/%zu %d/%zu %d/%zu)", m1, c1, m2, c2, m3, c3, m4, c4, m5, c5, m6, c6);
+            return 0;
+        }
+    }
+    /* prefix reuse: only a proper prefix of the new prompt is reused */
+    {
+        const uint32_t h[3] = {1u, 2u, 3u}, a4[4] = {1u, 2u, 3u, 4u}, b4[4] = {1u, 2u, 9u, 4u};
+        if (rl_prefix_reuse(h, 3u, a4, 4u) != 3u || rl_prefix_reuse(h, 3u, a4, 3u) != 0u || rl_prefix_reuse(h, 3u, b4, 4u) != 0u ||
+            rl_prefix_reuse(h, 0u, a4, 4u) != 0u || rl_prefix_reuse(a4, 4u, h, 3u) != 0u) {
+            set_error(error, cap, "prefix reuse is wrong");
+            return 0;
+        }
     }
 
     /* UTF-8 hold-back: "è" = C3 A8, "😀" = F0 9F 98 80 */

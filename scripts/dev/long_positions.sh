@@ -12,6 +12,9 @@
 #            logits.long_context_vs_llama; the max-logit bound is 4.0 instead of 2.0: on this prompt
 #            native token-by-token vs native batched prefill (no llama.cpp) already differ by 2.62 at
 #            position 4096 (dev26 record), so 2.0 cannot separate a defect from rounding growth there.
+#            At P >= 8192 the bound is 5.0: the 0.3.0 runtime's own token-by-token path differs by 4.29 from
+#            llama.cpp and by 4.45 from its own batched prefill there (22 GiB cache, dev30 record), so the
+#            native self-consistency floor is above 4.0. Argmax and KL gates are the same at every position.
 #   bench  : redlite-generate --raw on the fixture text repeated to at least P tokens, 128 greedy
 #            tokens, --json; prefill and decode tok/s at 4 GiB and at 22 GiB (22 GiB only with
 #            >= 40 GiB of RAM). Single runs with a 90 s pause before each; not medians.
@@ -48,7 +51,8 @@ for P in ${POSITIONS//,/ }; do
   "$BIN/redlite-engine" logits "$MODEL" --tokens "$IDS" --backend gpu --out "$OUT/native.$P.bin" --dump-from "$P" \
     --batch "$BATCH" --cache-mib "$CACHE" --context "$CTX" >"$OUT/native.$P.log" 2>&1
   grep '^prefill [0-9]' "$OUT/native.$P.log" | sed "s/^/  /"
-  if python3 "$ROOT/scripts/dev/compare_dumps.py" "$OUT/native.$P.bin" "$OUT/ref.$P.bin" --max-logit-abs 4.0 --max-kl 2e-2 >"$OUT/compare.$P.log" 2>&1 \
+  BOUND=4.0; [[ "$P" -ge 8192 ]] && BOUND=5.0
+  if python3 "$ROOT/scripts/dev/compare_dumps.py" "$OUT/native.$P.bin" "$OUT/ref.$P.bin" --max-logit-abs "$BOUND" --max-kl 2e-2 >"$OUT/compare.$P.log" 2>&1 \
      && grep -q "ORACLE LOGITS PARITY: YES" "$OUT/compare.$P.log"; then
     echo "PASS  positions.$P.vs_llama ($(grep '^worst logits' "$OUT/compare.$P.log"))"
   else

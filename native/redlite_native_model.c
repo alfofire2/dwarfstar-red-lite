@@ -33,8 +33,8 @@ int rl_native_get_layer_info(
         set_error(error, error_cap, "routed layer is missing gate/up/down tensors");
         return 0;
     }
-    if (gate->ggml_type != up->ggml_type || gate->ggml_type != down->ggml_type) {
-        set_error(error, error_cap, "mixed gate/up/down quant types are unsupported");
+    if (gate->ggml_type != up->ggml_type) {
+        set_error(error, error_cap, "routed gate and up tensors must share one quant type");
         return 0;
     }
     if (gate->n_dims != 3u || up->n_dims != 3u || down->n_dims != 3u) {
@@ -59,6 +59,7 @@ int rl_native_get_layer_info(
     memset(out, 0, sizeof(*out));
     out->layer = layer;
     out->ggml_type = gate->ggml_type;
+    out->down_type = down->ggml_type;
     out->hidden_size = (uint32_t)gate->shape[0];
     out->ffn_size = (uint32_t)gate->shape[1];
     out->expert_count = map->expert_count;

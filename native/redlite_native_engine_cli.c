@@ -13,6 +13,8 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq2_xxs.h"
 #include "redlite_native_tokenizer.h"
 
 #include <errno.h>
@@ -86,7 +88,7 @@ static uint32_t argmax(const float *v, uint32_t n) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-engine 0.3.0\n\n"
+        "redlite-engine 0.4.0\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
@@ -98,6 +100,9 @@ static void usage(FILE *out) {
         "  redlite-engine prefill MODEL --tokens a,b,c [--batch N] [--cpu] [--context N] [--cache-mib N]\n"
         "      batched Metal prefill vs token-by-token Metal steps (and the CPU oracle with --cpu): last-token layer outputs, router ids, logits\n"
         "      DUMP per token (f32): [hidden] embed, [layers][hidden] outputs, [hidden] final norm, [vocab] logits\n"
+        "  redlite-engine dequant MODEL --tensor NAME [--row-first N] [--rows N] --out FILE\n"
+        "      development: rows of a tensor (flattened to [rows][ne0]) dequantized to f32 by the CPU reference, for a bitwise\n"
+        "      comparison with llama.cpp (redlite-ref-llama MODEL dequant); no engine is opened\n"
         "  redlite-engine kernel-selftest\n"
         "      model-free: decode GEMV kernels (block and sub-block), early-out guard, rl_copy_f32, rl_route and decode attention vs the CPU reference\n");
 }
@@ -136,7 +141,8 @@ int main(int argc, char **argv) {
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
     const char *out_path = NULL;
-    const char *text = NULL, *corpus = NULL;
+    const char *text = NULL, *corpus = NULL, *tensor_name = NULL;
+    uint32_t row_first = 0, row_count = 16;
     int report_layers = 0, no_special = 0, chat = 0, dump_last = 0, with_cpu = 0;
     uint32_t dump_from = 0, batch = 0, repeat = 1;
     int router_layer = -1;
@@ -151,12 +157,15 @@ int main(int argc, char **argv) {
             token_count = parse_tokens(argv[++i], tokens, RL_CLI_MAX_TOKENS);
             if (!token_count) { fprintf(stderr, "invalid --tokens list\n"); return 2; }
         } else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
-        else if (strcmp(argv[i], "--cache-mib") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cache_mib = v; }
+        else if (strcmp(argv[i], "--cache-mib") == 0) { if (!rl_engine_parse_cache_mib(argv[++i], &cfg.cache_mib)) return 2; }
         else if (strcmp(argv[i], "--threads") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; cfg.cpu_threads = (int)v; }
         else if (strcmp(argv[i], "--backend") == 0) backend_name = argv[++i];
         else if (strcmp(argv[i], "--out") == 0) out_path = argv[++i];
         else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
         else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
+        else if (strcmp(argv[i], "--tensor") == 0) tensor_name = argv[++i];
+        else if (strcmp(argv[i], "--row-first") == 0) { if (!parse_u32(argv[++i], &row_first)) return 2; }
+        else if (strcmp(argv[i], "--rows") == 0) { if (!parse_u32(argv[++i], &row_count) || !row_count) return 2; }
         else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
         else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &batch)) return 2; }
         else if (strcmp(argv[i], "--repeat") == 0) { if (!parse_u32(argv[++i], &repeat) || !repeat) return 2; }
@@ -165,12 +174,49 @@ int main(int argc, char **argv) {
     }
     char error[512] = {0};
 
+    if (strcmp(cmd, "dequant") == 0) {
+        if (!tensor_name || !out_path) { usage(stderr); return 2; }
+        rl_gguf_model g;
+        if (!rl_gguf_model_open(model, &g, error, sizeof(error))) { fprintf(stderr, "GGUF open failed: %s\n", error); return 1; }
+        if (!rl_gguf_model_map(&g, error, sizeof(error))) { fprintf(stderr, "GGUF map failed: %s\n", error); rl_gguf_model_close(&g); return 1; }
+        const rl_gguf_tensor *t = rl_gguf_find(&g, tensor_name);
+        int rc = 1;
+        if (!t) fprintf(stderr, "tensor %s not found\n", tensor_name);
+        else {
+            uint64_t rows = 1;
+            for (uint32_t d = 1; d < t->n_dims; ++d) rows *= t->shape[d];
+            const uint32_t ncols = (uint32_t)t->shape[0];
+            const size_t rb = rl_gguf_row_bytes(t->ggml_type, ncols);
+            const uint8_t *data = rl_gguf_tensor_data(&g, t);
+            float *buf = (float *)malloc((size_t)ncols * sizeof(float));
+            uint8_t grid[RL_IQ2_XXS_GRID_COUNT];
+            char gerr[128];
+            const uint8_t *gp = t->ggml_type == 16u && rl_native_iq2_xxs_build_grid(grid, gerr, sizeof(gerr)) ? grid : NULL;
+            FILE *out = fopen(out_path, "wb");
+            if (!rb || !data || !buf || !out || (uint64_t)row_first + row_count > rows) fprintf(stderr, "cannot dequantize %s (type %s)\n", tensor_name, rl_gguf_type_name(t->ggml_type));
+            else {
+                rc = 0;
+                for (uint32_t r = row_first; r < row_first + row_count && !rc; ++r) {
+                    if (!rl_quant_dequant_row(t->ggml_type, data + (size_t)r * rb, ncols, gp, buf)) { fprintf(stderr, "type %s has no CPU dequantizer\n", rl_gguf_type_name(t->ggml_type)); rc = 1; }
+                    else fwrite(buf, sizeof(float), ncols, out);
+                }
+                if (!rc) printf("dequantized %s (%s) rows %u..%u of %llu, %u columns\n", tensor_name, rl_gguf_type_name(t->ggml_type),
+                    row_first, row_first + row_count - 1u, (unsigned long long)rows, ncols);
+            }
+            if (out) fclose(out);
+            free(buf);
+        }
+        rl_gguf_model_close(&g);
+        return rc;
+    }
+
     if (strcmp(cmd, "info") == 0) {
         cfg.enable_cpu = 0; cfg.enable_gpu = 0;
         rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
         if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
         printf("runtime              : native Qwen3-Next persistent engine\n");
         print_info(rl_engine_info_get(e));
+        printf("full residency cache : %llu MiB (--cache-mib full)\n", (unsigned long long)rl_engine_full_residency_mib(e));
         rl_engine_close(e);
         return 0;
     }
@@ -231,14 +277,15 @@ int main(int argc, char **argv) {
         FILE *out = out_path ? fopen(out_path, "wb") : NULL;
         if (out_path && !out) { fprintf(stderr, "cannot open %s\n", out_path); rl_engine_close(e); return 1; }
         uint32_t first = 0;
-        if (gpu && batch > 1u && dump_from > 0u) {
+        const uint32_t chunk = rl_engine_prefill_batch(e);   /* --batch, or the engine default (dev30: 2048 with full residency) */
+        if (gpu && chunk > 1u && dump_from > 0u) {
             const uint32_t n = dump_from < token_count ? dump_from : token_count - 1u;
             rl_engine_step_stats st;
             const double t0 = rl_engine_now_ms_public();
             if (!rl_engine_prefill(e, RL_BACKEND_GPU, tokens, n, NULL, &st, error, sizeof(error))) {
                 fprintf(stderr, "prefill failed: %s\n", error); rl_engine_close(e); return 1;
             }
-            printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, batch, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
+            printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, chunk, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
             printf("prefill split: dense wall %.1f (rec %.1f attn %.1f) dense GPU %.1f | router select %.1f | experts wall %.1f "
                    "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u\n",
                 st.recurrent_ms + st.attention_ms, st.recurrent_ms, st.attention_ms, st.gpu_ms, st.router_ms, st.routed_ms,

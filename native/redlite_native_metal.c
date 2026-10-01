@@ -35,6 +35,9 @@ void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, dou
     if (commit_ms) *commit_ms = runtime ? runtime->prep_commit_ms : 0.0;
 }
 
+/* dev31: routed quant types with Metal expert kernels */
+static int routed_type_ok(uint32_t t) { return t == 17u || t == 29u || t == 18u || t == 21u; }
+
 static void set_error(char *error, size_t cap, const char *message) {
     if (error && cap) snprintf(error, cap, "%s", message ? message : "unknown native Metal error");
 }
@@ -189,8 +192,8 @@ int rl_native_metal_execute_topk(
 
     rl_native_layer_info info;
     if (!rl_native_get_layer_info(map, layer, &info, error, error_cap)) return 0;
-    if (info.ggml_type != 17u && info.ggml_type != 29u) {
-        set_error(error, error_cap, "native Metal supports routed IQ2_XS and IQ1_M only");
+    if (!routed_type_ok(info.ggml_type) || !routed_type_ok(info.down_type)) {
+        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS and IQ3_S only");
         return 0;
     }
     if (input_count != info.hidden_size || !output_row_count ||
@@ -225,7 +228,7 @@ int rl_native_metal_execute_topk(
         keys[i].layer = layer;
         keys[i].expert = expert_ids[i];
         if (!rl_native_expert_layout(map, layer, expert_ids[i], &layouts[i], error, error_cap)) return 0;
-        if (layouts[i].ggml_type != info.ggml_type || layouts[i].total_bytes > runtime->slot_bytes) {
+        if (layouts[i].ggml_type != info.ggml_type || layouts[i].down_type != info.down_type || layouts[i].total_bytes > runtime->slot_bytes) {
             set_error(error, error_cap, "native expert layout is incompatible with the layer/pool");
             return 0;
         }
@@ -313,7 +316,7 @@ int rl_native_metal_execute_topk(
             down_bytes,
             router_weights,
             top_k,
-            info.ggml_type,
+            rl_native_expert_type_word(info.ggml_type, info.down_type),
             info.hidden_size,
             info.ffn_size,
             output_row_start,
@@ -385,8 +388,8 @@ int rl_native_metal_prepare_topk(
     memset(plan, 0, sizeof(*plan));
     rl_native_layer_info info;
     if (!rl_native_get_layer_info(map, layer, &info, error, error_cap)) return 0;
-    if (info.ggml_type != 17u && info.ggml_type != 29u) {
-        set_error(error, error_cap, "native Metal supports routed IQ2_XS and IQ1_M only");
+    if (!routed_type_ok(info.ggml_type) || !routed_type_ok(info.down_type)) {
+        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS and IQ3_S only");
         return 0;
     }
     if (top_k > runtime->lru.capacity) {
@@ -401,7 +404,7 @@ int rl_native_metal_prepare_topk(
         keys[i].layer = layer;
         keys[i].expert = expert_ids[i];
         if (!rl_native_expert_layout(map, layer, expert_ids[i], &layouts[i], error, error_cap)) return 0;
-        if (layouts[i].ggml_type != info.ggml_type || layouts[i].total_bytes > runtime->slot_bytes) {
+        if (layouts[i].ggml_type != info.ggml_type || layouts[i].down_type != info.down_type || layouts[i].total_bytes > runtime->slot_bytes) {
             set_error(error, error_cap, "native expert layout is incompatible with the layer/pool");
             return 0;
         }
@@ -478,7 +481,7 @@ int rl_native_metal_prepare_topk(
     }
     plan->layer = layer;
     plan->top_k = top_k;
-    plan->ggml_type = info.ggml_type;
+    plan->ggml_type = rl_native_expert_type_word(info.ggml_type, info.down_type);
     plan->hidden = info.hidden_size;
     plan->ffn = info.ffn_size;
     if (error && error_cap) error[0] = '\0';

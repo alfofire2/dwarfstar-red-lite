@@ -29,7 +29,7 @@ xcrun --sdk macosx clang -O1 -g -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURC
   -fobjc-arc -I"$N" \
   "$N/redlite_native_generate_cli.c" "$N/redlite_native_sampler.c" \
   "$N/redlite_native_engine.c" "$N/redlite_native_engine_cpu.c" "$N/redlite_native_tokenizer.c" \
-  "$N/redlite_native_gguf_dir.c" "$N/redlite_native_quant_cpu.c" "$N/redlite_native_layer_map.c" \
+  "$N/redlite_native_gguf_dir.c" "$N/redlite_native_quant_cpu.c" "$N/redlite_native_iq3.c" "$N/redlite_native_layer_map.c" \
   "$N/redlite_native_router.c" "$N/redlite_native_router_exec.c" "$N/redlite_native_shared_exec.c" \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c" \
   "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c" \

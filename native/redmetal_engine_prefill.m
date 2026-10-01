@@ -24,6 +24,7 @@
 
 #include "redmetal_engine_private.h"
 #include "redlite_native_quant_cpu.h"
+#include "redlite_native_iq3.h"
 #include "redlite_native_router_exec.h"
 #include "redmetal_topk.h"
 
@@ -174,6 +175,31 @@ RL_DQ_KERNEL("rl_dq_q4k", "256", "144", "dq_q4k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_q5k", "256", "176", "dq_q5k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_q6k", "256", "210", "dq_q6k(bp, f)", "")
 RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device const uchar *grid [[buffer(4)]]")
+/* dev31: IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS: dequantize one 8-value group per thread; batched rows (GEMM fallback) */
+"kernel void rl_dq_iq3(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device float *out [[buffer(2)]],\n"
+"    constant uint &nrows [[buffer(3)]], constant uint &type [[buffer(5)]], uint2 gid [[thread_position_in_grid]]) {\n"
+"    const uint row = gid.y; const uint gi = gid.x; const uint groups = ncols / 8u; if (row >= nrows || gi >= groups) return;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint b = gi >> 5;\n"
+"    device const uchar *bp = weights + ulong(row) * ulong(ncols / 256u) * bb + ulong(b) * bb;\n"
+"    float4 v0, v1; rl_iq3_group8(type, bp, gi & 31u, v0, v1);\n"
+"    device float4 *o = (device float4 *)(out + ulong(row) * ncols + gi * 8u); o[0] = v0; o[1] = v1;\n"
+"}\n"
+"kernel void rl_rowsb_iq3(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]], constant uint &ntok [[buffer(6)]],\n"
+"    constant uint &type [[buffer(8)]], uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint blocks = ncols / 256u; const ulong row_bytes = ulong(blocks) * bb;\n"
+"    device const uchar *rp = weights + ulong(active ? row : 0u) * row_bytes;\n"
+"    for (uint t0 = 0; t0 < ntok; t0 += 8u) {\n"
+"        float a[8]; for (uint n = 0; n < 8u; ++n) a[n] = 0.0f;\n"
+"        if (active) { for (uint i = lane; i < blocks * 32u; i += lanes) { const uint b = i >> 5; const uint g = i & 31u; float4 v0, v1;\n"
+"            rl_iq3_group8(type, rp + ulong(b) * bb, g, v0, v1);\n"
+"            for (uint n = 0; n < 8u; ++n) { const uint t = min(t0 + n, ntok - 1u); device const float *xc = x + ulong(t) * ncols + i * 8u;\n"
+"                a[n] += dot(*(device const float4 *)xc, v0) + dot(*(device const float4 *)(xc + 4u), v1); } } }\n"
+"        for (uint n = 0; n < 8u; ++n) { float v = a[n]; for (uint off = lanes >> 1; off > 0u; off >>= 1) v += simd_shuffle_xor(v, ushort(off));\n"
+"            if (active && lane == 0u && t0 + n < ntok) out[(t0 + n) * nrows + row] = v; }\n"
+"    }\n"
+"}\n"
 /* out[t][row] = sum_k X[t][k] * W[row][k]: 32 rows x 32 tokens per threadgroup, four simdgroups of 8 rows, f32 simdgroup matrices */
 "kernel void rl_gemm_wt(device const float *W [[buffer(0)]], device const float *X [[buffer(1)]], device float *out [[buffer(2)]],\n"
 "    constant uint &rows [[buffer(3)]], constant uint &K [[buffer(4)]], constant uint &ntok_pad [[buffer(5)]],\n"
@@ -188,6 +214,32 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "        for (uint j = 0; j < 4u; ++j) { simdgroup_load(b, X + ulong(t0 + j * 8u) * K + k, K, ulong2(0, 0), true); simdgroup_multiply_accumulate(acc[j], a, b, acc[j]); }\n"
 "    }\n"
 "    for (uint j = 0; j < 4u; ++j) simdgroup_store(acc[j], out + ulong(t0 + j * 8u) * rows + row0, rows, ulong2(0, 0), true);\n"
+"}\n"
+/* dev30: the same product staged through threadgroup memory: 64 rows x 32 tokens per threadgroup, K steps of 32;
+ * each simdgroup owns 16 rows x 32 tokens (8 accumulators) and reads its 8x8 tiles from threadgroup memory.
+ * The k order inside every accumulator is that of rl_gemm_wt. */
+"kernel void rl_gemm_tg(device const float *W [[buffer(0)]], device const float *X [[buffer(1)]], device float *out [[buffer(2)]],\n"
+"    constant uint &rows [[buffer(3)]], constant uint &K [[buffer(4)]], constant uint &ntok_pad [[buffer(5)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float wa[64 * 32]; threadgroup float xb[32 * 32];\n"
+"    const uint row0 = tg.x * 64u; const uint t0 = tg.y * 32u;\n"
+"    simdgroup_float8x8 acc[2][4]; for (uint r = 0; r < 2u; ++r) for (uint j = 0; j < 4u; ++j) acc[r][j] = simdgroup_float8x8(0.0f);\n"
+"    simdgroup_float8x8 a[2], b;\n"
+"    for (uint k0 = 0; k0 < K; k0 += 32u) {\n"
+"        for (uint i = tid; i < 64u * 8u; i += 128u) { const uint r = i >> 3; const uint c = (i & 7u) * 4u;\n"
+"            *(threadgroup float4 *)(wa + r * 32u + c) = *(device const float4 *)(W + ulong(row0 + r) * K + k0 + c); }\n"
+"        for (uint i = tid; i < 32u * 8u; i += 128u) { const uint r = i >> 3; const uint c = (i & 7u) * 4u;\n"
+"            *(threadgroup float4 *)(xb + r * 32u + c) = *(device const float4 *)(X + ulong(t0 + r) * K + k0 + c); }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        for (uint kk = 0; kk < 32u; kk += 8u) {\n"
+"            simdgroup_load(a[0], wa + (uint(sg) * 16u) * 32u + kk, 32); simdgroup_load(a[1], wa + (uint(sg) * 16u + 8u) * 32u + kk, 32);\n"
+"            for (uint j = 0; j < 4u; ++j) { simdgroup_load(b, xb + (j * 8u) * 32u + kk, 32, ulong2(0, 0), true);\n"
+"                simdgroup_multiply_accumulate(acc[0][j], a[0], b, acc[0][j]); simdgroup_multiply_accumulate(acc[1][j], a[1], b, acc[1][j]); }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    for (uint r = 0; r < 2u; ++r) for (uint j = 0; j < 4u; ++j)\n"
+"        simdgroup_store(acc[r][j], out + ulong(t0 + j * 8u) * rows + row0 + uint(sg) * 16u + r * 8u, rows, ulong2(0, 0), true);\n"
 "}\n"
 /* ---- norms / residuals: one threadgroup per token ---- */
 "kernel void rl_rms_b(device const float *x [[buffer(0)]], device const float *w [[buffer(1)]], device float *y [[buffer(2)]],\n"
@@ -276,6 +328,28 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    state[idx] = s;\n"
 "}\n"
+/* dev30: same recurrence, one simdgroup per (value head, state row j), four state columns per lane: the
+ * per-token dot products are simd_sum reductions with no threadgroup barrier (state_size == 128) */
+"kernel void dn_state_seq_sg(device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    constant uint &ntok [[buffer(10)]], constant uint &qk_stride [[buffer(11)]], constant uint &v_stride [[buffer(12)]], constant uint &out_stride [[buffer(13)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    const uint row = tg * 4u + uint(sg); const uint h = row / state_size; const uint j = row - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint i0 = uint(lane) * 4u;\n"
+"    device float4 *sp = (device float4 *)(state + (ulong(h) * state_size + j) * state_size + i0);\n"
+"    float4 s = *sp; const float norm = 1.0f / sqrt((float)state_size);\n"
+"    for (uint t = 0; t < ntok; ++t) {\n"
+"        s *= exp(gate[t * value_heads + h]);\n"
+"        const float4 kv = *(device const float4 *)(k + t * qk_stride + kh * state_size + i0);\n"
+"        const float sum = simd_sum(dot(s, kv));\n"
+"        const float delta = (v[t * v_stride + h * state_size + j] - sum) * beta[t * value_heads + h];\n"
+"        s += kv * delta;\n"
+"        const float o = simd_sum(dot(s, *(device const float4 *)(q + t * qk_stride + kh * state_size + i0)));\n"
+"        if (lane == 0) out[t * out_stride + h * state_size + j] = o * norm;\n"
+"    }\n"
+"    *sp = s;\n"
+"}\n"
 "kernel void dn_tail_norm_b(device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -355,6 +429,69 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    if (tid < head_dim) gated[qbase + tid] = (acc / l) / (1.0f + exp(-gate[qbase + tid]));\n"
 "}\n"
+/* dev30: tiled causal GQA for the batched prefill (flash-attention style, f32 simdgroup matrices).
+ * Threadgroup = (query head, 8 consecutive tokens), 4 simdgroups. Key blocks of 32 positions:
+ * S = Q K^T (each simdgroup one 8x8 block of positions), online softmax by simdgroup 0 (lane = position),
+ * O = diag(alpha) O + P V (each simdgroup 64 of the 256 head dimensions). head_dim == 256 only. */
+"kernel void attn_fa_b(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
+"    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &position0 [[buffer(8)]], constant uint &ntok [[buffer(9)]],\n"
+"    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    threadgroup float qs[8 * 256]; threadgroup float ss[8 * 32]; threadgroup float dg[64]; threadgroup float mrow[8]; threadgroup float lrow[8];\n"
+"    const uint head = tg.x; const uint t0 = tg.y * 8u; const uint qcount = query_heads * head_dim;\n"
+"    const uint kvh = head / (query_heads / kv_heads); const uint kstride = kv_heads * head_dim; const float scale = rsqrt(float(head_dim));\n"
+"    for (uint i = tid; i < 8u * 256u; i += 128u) { const uint r = i >> 8; const uint d = i & 255u;\n"
+"        qs[i] = t0 + r < ntok ? query[ulong(t0 + r) * qcount + head * 256u + d] * scale : 0.0f; }\n"
+"    if (tid < 64u) dg[tid] = 0.0f;\n"
+"    if (tid < 8u) { mrow[tid] = -INFINITY; lrow[tid] = 0.0f; }\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    simdgroup_float8x8 o[8]; for (uint i = 0; i < 8u; ++i) o[i] = simdgroup_float8x8(0.0f);\n"
+"    const uint last = position0 + min(t0 + 8u, ntok) - 1u;   /* last key position any row of the tile sees */\n"
+"    for (uint kb = 0; kb <= last; kb += 32u) {\n"
+"        {   /* S block: 8 tokens x positions kb + sg*8 .. +8 */\n"
+"            simdgroup_float8x8 acc = simdgroup_float8x8(0.0f), a, b;\n"
+"            device const float *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
+"            for (uint k = 0; k < 256u; k += 8u) {\n"
+"                simdgroup_load(a, qs + k, 256);\n"
+"                simdgroup_load(b, kp + k, kstride, ulong2(0, 0), true);\n"
+"                simdgroup_multiply_accumulate(acc, a, b, acc);\n"
+"            }\n"
+"            simdgroup_store(acc, ss + uint(sg) * 8u, 32);\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        if (sg == 0) {\n"
+"            const uint pos = kb + uint(simd_lane);\n"
+"            for (uint r = 0; r < 8u; ++r) {\n"
+"                const bool valid = t0 + r < ntok && pos <= position0 + t0 + r;\n"
+"                const float s = valid ? ss[r * 32u + simd_lane] : -INFINITY;\n"
+"                const float mx = simd_max(s); const float m_old = mrow[r]; const float m_new = max(m_old, mx);\n"
+"                const float p = valid ? exp(s - m_new) : 0.0f;\n"
+"                const float sum = simd_sum(p);\n"
+"                const float alpha = m_old == -INFINITY ? 0.0f : exp(m_old - m_new);\n"
+"                ss[r * 32u + simd_lane] = p;\n"
+"                if (simd_lane == 0) { lrow[r] = lrow[r] * alpha + sum; mrow[r] = m_new; dg[r * 9u] = alpha; }\n"
+"            }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        {\n"
+"            simdgroup_float8x8 d, p, v;\n"
+"            simdgroup_load(d, dg, 8);\n"
+"            for (uint i = 0; i < 8u; ++i) simdgroup_multiply(o[i], d, o[i]);\n"
+"            for (uint kk = 0; kk < 4u; ++kk) {\n"
+"                simdgroup_load(p, ss + kk * 8u, 32);\n"
+"                device const float *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
+"                for (uint i = 0; i < 8u; ++i) { simdgroup_load(v, vp + i * 8u, kstride); simdgroup_multiply_accumulate(o[i], p, v, o[i]); }\n"
+"            }\n"
+"        }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"    for (uint i = 0; i < 8u; ++i) simdgroup_store(o[i], qs + uint(sg) * 64u + i * 8u, 256);\n"
+"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    for (uint i = tid; i < 8u * 256u; i += 128u) { const uint r = i >> 8; const uint d = i & 255u; if (t0 + r >= ntok) continue;\n"
+"        const ulong idx = ulong(t0 + r) * qcount + head * 256u + d;\n"
+"        gated[idx] = (qs[i] / lrow[r]) / (1.0f + exp(-gate[idx])); }\n"
+"}\n"
 /* ---- shared expert: per-token scalar gate ---- */
 "kernel void sh_scalar_gate_b(device const float *w [[buffer(0)]], device const float *x [[buffer(1)]], device float *scalar [[buffer(2)]],\n"
 "    constant uint &hidden [[buffer(3)]], uint t [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -373,8 +510,9 @@ struct rl_metal_prefill {
     uint32_t cap;
     id<MTLLibrary> lib;
     uint32_t cap_pad;        /* token capacity rounded up to the 32-token GEMM tile */
-    id<MTLComputePipelineState> p_rowsb_f32, p_rowsb_q8, p_rowsb_q4k, p_rowsb_q5k, p_rowsb_q6k, p_rowsb_iq2xxs;
-    id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm;
+    id<MTLComputePipelineState> p_rowsb_f32, p_rowsb_q8, p_rowsb_q4k, p_rowsb_q5k, p_rowsb_q6k, p_rowsb_iq2xxs, p_rowsb_iq3, p_dq_iq3;
+    id<MTLComputePipelineState> p_dq_q8, p_dq_q4k, p_dq_q5k, p_dq_q6k, p_dq_iq2xxs, p_gemm, p_gemm_tg;
+    int gemm_tg;             /* dev30: threadgroup-staged dense GEMM (RL_PREFILL_GEMM_TG=0 -> rl_gemm_wt) */
     id<MTLBuffer> wdq;       /* dequantized f32 copy of the current dense matrix */
     size_t wdq_floats;
     /* mapped experts: the routed gate/up/down tensors of every layer wrapped in place from the mmap (no copy) */
@@ -384,8 +522,12 @@ struct rl_metal_prefill {
     uint64_t *exp_gate_bytes, *exp_up_bytes, *exp_down_bytes;   /* per-expert stride */
     uint32_t *exp_type;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_tail;
-    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_sh_scalar, p_sh_silu;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_state_sg, p_dn_tail;
+    int state_sg;            /* dev30: simdgroup-per-row DeltaNet recurrence (RL_PREFILL_STATE_SG=0 -> dn_state_seq) */
+    id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_attn_fa, p_sh_scalar, p_sh_silu;
+    int attn_tiled;          /* dev30: tiled attention (RL_PREFILL_ATTN_TILE=0 -> the dev20 per-(token, head) kernel) */
+    int profile;             /* dev30: RL_PREFILL_PROFILE=1 commits at every stage boundary and sums GPU time per stage */
+    double prof_ms[10];
     id<MTLBuffer> xb, normed, branch, resid, ffn_in;
     id<MTLBuffer> qkv, z, ba, beta, gate, conv_silu, q, k, core, ng;
     id<MTLBuffer> qgate_raw, k_raw, value, query_rope, agate, gated;
@@ -397,10 +539,10 @@ struct rl_metal_prefill {
 
 void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
-    pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = nil;
-    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_tail = nil;
-    pf->p_attn_prep = pf->p_attn_gqa = pf->p_sh_scalar = pf->p_sh_silu = nil;
-    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = nil; pf->wdq = nil;
+    pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = pf->p_rowsb_iq3 = pf->p_dq_iq3 = nil;
+    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
+        pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_sh_scalar = pf->p_sh_silu = nil;
+    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
     pf->router_logits = pf->sh_gate = pf->sh_up = pf->sh_act = pf->sh_out = pf->scalar = pf->routed = nil;
@@ -455,7 +597,7 @@ static void prefill_map_experts(rl_engine *e, rl_metal_engine *m, struct rl_meta
         rl_expert_layout first, last;
         if (!rl_native_expert_layout(&e->expert_map, l, 0u, &first, err, sizeof(err)) ||
             !rl_native_expert_layout(&e->expert_map, l, E - 1u, &last, err, sizeof(err))) return;
-        if (first.ggml_type != 17u && first.ggml_type != 29u) return;
+        if ((first.ggml_type != 17u && first.ggml_type != 29u) || first.down_type != first.ggml_type) return;
         /* per-expert strides from consecutive experts; contiguous tensors give stride == bytes */
         rl_expert_layout second;
         if (E > 1u && !rl_native_expert_layout(&e->expert_map, l, 1u, &second, err, sizeof(err))) return;
@@ -482,7 +624,11 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     pf->cap_pad = (cap + 31u) & ~31u;
     pf->keep = [NSMutableArray array];
     NSError *le = nil;
-    pf->lib = [m->dev newLibraryWithSource:kPrefillSource options:nil error:&le];
+    char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
+    if (!iq3) { set_error(error, ecap, "IQ3 Metal source allocation failed"); rl_metal_prefill_destroy(pf); return NULL; }
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kPrefillSource];
+    free(iq3);
+    pf->lib = [m->dev newLibraryWithSource:src options:nil error:&le];
     if (!pf->lib) {
         snprintf(error, ecap, "Metal prefill library compile failed: %s", le.localizedDescription.UTF8String ?: "unknown");
         rl_metal_prefill_destroy(pf); return NULL;
@@ -490,13 +636,14 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
         {&pf->p_rowsb_f32, @"rl_rowsb_f32"}, {&pf->p_rowsb_q8, @"rl_rowsb_q8"}, {&pf->p_rowsb_q4k, @"rl_rowsb_q4k"},
         {&pf->p_rowsb_q5k, @"rl_rowsb_q5k"}, {&pf->p_rowsb_q6k, @"rl_rowsb_q6k"}, {&pf->p_rowsb_iq2xxs, @"rl_rowsb_iq2xxs"},
+        {&pf->p_rowsb_iq3, @"rl_rowsb_iq3"}, {&pf->p_dq_iq3, @"rl_dq_iq3"},
         {&pf->p_rms, @"rl_rms_b"}, {&pf->p_resid_rms, @"rl_resid_rms_b"}, {&pf->p_scale_add, @"rl_scale_add_b"},
         {&pf->p_dn_ba, @"dn_ba_params_b"}, {&pf->p_dn_conv, @"dn_conv_seq"}, {&pf->p_dn_l2, @"dn_qk_l2_b"},
-        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
-        {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"},
+        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_state_sg, @"dn_state_seq_sg"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
+        {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"}, {&pf->p_attn_fa, @"attn_fa_b"},
         {&pf->p_sh_scalar, @"sh_scalar_gate_b"}, {&pf->p_sh_silu, @"sh_silu_mul_b"},
         {&pf->p_dq_q8, @"rl_dq_q8"}, {&pf->p_dq_q4k, @"rl_dq_q4k"}, {&pf->p_dq_q5k, @"rl_dq_q5k"}, {&pf->p_dq_q6k, @"rl_dq_q6k"},
-        {&pf->p_dq_iq2xxs, @"rl_dq_iq2xxs"}, {&pf->p_gemm, @"rl_gemm_wt"},
+        {&pf->p_dq_iq2xxs, @"rl_dq_iq2xxs"}, {&pf->p_gemm, @"rl_gemm_wt"}, {&pf->p_gemm_tg, @"rl_gemm_tg"},
     };
     for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
         *pipes[i].slot = make_pipe(m->dev, pf->lib, pipes[i].name, error, ecap);
@@ -540,7 +687,30 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
      * slower than the slot pool on macOS 26 / M4 Max, because Metal re-establishes residency of each
      * layer's whole expert window (~350 MB) for every command buffer (~3.3 s per 48-layer chunk). */
     if (getenv("RL_PREFILL_MAPPED_EXPERTS")) prefill_map_experts(e, m, pf);
+    { const char *at = getenv("RL_PREFILL_ATTN_TILE"); pf->attn_tiled = (!at || atoi(at) != 0) && in->head_dim == 256u; }
+    pf->profile = getenv("RL_PREFILL_PROFILE") != NULL;
+    if (m->engine_rs) {
+        if (@available(macOS 15.0, *)) {
+            id<MTLResidencySet> rs = (id<MTLResidencySet>)m->engine_rs;
+            for (id<MTLBuffer> b in pf->keep) [rs addAllocation:b];
+            [rs commit];
+        }
+    }
+    { const char *gt = getenv("RL_PREFILL_GEMM_TG"); pf->gemm_tg = !gt || atoi(gt) != 0; }
+    { const char *ss = getenv("RL_PREFILL_STATE_SG"); pf->state_sg = (!ss || atoi(ss) != 0) && in->d_state == 128u; }
     return pf;
+}
+
+/* dev30 prefill stage profile (development only: every boundary becomes a commit + wait) */
+enum { PF_NORM, PF_REC_IN, PF_REC_CORE, PF_REC_OUT, PF_ATT_IN, PF_ATT_CORE, PF_ATT_OUT, PF_RESID, PF_ROUTER, PF_SHARED, PF_NSTAGE };
+static const char *const kPfStage[PF_NSTAGE] = {"norm", "rec qkv/z/ba", "rec conv/state/tail", "rec ssm_out", "attn q/k/v",
+                                                "attn rope+gqa", "attn o", "resid+norm", "router(+pred)", "shared expert"};
+static void pf_split(rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp, int stage) {
+    if (!pf->profile) return;
+    [*cbp commit];
+    [*cbp waitUntilCompleted];
+    pf->prof_ms[stage] += ((*cbp).GPUEndTime - (*cbp).GPUStartTime) * 1000.0;
+    *cbp = [m->queue commandBuffer];
 }
 
 static id<MTLComputePipelineState> rowsb_pipe(struct rl_metal_prefill *pf, uint32_t type) {
@@ -551,6 +721,7 @@ static id<MTLComputePipelineState> rowsb_pipe(struct rl_metal_prefill *pf, uint3
         case 13: return pf->p_rowsb_q5k;
         case 14: return pf->p_rowsb_q6k;
         case 16: return pf->p_rowsb_iq2xxs;
+        case 18: case 21: case 22: case 23: return pf->p_rowsb_iq3;   /* dev31 */
         default: return nil;
     }
 }
@@ -569,6 +740,7 @@ static void enc_rowsb(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCom
     [enc setBytes:&lanes length:sizeof(lanes) atIndex:5];
     [enc setBytes:&ntok length:sizeof(ntok) atIndex:6];
     if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:7];
+    if (rl_iq3_supported(w->type)) [enc setBytes:&w->type length:4 atIndex:8];
     const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
     [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     [enc endEncoding];
@@ -581,6 +753,7 @@ static id<MTLComputePipelineState> dq_pipe(struct rl_metal_prefill *pf, uint32_t
         case 13: return pf->p_dq_q5k;
         case 14: return pf->p_dq_q6k;
         case 16: return pf->p_dq_iq2xxs;
+        case 18: case 21: case 22: case 23: return pf->p_dq_iq3;   /* dev31 */
         default: return nil;
     }
 }
@@ -604,21 +777,28 @@ static void enc_gemm(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLComm
         [enc setBuffer:pf->wdq offset:0 atIndex:2];
         [enc setBytes:&w->rows length:4 atIndex:3];
         if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:4];
-        const NSUInteger tgx = blocks < 32u ? blocks : 32u;
-        [enc dispatchThreads:MTLSizeMake(blocks, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(tgx, 256u / tgx, 1)];
+        if (rl_iq3_supported(w->type)) {   /* dev31: one thread per 8-value group */
+            [enc setBytes:&w->type length:4 atIndex:5];
+            [enc dispatchThreads:MTLSizeMake(w->cols / 8u, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+        } else {
+            const NSUInteger tgx = blocks < 32u ? blocks : 32u;
+            [enc dispatchThreads:MTLSizeMake(blocks, w->rows, 1) threadsPerThreadgroup:MTLSizeMake(tgx, 256u / tgx, 1)];
+        }
         [enc endEncoding];
         wbuf = pf->wdq; woff = 0;
     }
     const uint32_t ntok_pad = (ntok + 31u) & ~31u;
+    const int tgk = pf->gemm_tg && w->rows % 64u == 0u && w->cols % 32u == 0u;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_gemm];
+    [enc setComputePipelineState:tgk ? pf->p_gemm_tg : pf->p_gemm];
     [enc setBuffer:wbuf offset:woff atIndex:0];
     [enc setBuffer:x offset:0 atIndex:1];
     [enc setBuffer:out offset:0 atIndex:2];
     [enc setBytes:&w->rows length:4 atIndex:3];
     [enc setBytes:&w->cols length:4 atIndex:4];
     [enc setBytes:&ntok_pad length:4 atIndex:5];
-    [enc dispatchThreadgroups:MTLSizeMake((w->rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    if (tgk) [enc dispatchThreadgroups:MTLSizeMake(w->rows / 64u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((w->rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
     [enc endEncoding];
 }
 
@@ -631,8 +811,9 @@ static void enc_tg_norm(id<MTLCommandBuffer> cb, id<MTLComputePipelineState> p, 
     [enc endEncoding];
 }
 
-static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCommandBuffer> cb,
+static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp,
                             const rl_layer_tensors *t, const mlayer *w, uint32_t ntok) {
+    id<MTLCommandBuffer> cb = *cbp;
     const rl_engine_info *in = &e->info;
     const uint32_t r = t->recurrent_index;
     const uint32_t channels = in->channels, dconv = in->d_conv, rank = in->dt_rank, groups = in->n_group, S = in->d_state;
@@ -642,6 +823,7 @@ static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     enc_gemm(m, pf, cb, &w->qkv, pf->normed, pf->qkv, ntok);
     enc_gemm(m, pf, cb, &w->z, pf->normed, pf->z, ntok);
     enc_gemm(m, pf, cb, &w->ba, pf->normed, pf->ba, ntok);
+    pf_split(m, pf, cbp, PF_REC_IN); cb = *cbp;
 
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_dn_ba];
@@ -664,24 +846,29 @@ static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
 
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_dn_state];
+    [enc setComputePipelineState:pf->state_sg ? pf->p_dn_state_sg : pf->p_dn_state];
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:pf->q offset:0 atIndex:1]; [enc setBuffer:pf->k offset:0 atIndex:2];
     [enc setBuffer:pf->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:pf->gate offset:0 atIndex:4]; [enc setBuffer:pf->beta offset:0 atIndex:5];
     [enc setBuffer:pf->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
     [enc setBytes:&ntok length:4 atIndex:10]; [enc setBytes:&qk_each length:4 atIndex:11]; [enc setBytes:&channels length:4 atIndex:12]; [enc setBytes:&d_inner length:4 atIndex:13];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; [enc endEncoding];
+    if (pf->state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / 4u, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_dn_tail];
     [enc setBuffer:pf->core offset:0 atIndex:0]; [enc setBuffer:pf->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
     [enc setBuffer:pf->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
     [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)]; [enc endEncoding];
+    pf_split(m, pf, cbp, PF_REC_CORE); cb = *cbp;
 
     enc_gemm(m, pf, cb, &w->ssm_out, pf->ng, pf->branch, ntok);
+    pf_split(m, pf, cbp, PF_REC_OUT);
 }
 
-static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLCommandBuffer> cb,
+static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefill *pf, __strong id<MTLCommandBuffer> *cbp,
                             const rl_layer_tensors *t, const mlayer *w, uint32_t position0, uint32_t ntok) {
+    id<MTLCommandBuffer> cb = *cbp;
     const rl_engine_info *in = &e->info;
     const uint32_t a = t->attention_index;
     const uint32_t head_dim = in->head_dim, qheads = in->n_head, kvheads = in->n_head_kv, rope_dims = in->rope_dims;
@@ -689,6 +876,7 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     enc_gemm(m, pf, cb, &w->q, pf->normed, pf->qgate_raw, ntok);
     enc_gemm(m, pf, cb, &w->k, pf->normed, pf->k_raw, ntok);
     enc_gemm(m, pf, cb, &w->v, pf->normed, pf->value, ntok);
+    pf_split(m, pf, cbp, PF_ATT_IN); cb = *cbp;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:pf->p_attn_prep];
     [enc setBuffer:pf->qgate_raw offset:0 atIndex:0]; [enc setBuffer:pf->k_raw offset:0 atIndex:1]; [enc setBuffer:pf->value offset:0 atIndex:2];
@@ -700,13 +888,23 @@ static void enc_attention_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
     [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)(qheads + kvheads) * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)]; [enc endEncoding];
 
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->p_attn_gqa];
+    [enc setComputePipelineState:pf->attn_tiled ? pf->p_attn_fa : pf->p_attn_gqa];
     [enc setBuffer:pf->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
     [enc setBuffer:pf->agate offset:0 atIndex:3]; [enc setBuffer:pf->gated offset:0 atIndex:4];
     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&position0 length:4 atIndex:8];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)qheads * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
+    if (pf->attn_tiled) {
+        /* dev30: (head, 8-token tile) threadgroups; key blocks of 32 may read up to 31 positions past the last
+         * token, which the KV cache allocation pads (RL_ENGINE_KV_PAD) and whose weights are zero */
+        [enc setBytes:&ntok length:4 atIndex:9];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, (ntok + 7u) / 8u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    } else {
+        [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)qheads * ntok, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    }
+    [enc endEncoding];
+    pf_split(m, pf, cbp, PF_ATT_CORE); cb = *cbp;
 
     enc_gemm(m, pf, cb, &w->o, pf->gated, pf->branch, ntok);
+    pf_split(m, pf, cbp, PF_ATT_OUT);
 }
 
 /* experts per plan: bounded by the plan table and by half the cache so a group never evicts its own experts */
@@ -828,8 +1026,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
             const double l0 = rl_engine_now_ms();
             id<MTLCommandBuffer> cb = [m->queue commandBuffer];
             enc_tg_norm(cb, pf->p_rms, pf->xb, &w->attn_norm, pf->normed, hidden, eps, B);
-            if (t->kind == RL_LAYER_MAP_RECURRENT) enc_recurrent_b(e, m, pf, cb, t, w, B);
-            else enc_attention_b(e, m, pf, cb, t, w, p0, B);
+            pf_split(m, pf, &cb, PF_NORM);
+            if (t->kind == RL_LAYER_MAP_RECURRENT) enc_recurrent_b(e, m, pf, &cb, t, w, B);
+            else enc_attention_b(e, m, pf, &cb, t, w, p0, B);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pf->p_resid_rms];
@@ -839,10 +1038,13 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                 [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
                 [enc dispatchThreadgroups:MTLSizeMake(B, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; [enc endEncoding];
             }
+            pf_split(m, pf, &cb, PF_RESID);
             enc_gemm(m, pf, cb, &w->router, pf->ffn_in, pf->router_logits, B);
             /* dev24 pre-gating: layer l+1's router on layer l's FFN input predicts the experts to load during experts_l */
-            const int predict = m->prefetch && !pf->mapped && l + 1u < in->n_layer;
+            /* dev30: with every expert preloaded there is nothing to prefetch (no predictor GEMM, no loader thread) */
+            const int predict = m->prefetch && !m->preloaded && !pf->mapped && l + 1u < in->n_layer;
             if (predict) enc_gemm(m, pf, cb, &m->layers[l + 1u].router, pf->ffn_in, pf->pred_logits[l & 1u], B);
+            pf_split(m, pf, &cb, PF_ROUTER);
             {
                 id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
                 [enc setComputePipelineState:pf->p_sh_scalar];
@@ -860,7 +1062,11 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                 [enc setBytes:&count length:4 atIndex:3]; enc_1d(enc, pf->p_sh_silu, count, 64u); [enc endEncoding];
             }
             enc_gemm(m, pf, cb, &w->sh_down, pf->sh_act, pf->sh_out, B);
-            if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
+            if (pf->profile) {
+                const double g0 = stats->gpu_ms;
+                if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
+                pf->prof_ms[PF_SHARED] += stats->gpu_ms - g0;
+            } else if (!commit_wait(cb, "prefill layer dense", &stats->gpu_ms, error, cap)) goto done;
             const double l1 = rl_engine_now_ms();
             if (t->kind == RL_LAYER_MAP_RECURRENT) stats->recurrent_ms += l1 - l0; else stats->attention_ms += l1 - l0;
 
@@ -1011,9 +1217,18 @@ done:
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
                             rl_engine_step_stats *stats, char *error, size_t cap) {
     if (!e || !m || !tokens || !count) { set_error(error, cap, "invalid prefill request"); return 0; }
-    const uint32_t batch = e->cfg.prefill_batch ? e->cfg.prefill_batch : 512u;
+    const uint32_t batch = rl_engine_prefill_batch(e);
     if (!m->pf || m->pf->cap < batch) {
-        if (m->pf) { rl_metal_prefill_destroy(m->pf); m->pf = NULL; }
+        if (m->pf) {
+            if (m->engine_rs) {
+                if (@available(macOS 15.0, *)) {
+                    id<MTLResidencySet> rs = (id<MTLResidencySet>)m->engine_rs;
+                    for (id<MTLBuffer> b in m->pf->keep) [rs removeAllocation:b];
+                    [rs commit];
+                }
+            }
+            rl_metal_prefill_destroy(m->pf); m->pf = NULL;
+        }
         m->pf = prefill_create(e, m, batch, error, cap);
         if (!m->pf) return 0;
     }
@@ -1022,6 +1237,10 @@ int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *to
         const int last = done + B == count;
         if (!prefill_chunk(e, m, m->pf, tokens + done, B, last && logits != NULL, last ? logits : NULL, stats, error, cap)) return 0;
         done += B;
+    }
+    if (m->pf->profile) {
+        fprintf(stderr, "--- prefill GPU stage profile (cumulative ms, RL_PREFILL_PROFILE) ---\n");
+        for (int i = 0; i < PF_NSTAGE; ++i) fprintf(stderr, "  %-20s %9.1f ms\n", kPfStage[i], m->pf->prof_ms[i]);
     }
     if (error && cap) error[0] = '\0';
     return 1;

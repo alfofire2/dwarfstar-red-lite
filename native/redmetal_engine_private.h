@@ -5,6 +5,8 @@
 #include "redlite_native_engine_internal.h"
 #include "redlite_native_metal.h"
 
+#define RL_ENGINE_KV_PAD 32u   /* KV cache positions allocated past the context (tiled prefill attention) */
+
 typedef struct {
     __unsafe_unretained id<MTLBuffer> buf;
     NSUInteger off;
@@ -27,7 +29,7 @@ struct rl_metal_engine {
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs;
+    id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
@@ -50,6 +52,8 @@ struct rl_metal_engine {
     uint64_t last_bytes_read, last_calls, last_hits, last_misses, last_loads;
     double last_read_ms;
     struct rl_metal_prefill *pf;   /* batched prefill state (dev20), created on first use */
+    id engine_rs;                  /* dev30: MTLResidencySet (macOS 15+) of every engine buffer, attached to the queue;
+                                    * RL_ENGINE_RESIDENCY=0 leaves residency to each command buffer */
     /* dev21: GPU-routed decode */
     int spec_enabled;              /* RL_ENGINE_SPECULATIVE != 0 and residency table available */
     uint64_t misses_seen;          /* pool cache misses observed so far (to know whether the last token missed) */

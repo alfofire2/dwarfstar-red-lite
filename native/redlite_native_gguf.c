@@ -414,26 +414,27 @@ int rl_native_expert_layout(
     out->layer = layer;
     out->expert = expert;
     unsigned found = 0;
-    uint32_t common_type = UINT32_MAX;
+    uint32_t gate_type = UINT32_MAX, up_type = UINT32_MAX, down_type = UINT32_MAX;
     for (uint32_t i = 0; i < map->routed_tensor_count; ++i) {
         const rl_expert_tensor *t = &map->routed[i];
         if (t->layer != layer) continue;
-        if (common_type == UINT32_MAX) common_type = t->ggml_type;
-        else if (common_type != t->ggml_type) {
-            set_error(error, error_cap, "mixed gate/up/down quant types are not supported natively yet");
-            return 0;
-        }
         const uint64_t off = t->tensor_offset + (uint64_t)expert * t->expert_stride_bytes;
-        if (t->kind == RL_EXPERT_GATE) { out->gate_offset = off; out->gate_bytes = t->expert_stride_bytes; }
-        else if (t->kind == RL_EXPERT_UP) { out->up_offset = off; out->up_bytes = t->expert_stride_bytes; }
-        else if (t->kind == RL_EXPERT_DOWN) { out->down_offset = off; out->down_bytes = t->expert_stride_bytes; }
+        if (t->kind == RL_EXPERT_GATE) { out->gate_offset = off; out->gate_bytes = t->expert_stride_bytes; gate_type = t->ggml_type; }
+        else if (t->kind == RL_EXPERT_UP) { out->up_offset = off; out->up_bytes = t->expert_stride_bytes; up_type = t->ggml_type; }
+        else if (t->kind == RL_EXPERT_DOWN) { out->down_offset = off; out->down_bytes = t->expert_stride_bytes; down_type = t->ggml_type; }
         found++;
     }
     if (found != 3u || !out->gate_bytes || !out->up_bytes || !out->down_bytes) {
         set_error(error, error_cap, "requested routed layer does not contain gate/up/down");
         return 0;
     }
-    out->ggml_type = common_type;
+    /* gate and up share one kernel (their outputs are combined per row); down may use another type (dev31) */
+    if (gate_type != up_type) {
+        set_error(error, error_cap, "routed gate and up tensors of a layer must share one quant type");
+        return 0;
+    }
+    out->ggml_type = gate_type;
+    out->down_type = down_type;
     out->total_bytes = out->gate_bytes + out->up_bytes + out->down_bytes;
     if (error && error_cap) error[0] = '\0';
     return 1;

@@ -1,0 +1,4172 @@
+# Architecture
+
+## Design goal
+
+DwarfStar Red Lite is intentionally narrow: Qwen3-Next on Apple Silicon. The key
+constraint is that "80B" describes total sparse capacity, while a 24 GB machine
+cannot hold a normal Q4 copy of all 80B weights in unified memory.
+
+## Qwen3-Next shape
+
+Reference configuration used by this project:
+
+- 80B total parameters / ~3B activated
+- hidden size 2048
+- 48 decoder layers
+- hybrid pattern repeated 12 times:
+  - 3 × Gated DeltaNet -> MoE
+  - 1 × Gated Attention -> MoE
+- 512 routed experts
+- top-10 routed experts per token
+- one shared expert
+- expert intermediate size 512
+
+This is sparse enough that storage residency can be treated independently from
+active compute.
+
+## Control plane
+
+`redlite` is the control plane. It does not duplicate model weights and does not
+invent a second GGUF format.
+
+1. Detect Apple Silicon and physical RAM.
+2. Measure the real GGUF file size.
+3. Reserve memory for macOS, runtime scratch and context state.
+4. Select one of two engines:
+   - Metal resident
+   - CPU oversized mmap/residency
+5. Launch the matching pinned backend with safe defaults.
+
+## Metal resident path
+
+The resident path uses upstream Qwen3-Next kernels and Metal graph execution from
+llama.cpp. Red Lite uses:
+
+- `-ngl 999` to place supported graph work on Metal;
+- Flash Attention when supported;
+- q8 KV/cache types as a memory-quality compromise;
+- modest batch/ubatch on 24 GB machines;
+- no `mlock`, because the OS must retain freedom to manage unified memory.
+
+This path is intended for the ~19 GB IQ2_XXS 80B quant on a 24 GB Mac, initially at
+2K context on especially tight 24 GiB profiles; 4K/8K are measured opt-in steps.
+
+## SSD-residency path
+
+For a ~48 GB Q4 model, forcing Metal residency is the wrong memory policy on 24 GB.
+The oversized path keeps the GGUF mmap-backed and uses bounded zero-copy residency
+for hot routed-expert pages. Cold experts remain pageable and are faulted from SSD.
+
+The consequence is important: this mode is **CPU/Accelerate today**, not a fake
+"Metal streaming" claim. It trades I/O for quantization quality and capacity.
+
+## Future native Red Metal path
+
+A future `red-metal` backend can merge both paths:
+
+- dense/shared tensors permanently resident in unified memory;
+- routed experts stored in an SSD-friendly packed file;
+- async `pread` / dispatch_io into a bounded shared expert cache;
+- router-driven prefetch for the next MoE layer;
+- Metal quantized matvec/GEMM directly from cache buffers;
+- adaptive global LRU rather than rigid per-layer quotas;
+- memory-pressure feedback using macOS pressure APIs;
+- no CPU/GPU duplicate expert copies.
+
+That work requires numerical validation against a reference implementation on real
+Apple hardware, so it is deliberately not represented as finished in v0.2. See `METAL_STREAMING_ROADMAP.md`.
+
+
+# Benchmark protocol
+
+## Fast field sweep
+
+v0.2 adds a context-depth sweep for the resident Metal path:
+
+```bash
+redlite sweep /path/model.gguf \
+  --contexts 2048,4096,8192 \
+  --prompt-tokens 256 \
+  --gen-tokens 128 \
+  --max-swap-delta 0.5 \
+  --output benchmarks/sweep.json
+```
+
+For each depth Red Lite:
+
+1. recalculates the resident budget and status;
+2. skips a depth if the policy says it is genuinely unsafe;
+3. runs pinned `llama-bench` with the same Metal/cache/batch policy as Red Lite;
+4. records prompt/decode throughput;
+5. snapshots macOS swap before and after the run;
+6. stores raw benchmark rows and hardware metadata in JSON.
+
+Current llama-bench supports JSON output and a context-depth (`-d`) test that prefills
+the cache before measuring. This is preferable to judging stability from one chat.
+
+## Single profile
+
+```bash
+redlite bench /path/model.gguf -c 2048 --prompt-tokens 256 --gen-tokens 128
+```
+
+Record:
+
+- chip and macOS version
+- physical RAM
+- quant
+- context/depth
+- prompt processing tok/s
+- decode tok/s
+- swap delta / Memory Pressure
+- temperature if doing long sweeps
+
+## Oversized Q4
+
+The oversized backend uses a deterministic completion workload rather than
+`llama-bench`, because the residency policy is part of the end-to-end runtime.
+Run at least three fresh launches; filesystem cache state can materially change it.
+
+## Acceptance criteria for a 24 GiB profile
+
+A profile should not be called working merely because it emitted one token:
+
+1. 256 generated tokens without crash.
+2. macOS remains responsive.
+3. No sustained red Memory Pressure.
+4. Swap growth is recorded and judged acceptable for the intended mode.
+5. Deterministic prompt produces stable output at temp=0.
+6. OpenAI-compatible server completes at least 10 sequential requests.
+7. Throughput is always reported with quant and context.
+
+
+# Mapping from DwarfStar / DS4 to Red Lite
+
+Red Lite is not a source fork of DS4 v4. It is an adaptation of its engineering
+principles to a much smaller sparse model and a much smaller Mac.
+
+| DwarfStar idea | Red Lite adaptation |
+|---|---|
+| Deliberately narrow model support | Qwen3-Next only |
+| Metal is the primary Mac backend | Metal resident path for models that fit |
+| SSD streaming for RAM-limited Macs | Bounded mmap expert residency for oversized Q4 |
+| Asymmetric expert quantization matters | Curated low-bit resident and Q4 quality profiles |
+| Integrated CLI/server | `redlite run` and `redlite serve` |
+| Model-specific memory behavior | Qwen3-Next recurrent/hybrid-aware conservative planner |
+| Reproducible performance work | pinned engine commits + benchmark protocol |
+
+## Why Qwen3-Next instead of shrinking DeepSeek V4
+
+Qwen3-Next-80B-A3B already has the desired sparse shape: 80B total, ~3B active,
+512 experts and top-10 routing. Reducing DeepSeek V4 itself would require pruning or
+retraining weights and validating the altered router/model quality. Using an existing
+80B sparse checkpoint preserves an upstream-trained model while solving the hardware
+problem at the runtime layer.
+
+## Why v0.2 still uses two proven engines
+
+Writing a new Qwen3-Next Gated DeltaNet + full-attention + MoE Metal runtime from
+scratch is possible, but calling it complete before numerical comparisons and real
+Mac testing would be irresponsible. v0.2 therefore owns the Apple-specific policy,
+UX and reproducibility layer while using pinned, already-Qwen3-Next-capable kernels.
+
+The architectural endpoint remains a native Red Metal expert-streaming backend, but
+that should only replace the current engines after reference-logit and long-run tests
+pass on actual Apple hardware.
+
+
+# Field validation — Apple M4 Pro / 24 GiB
+
+Date: 2026-09-02
+
+Red Lite now has both an interactive field observation and a controlled context-depth sweep on its primary target class.
+
+## Hardware / model
+
+- Apple M4 Pro
+- 24 GiB unified memory
+- 8 performance CPU cores detected
+- Qwen3-Next-80B-A3B-Instruct
+- Bartowski IQ2_XXS GGUF
+- actual local file size: 17.97 GiB
+- llama.cpp Metal backend
+- batch / ubatch: 256 / 128
+- K/V cache types: q8_0 / q8_0
+
+Metal reported:
+
+- `MTLGPUFamilyApple9`
+- simdgroup matrix multiplication enabled
+- residency sets enabled
+- shared buffers enabled
+- recommended maximum working set: 21474.84 MB
+- Tensor API disabled on M4 Pro (expected for pre-M5 hardware in this llama.cpp build)
+
+## Interactive observation
+
+Interactive inference completed successfully at 2K context. Observed timings during the session were approximately:
+
+- prompt processing: 36.7–87.5 tokens/s
+- generation: 30.7–40.7 tokens/s
+
+These interactive figures are not a controlled benchmark because prompt lengths, cache state and sampling differed between turns.
+
+## Controlled sweep
+
+Command:
+
+```bash
+redlite sweep models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --contexts 2048,4096,8192 \
+  --prompt-tokens 256 \
+  --gen-tokens 128 \
+  --max-swap-delta 0.5 \
+  --output benchmarks/m4pro-24gb.json
+```
+
+Observed results:
+
+| Context | Policy status | Estimated headroom | Prompt tok/s | Generation tok/s | Swap delta |
+|---:|---|---:|---:|---:|---:|
+| 2048 | CRITICAL | +0.61 GiB | 258.8 | 38.0 | +0.00 GiB |
+| 4096 | CRITICAL | +0.50 GiB | 247.2 | 36.4 | +0.00 GiB |
+| 8192 | CRITICAL | +0.28 GiB | 236.7 | 36.9 | +0.00 GiB |
+
+All three context depths completed and no swap growth was observed during the sweep.
+
+The result is notable because generation throughput stayed essentially flat from 4K to 8K while prompt throughput declined gradually. The policy still labels all three depths `CRITICAL` because its estimated resident margin is below 1 GiB; observed success does not turn a narrow memory margin into a generally safe one.
+
+## Recommended presets for this exact field profile
+
+- **2K — conservative:** largest estimated margin; useful when other applications must remain open.
+- **4K — default:** field-validated and preserves more margin than 8K.
+- **8K — experimental:** completed with zero observed swap delta, but estimated headroom is only 0.28 GiB. Longer sessions and repeated runs are still needed before promoting it to the default.
+
+Red Lite 0.2.1 therefore changes the automatic default to 4096 only for the observed Apple M4 Pro / 24 GiB / ~18 GiB resident profile. Other unvalidated 24 GiB machines remain on the conservative 2K default.
+
+## Planner status model
+
+| Headroom | Status | Meaning |
+|---:|---|---|
+| >= 2 GiB | SAFE | comfortable policy margin |
+| 1–2 GiB | TIGHT | usable, monitor pressure |
+| 0–1 GiB | CRITICAL | resident fit with little estimated margin |
+| < 0 GiB | UNSAFE | reject resident mode |
+
+The controlled sweep is also stored in `benchmarks/m4pro-24gb-sweep-2026-09-02.json` and summarized in `configs/mac-m4pro-24gb-observed.json`.
+
+
+# Memory policy for 24 GiB Macs
+
+## Why file size matters more than parameter count
+
+An 80B model at BF16 is roughly 160 GB before runtime overhead. Quantization changes
+storage dramatically, so Red Lite plans from the *actual local GGUF byte size*.
+
+Representative Qwen3-Next-80B-A3B files are around 19.3 decimal GB for IQ2_XXS and
+48.4 decimal GB for Q4_K_M. Source pages often use decimal GB while Red Lite displays
+binary GiB.
+
+## Conservative resident budget
+
+```text
+resident_budget = physical_ram
+                - max(3.5 GiB, 14% of RAM)  # macOS/apps
+                - 1.25 GiB                  # runtime/scratch margin
+                - context reserve
+```
+
+The context reserve is a policy margin, not a byte-exact model of llama.cpp.
+
+## Status, not a binary fantasy
+
+v0.2 distinguishes a model that merely fits from one with comfortable room:
+
+```text
+>= 2 GiB headroom   SAFE
+1–2 GiB             TIGHT
+0–1 GiB             CRITICAL
+< 0 GiB             UNSAFE (resident mode rejected)
+```
+
+A `CRITICAL` plan is allowed because the 17.97 GiB IQ2_XXS profile has been observed
+running on a 24 GiB M4 Pro, but the warning is intentional.
+
+## 24 GiB default
+
+For a resident model >=17 GiB, Red Lite now starts at 2048 context. Move to 4096 or
+8192 only after running `redlite sweep` and inspecting swap / Memory Pressure.
+
+## macOS rules
+
+- Close memory-heavy apps before benchmarking.
+- Do not use `mlock` on a 24 GiB target.
+- Check `redlite pressure` before and after demanding runs.
+- Yellow/red Memory Pressure means the profile is not practically healthy even if it
+  has not crashed.
+- Uncontrolled VM compression/swap is not equivalent to explicit expert streaming.
+
+## Quality warning
+
+IQ2_XXS reaches the resident target by very aggressive quantization. It is the speed /
+fit profile, not the quality recommendation. The existing Q4_K_M path uses bounded
+SSD-backed expert residency on CPU/Accelerate until native Metal expert streaming is
+implemented and validated.
+
+
+# Native Metal + SSD expert streaming roadmap
+
+Red Lite 0.2 does **not** claim to have solved native Metal expert streaming yet.
+The quality path remains the separately validated CPU/Accelerate mmap-residency
+backend. This document defines the next native backend instead of hiding the gap.
+
+## Goal
+
+Run a Qwen3-Next-80B-A3B quantization substantially larger than unified memory while:
+
+1. keeping dense/shared/non-expert tensors resident;
+2. storing routed MoE experts in a file-backed SSD region;
+3. selecting experts from the router before they are needed;
+4. asynchronously staging selected expert tensors into a bounded unified-memory cache;
+5. executing those experts with Metal without a second CPU/GPU copy;
+6. evicting cold experts under a global LRU / pressure-aware policy.
+
+## Why this cannot be a launcher flag
+
+Qwen3-Next combines Gated DeltaNet, periodic full attention and 512 routed experts.
+A correct streaming backend needs to control tensor storage and lifetime inside the
+model execution graph. Merely asking macOS to swap a 48 GiB Metal allocation is not
+expert streaming and can destroy latency.
+
+## v0.2 groundwork
+
+The control plane now exposes the pieces needed to validate such a backend later:
+
+- explicit `CRITICAL/TIGHT/SAFE` resident states;
+- repeatable context-depth sweep with JSON results;
+- swap telemetry;
+- a conservative 24 GiB field profile;
+- pinned Metal and oversized engines kept separate;
+- no claim that stock mixed Metal/CPU expert offload is equivalent to streaming.
+
+## Native backend milestones
+
+### M1 — GGUF expert map
+
+Build an index at load time containing, per layer and expert:
+
+- gate/up tensor file offset and byte length;
+- down tensor file offset and byte length;
+- quant type / block geometry;
+- target Metal buffer alignment.
+
+Dense tensors and router weights remain normal resident tensors.
+
+### M2 — unified expert cache
+
+Implement a bounded cache whose entries are Metal-visible shared buffers. The cache
+must have a hard byte quota rather than relying on VM pressure.
+
+Suggested first target for 24 GiB machines: benchmark 4, 6 and 8 GiB quotas rather
+than hardcoding a winner.
+
+### M3 — asynchronous prefetch
+
+After layer L's router result is known, prefetch experts for L (and, when prediction
+is reliable, L+1) using asynchronous positional reads. Maintain a small queue of
+in-flight reads and deduplicate requests for already resident experts.
+
+### M4 — Metal quantized MoE kernels
+
+Consume the staged quantized blocks directly from the expert cache. Avoid expanding
+an expert to FP16 in unified memory. The first implementation should support only the
+quant types selected for Red Lite, not every GGUF quant.
+
+### M5 — pressure feedback
+
+When macOS pressure worsens or swap begins to increase, reduce the expert-cache quota
+and prefetch distance. When pressure is healthy, cautiously grow within the configured
+maximum.
+
+### M6 — correctness gate
+
+Before calling the backend usable:
+
+- compare logits/tokens with the pinned reference backend at temperature 0;
+- run at least 256 generated tokens without a cache miss correctness failure;
+- test repeated expert eviction/reload;
+- validate 2K/4K/8K context;
+- compare throughput against the CPU SSD path and IQ2_XXS resident Metal path.
+
+Until these milestones are implemented and tested on real Apple Silicon, `ssd-cpu`
+is the honest quality fallback.
+
+
+# Documentation index
+
+Every milestone document states what was implemented, how it was validated (machine,
+commit, command) and a **Scope boundary** of what it does not claim. "Validated" always
+names the machine: the M4 Pro 24 GiB (field target) or the M4 Max 48 GiB (development
+machine). "Tested synthetically" means model-free tests only.
+
+## Start here
+
+| Document | What it covers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Design goal and architecture of the v0.2 launcher (sparse 80B on a 24 GiB Mac) |
+| [MEMORY.md](MEMORY.md) | Memory policy and headroom formula for 24 GiB Macs |
+| [BENCHMARK.md](BENCHMARK.md) | v0.2 benchmark protocol and context-depth sweep |
+| [../README.md](../README.md) | Release 0.3.0: the two runtimes, measured performance per machine, correctness, limits, tool status |
+| [../CHANGELOG.md](../CHANGELOG.md) | 0.3.0 release summary and milestone targets, then every dev milestone |
+| [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
+| [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
+
+## Native runtime milestones (v0.3, released as 0.3.0)
+
+Developed on the `v0.3-streaming` branch, which was merged into `main` with release 0.3.0.
+
+dev9–dev17 built and validated one graph stage each. Their parity CLIs are now regression
+tools, and `redlite-engine` (dev18 onward) supersedes them for inference. dev22–dev26 are
+the 0.3.0 performance and robustness work.
+
+| Milestone | Document |
+|---|---|
+| dev7–dev8 Red Metal resident experts | [REDMETAL_DEV7.md](REDMETAL_DEV7.md), [REDMETAL_DEV8.md](REDMETAL_DEV8.md) |
+| dev9 native foundation | [REDLITE_DEV9_NATIVE.md](REDLITE_DEV9_NATIVE.md) |
+| dev10 standalone Metal path | [REDLITE_DEV10_NATIVE_METAL.md](REDLITE_DEV10_NATIVE_METAL.md) |
+| dev11 CPU/GPU parity harness | [REDLITE_DEV11_NATIVE_PARITY.md](REDLITE_DEV11_NATIVE_PARITY.md) |
+| dev12 field validation, offline hardening | [REDLITE_DEV12_FIELD_VALIDATION.md](REDLITE_DEV12_FIELD_VALIDATION.md), [REDLITE_DEV12_OFFLINE_HARDENING.md](REDLITE_DEV12_OFFLINE_HARDENING.md) |
+| dev13 router | [REDLITE_DEV13_ROUTER_AUDIT.md](REDLITE_DEV13_ROUTER_AUDIT.md), [REDLITE_DEV13_FIELD_VALIDATION.md](REDLITE_DEV13_FIELD_VALIDATION.md) |
+| dev14 shared expert and complete FFN | [REDLITE_DEV14_SHARED_AUDIT.md](REDLITE_DEV14_SHARED_AUDIT.md), [REDLITE_DEV14_FIELD_VALIDATION.md](REDLITE_DEV14_FIELD_VALIDATION.md), [REDLITE_DEV14_COMPLETE_FFN_FIELD_VALIDATION.md](REDLITE_DEV14_COMPLETE_FFN_FIELD_VALIDATION.md) |
+| dev15 Gated DeltaNet | [graph audit](REDLITE_DEV15_LAYER_GRAPH_AUDIT.md), [projection](REDLITE_DEV15_DELTANET_PROJECTION.md), [projection field](REDLITE_DEV15A_DELTANET_PROJECTION_FIELD_VALIDATION.md), [pre-state](REDLITE_DEV15B_DELTANET_PRESTATE.md), [state](REDLITE_DEV15_DELTANET_STATE.md), [tail](REDLITE_DEV15_DELTANET_TAIL.md), [layer](REDLITE_DEV15_LAYER_COMPOSITION.md) |
+| dev16 full attention | [REDLITE_DEV16_FULL_ATTENTION.md](REDLITE_DEV16_FULL_ATTENTION.md) |
+| dev17 48-layer decoder stack | [REDLITE_DEV17_DECODER_STACK.md](REDLITE_DEV17_DECODER_STACK.md) |
+| dev18 end-to-end engine | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) |
+| dev19 `redlite chat` | [REDLITE_DEV19_CLI_CHAT.md](REDLITE_DEV19_CLI_CHAT.md) |
+| dev20 batched prefill | [REDLITE_DEV20_BATCHED_PREFILL.md](REDLITE_DEV20_BATCHED_PREFILL.md) |
+| dev21 GPU-routed decode | [REDLITE_DEV21_GPU_ROUTED_DECODE.md](REDLITE_DEV21_GPU_ROUTED_DECODE.md) |
+| dev22 decode kernels (one encoder per token, sub-block GEMV) | [REDLITE_DEV22_DECODE_KERNELS.md](REDLITE_DEV22_DECODE_KERNELS.md) |
+| dev23 per-layer early-out, pre-gated decode prefetch | [REDLITE_DEV23_EARLY_OUT_PREFETCH.md](REDLITE_DEV23_EARLY_OUT_PREFETCH.md) |
+| dev24 prefill: expert prefetch overlap, parallel routing | [REDLITE_DEV24_PREFILL_OVERLAP.md](REDLITE_DEV24_PREFILL_OVERLAP.md) |
+| dev25 (partial) product surface: chat defaults, native server | [REDLITE_DEV25_PRODUCT.md](REDLITE_DEV25_PRODUCT.md) |
+| dev26 robustness: GGUF fuzz, sanitizers, sampler parity | [REDLITE_DEV26_ROBUSTNESS.md](REDLITE_DEV26_ROBUSTNESS.md) |
+| dev26 completion: 4096/8192 positions, sanitized chat turn, kernel self-test, split-K attention | [REDLITE_DEV26_LONG_CONTEXT.md](REDLITE_DEV26_LONG_CONTEXT.md) |
+| dev27 release 0.3.0: milestone results, final validation | [REDLITE_DEV27_RELEASE.md](REDLITE_DEV27_RELEASE.md) |
+
+## Background and plans
+
+| Document | What it covers |
+|---|---|
+| [STREAMING_V03.md](STREAMING_V03.md), [V0.3_STREAMING_DEV.md](V0.3_STREAMING_DEV.md) | v0.3 streaming design direction and dev1–dev8 notes (**legacy**: the Python streaming oracle `redlite-stream` / `redlite-ffn` / `redlite-topk` is frozen as a numerical reference) |
+| [METAL_STREAMING_ROADMAP.md](METAL_STREAMING_ROADMAP.md) | Native Metal + SSD expert streaming roadmap |
+| [DS4_ADAPTATION.md](DS4_ADAPTATION.md) | Mapping from DwarfStar / DS4 ideas to Red Lite |
+
+
+# Red Lite dev10 — standalone native Metal path
+
+Dev10 moves the validated dev8 routed top-k execution path behind the standalone
+`redlite-native` binary. Python remains in the repository as a development oracle,
+benchmark harness and regression suite, but it is no longer required by the new
+native execution path.
+
+## What is native in dev10
+
+`redlite-native` now owns:
+
+1. GGUF v2/v3 parsing;
+2. routed expert tensor discovery and physical expert slicing;
+3. routed layer shape/type validation;
+4. hard-bounded top-k-aware LRU metadata;
+5. canonical IQ2_XS and IQ1_S/IQ1_M codebooks embedded in compact form;
+6. expansion of those codebooks without `gguf-py` or Python;
+7. expert miss loading through the Red Metal top-k pool;
+8. resident gate/up/down execution and GPU router-weighted accumulation;
+9. telemetry asserting zero SSD reads while the top-k Metal command executes.
+
+On macOS the standalone executable links the Red Metal top-k Objective-C/Metal
+implementation directly. There is no Python interpreter and no `ctypes` boundary in
+`topk-probe`.
+
+The Linux build intentionally retains only the portable C parser/LRU/table selftest;
+Metal execution is Apple-only.
+
+## Quant grids
+
+The compact canonical grids are adapted from the pinned llama.cpp/GGML source at:
+
+`7798007a29a90e3053e799394da48cf53a2f8e0f`
+
+- IQ2_XS: 512 × 8 values, compact 2-bit symbols mapped to `0x08/0x19/0x2b`.
+- IQ1_M: reuses the IQ1_S 2048 × 8 grid, compact 2-bit symbols mapped to `-1/0/+1`.
+
+The standalone runtime expands them once before creating the Metal pool. See
+`NOTICE.md` for attribution.
+
+## Commands to run when the target Mac is available
+
+Build:
+
+```bash
+git pull --ff-only
+make native
+.deps/redmetal/redlite-native selftest
+```
+
+Native model inspection:
+
+```bash
+.deps/redmetal/redlite-native inspect \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --cache-mib 256 \
+  --layers
+```
+
+Expected field invariants from the already validated Python oracle are:
+
+- 144 routed tensors;
+- 48 routed layers;
+- 512 experts;
+- all slices safe;
+- 33 IQ2_XS routed tensors and 111 IQ1_M routed tensors;
+- 11 all-IQ2_XS routed layers and 37 all-IQ1_M routed layers.
+
+Native Metal top-k probe for an IQ2_XS layer:
+
+```bash
+.deps/redmetal/redlite-native topk-probe \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-mib 256
+```
+
+Native Metal top-k probe for an IQ1_M layer:
+
+```bash
+.deps/redmetal/redlite-native topk-probe \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 6 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-mib 256
+```
+
+The deterministic input, expert ids and normalized router weights intentionally match
+dev8. This lets the standalone output rows be compared directly against the already
+field-validated `redlite-topk parity` results.
+
+For a cold top-10 run we expect:
+
+- `expert loads: 10`;
+- `cache hits/misses: 0/10`;
+- `pread calls: 30`;
+- `SSD during top-k: 0 bytes / 0 calls`;
+- output rows matching the dev8 GPU values within normal FP32 tolerance.
+
+## What dev10 does not yet claim
+
+Dev10 still uses deterministic expert ids and router weights. It does not yet execute
+the real Qwen3-Next router network, the dense/recurrent portions of the model, KV
+state, sampling, tokenizer logic, or a full generation graph.
+
+It also remains a scalar correctness-first Metal implementation. SIMD/simdgroup
+optimization, asynchronous `pread`, router-driven prefetch and SSD/GPU overlap are
+future milestones.
+
+The next major milestone should connect the actual Qwen3-Next router output to this
+native top-k path, but only after the standalone dev10 probe is field-validated on the
+target M4 Pro.
+
+
+# Red Lite dev11 — native CPU/GPU parity harness
+
+Dev11 removes Python from the correctness harness used to validate the standalone
+native routed-expert path.
+
+The hot path remains the dev10 native runtime:
+
+`GGUF -> C ExpertMap -> C top-k LRU -> pread into shared Metal slots -> Metal FFN -> GPU weighted accumulation`
+
+Dev11 adds an independent C CPU oracle alongside it.
+
+## Native CPU quant reference
+
+`native/redlite_native_reference.c` implements correctness-first row-dot references for:
+
+- IQ2_XS (`GGML_TYPE 17`, 256 values / 74-byte block);
+- IQ1_M (`GGML_TYPE 29`, 256 values / 56-byte block).
+
+It uses the same canonical quant grids embedded by dev10 but independently evaluates
+quantized rows on the CPU using positional reads and double-precision accumulation.
+Gate, up, stable `SiLU(gate) * up`, selected down rows and router-weighted top-k
+accumulation are all evaluated natively.
+
+The standalone `selftest` now includes synthetic exact-value cases equivalent to the
+Python oracle tests:
+
+- IQ2_XS synthetic all-ones block -> dot product `256.0` for 256 unit inputs;
+- IQ1_M known synthetic block -> dot product `32.0` for 256 unit inputs.
+
+These tests run on both Linux and macOS CI and do not require a model file.
+
+## Field commands for later
+
+When the target M4 Pro is available again:
+
+```bash
+git pull --ff-only
+make native
+.deps/redmetal/redlite-native selftest
+```
+
+Then validate the full standalone native path on IQ2_XS:
+
+```bash
+.deps/redmetal/redlite-native topk-parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-mib 256
+```
+
+And IQ1_M:
+
+```bash
+.deps/redmetal/redlite-native topk-parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 6 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-mib 256
+```
+
+Success requires the same storage invariants already field-validated in dev8:
+
+- cold top-10 -> 10 expert loads;
+- 30 pool `pread` calls for gate/up/down residency;
+- zero pool reads during the Metal top-k command;
+- all selected slots released after the synchronous command;
+- `parity match: YES` against the native C CPU reference.
+
+Default tolerance remains `1e-3 + 1e-4 * abs(reference)`, matching the earlier Python
+parity harness.
+
+## Why keep the CPU oracle
+
+The CPU implementation is intentionally not the production inference path. It exists to
+separate arithmetic/layout correctness from Metal scheduling and optimization. Future
+SIMD/simdgroup kernels, fused expert execution, async SSD prefetch and real router
+integration can be checked against the same standalone native oracle without reintroducing
+Python into the runtime.
+
+The next production milestone should still wait for real-model dev10/dev11 field
+validation before connecting Qwen3-Next's actual router network.
+
+
+# Red Lite dev12 — standalone native field validation
+
+Target field system: Apple M4 Pro, 24 GiB unified memory.
+Model: `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+This record closes the dev9-dev12 migration from the Python-assisted development harness to the standalone native C + Objective-C/Metal path.
+
+## Native GGUF / ExpertMap
+
+`redlite-native inspect` on the real 843-tensor GGUF reported:
+
+- GGUF v3, alignment 32;
+- 843 tensors, 49 metadata entries;
+- 144 routed expert tensors across 48 layers;
+- 512 experts;
+- slice-safe outer expert axis: YES;
+- routed payload: 16.910 GiB;
+- 33 IQ2_XS routed tensors and 111 IQ1_M routed tensors;
+- 11 all-IQ2_XS routed layers and 37 all-IQ1_M routed layers;
+- layers 0-5 and 43-47: IQ2_XS gate/up/down;
+- layers 6-42: IQ1_M gate/up/down;
+- max expert gate+up+down triplet: 0.867 MiB;
+- 256 MiB cache: 295 aligned slots, top-10 fits YES;
+- layer 0 probe: hidden 2048, expert FFN 512.
+
+These values exactly reproduce the earlier Python quant audit / ExpertMap observations.
+
+## Standalone IQ2_XS routed top-10 parity
+
+Layer 0, deterministic non-contiguous top-10 fixture:
+
+- runtime: native C + Objective-C/Metal; no Python/ctypes;
+- resident slots: 10/295;
+- expert loads: 10;
+- cache hits/misses: 0/10;
+- evictions: 0;
+- SSD read: 8.672 MiB;
+- positional reads: 30 (10 experts x gate/up/down);
+- SSD reads during Metal top-k command: 0 bytes / 0 calls;
+- GPU selected-row top-k time: 9.254 ms;
+- native CPU reference: 19.896 ms;
+- max absolute error: 1.95297e-08;
+- max relative error: 4.72804e-06;
+- parity: YES.
+
+## Standalone IQ1_M routed top-10 parity
+
+Layer 6, same deterministic top-10 fixture:
+
+- runtime: native C + Objective-C/Metal; no Python/ctypes;
+- resident slots: 10/295;
+- expert loads: 10;
+- cache hits/misses: 0/10;
+- evictions: 0;
+- SSD read: 6.562 MiB;
+- positional reads: 30;
+- SSD reads during Metal top-k command: 0 bytes / 0 calls;
+- GPU selected-row top-k time: 8.658 ms;
+- native CPU reference: 24.724 ms;
+- max absolute error: 1.7304e-08;
+- max relative error: 1.31451e-04 (dominated by a near-zero output row);
+- parity: YES.
+
+## Conclusion
+
+The standalone native path is field-validated for the routed expert subsystem on both real routed quant formats:
+
+`GGUF -> native parser -> native ExpertMap -> transactional native LRU -> pread -> shared Metal residency -> complete expert FFN -> GPU weighted top-k accumulation -> native CPU oracle`.
+
+No Python interpreter or ctypes boundary is involved in this validated execution path.
+
+The remaining top-k ids and weights are deterministic fixtures. The next correctness boundary is the actual Qwen3-Next router network.
+
+
+# Red Lite dev12 — offline native hardening
+
+Dev12 intentionally avoids adding new Qwen graph functionality while the target M4 Pro is unavailable. Instead it hardens the standalone native runtime in areas that can be verified completely in CI without the 18 GiB model.
+
+## Transactional cache publication
+
+The native top-k LRU now separates selection planning from publication:
+
+1. `rl_native_lru_prepare_many()` resolves hits and reserves unique free/victim slots without changing published cache metadata;
+2. expert miss payloads are read into those reserved slots;
+3. only after every load succeeds does `rl_native_lru_commit()` publish all new `(layer, expert) -> slot` mappings and update hit/miss/eviction counters;
+4. if any load fails, `rl_native_lru_abort()` invalidates touched miss slots rather than restoring metadata for expert bytes that may have been partially or fully overwritten.
+
+This prevents the native runtime from advertising a resident expert whose Metal slot contains an incomplete replacement payload.
+
+The existing metadata-only `rl_native_lru_acquire_many()` remains as a convenience wrapper implemented as prepare + immediate commit.
+
+## Synthetic GGUF integration test
+
+`redlite-native-offline-test` creates a valid temporary GGUF v3 file directly in C with:
+
+- `general.alignment = 32`;
+- one routed layer;
+- gate/up tensors shaped `(256, 8, 4)`;
+- down tensor shaped `(8, 256, 4)`;
+- four experts;
+- IQ2_XS type 17;
+- equal 32-byte physical slices per tensor/expert.
+
+The test then runs the production native GGUF parser and verifies:
+
+- GGUF version/alignment/tensor count;
+- three routed tensors and one routed layer;
+- safe outer expert slicing;
+- total routed payload and max expert triplet sizing;
+- `hidden_size = 256`, `ffn_size = 8`;
+- expert-2 gate/up/down offsets and 32-byte slice lengths.
+
+This exercises parser -> ExpertMap -> layer-info -> expert-layout without Python and without downloading a real model.
+
+## Transaction failure-path test
+
+The same offline binary creates a two-slot native LRU, prepares a selection containing one hit and one miss, and verifies that:
+
+- prepare does not increment public counters;
+- the uncommitted miss cannot be looked up;
+- the previous victim remains visible until an overwrite is assumed;
+- abort invalidates the touched victim so stale metadata cannot survive a failed load;
+- a subsequent prepare + commit successfully publishes the new selection.
+
+## CI
+
+`make native` now builds and runs both:
+
+```text
+redlite-native selftest
+redlite-native-offline-test
+```
+
+on macOS and Linux. The macOS `redlite-native` build continues to link the standalone Red Metal top-k path directly; the offline test itself is portable C.
+
+## Validation boundary
+
+Dev12 does not change the Metal arithmetic, router fixtures or Qwen model graph. Real-model validation is still required for dev9-dev12 when the target M4 Pro becomes available again.
+
+Until that field validation succeeds, the next production feature — the actual Qwen3-Next router network — remains intentionally deferred.
+
+
+# Red Lite dev13 — real router field validation
+
+Target: Apple M4 Pro, 24 GiB unified memory
+
+Model: `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`
+
+This checkpoint validates the real Qwen3-Next F32 router and the router-selected routed-expert branch entirely through the standalone native C/Objective-C/Metal path. Python and `ctypes` are absent from the tested execution path.
+
+## Router audit
+
+All 48 routed layers contain exactly one `blk.<layer>.ffn_gate_inp.weight` tensor.
+
+- tensor count: 48
+- shape: `(2048, 512)` for every layer
+- GGML type: F32 (`0`) for all 48 tensors
+- physical span: 4.000 MiB per layer
+- total router payload: 192.000 MiB
+
+## Layer 0 router parity
+
+- CPU router read: 1.311 ms on the first isolated run
+- CPU router matvec: 0.841 ms
+- GPU router read: 0.463 ms
+- GPU router matvec: 3.004 ms
+- max logit absolute error: `4.76837e-07`
+- max logit relative error: `2.63783e-04`
+- top-k IDs match: YES
+- max selected-weight absolute error: `8.9407e-08`
+- router parity: YES
+
+Selected experts:
+
+`438,41,204,493,139,451,412,200,367,154`
+
+Normalized weights:
+
+`0.2299825,0.1769590,0.1074829,0.0931625,0.0795658,0.0691245,0.0675194,0.0613993,0.0578358,0.0569682`
+
+## Layer 6 router parity
+
+- CPU router read: 1.467 ms on the first isolated run
+- CPU router matvec: 0.846 ms
+- GPU router read: 0.434 ms
+- GPU router matvec: 3.190 ms
+- max logit absolute error: `4.76837e-07`
+- max logit relative error: `1.56213e-05`
+- top-k IDs match: YES
+- max selected-weight absolute error: `2.98023e-08`
+- router parity: YES
+
+Selected experts:
+
+`480,288,135,505,143,344,485,182,111,83`
+
+Normalized weights:
+
+`0.1826100,0.1416743,0.1046222,0.1015359,0.0955648,0.0899121,0.0741731,0.0731347,0.0686038,0.0681691`
+
+## Real-router routed-expert parity
+
+### Layer 0 / IQ2_XS
+
+- real router parity: YES
+- expert loads: 10
+- cache hits/misses: 0/10
+- positional expert reads: 30
+- SSD I/O during top-k compute: 0 bytes / 0 calls
+- GPU routed top-k: 9.364 ms
+- CPU routed reference: 22.736 ms
+- routed max absolute error: `2.20497e-08`
+- routed max relative error: `4.09202e-06`
+- routed parity: YES
+
+### Layer 6 / IQ1_M
+
+- real router parity: YES
+- expert loads: 10
+- cache hits/misses: 0/10
+- positional expert reads: 30
+- SSD I/O during top-k compute: 0 bytes / 0 calls
+- GPU routed top-k: 8.721 ms
+- CPU routed reference: 23.397 ms
+- routed max absolute error: `1.19063e-08`
+- routed max relative error: `2.62410e-06`
+- routed parity: YES
+
+## What this proves
+
+The following path is field validated on the real model:
+
+`F32 router GGUF -> native CPU/Metal router matvec -> softmax(512) -> exact top-10 -> selected-weight renormalization -> transactional native LRU -> positional expert reads -> resident IQ2_XS/IQ1_M Metal FFNs -> GPU weighted accumulation`
+
+The native CPU oracle independently agrees with both the router selection/weights and routed output.
+
+## What it does not prove yet
+
+Qwen3-Next also computes a shared expert and multiplies it by its own sigmoided scalar gate before adding it to the routed MoE output. That branch is intentionally excluded from dev13 routed parity. Dev14 begins by auditing the shared-expert tensors and then will validate the complete FFN output.
+
+
+# Red Lite dev13 — native Qwen3-Next router bring-up
+
+Dev13 starts only after the standalone routed expert subsystem passed real-model native field validation on both IQ2_XS and IQ1_M.
+
+## Pinned Qwen3-Next routing semantics
+
+The pinned llama.cpp Qwen3-Next implementation (`7798007a29a90e3053e799394da48cf53a2f8e0f`) creates one router tensor per routed layer:
+
+`blk.<layer>.ffn_gate_inp.weight`
+
+with logical shape `{ hidden_size, expert_count }`.
+
+For the target 80B-A3B architecture that means 2048 hidden features and 512 router logits.
+
+The pinned graph calls `build_moe_ffn()` with:
+
+- `n_expert = 512`;
+- `n_expert_used = 10`;
+- SiLU expert activation;
+- `norm_w = true`;
+- softmax expert gating;
+- default `expert_weights_scale = 0.0`, which means the generic MoE graph does not apply an additional post-normalization weight scale.
+
+The effective router sequence is:
+
+1. router matrix-vector product -> 512 logits;
+2. softmax across all 512 logits;
+3. select top-10 experts;
+4. gather those 10 softmax probabilities;
+5. renormalize selected probabilities by their selected-weight sum;
+6. use those weights for routed expert accumulation.
+
+## Real-model router audit — field validated
+
+Target model: Bartowski `Qwen3-Next-80B-A3B-Instruct` IQ2_XXS GGUF on Apple M4 Pro / 24 GiB.
+
+Observed result:
+
+- router tensors: 48;
+- unique layers: YES;
+- consistent shape: YES;
+- logical shape: `(2048, 512)`;
+- all router tensors: `GGML_TYPE_F32 (0)`;
+- each router: exactly 4.000 MiB;
+- total router payload: 192.000 MiB;
+- layer coverage: 0 through 47.
+
+This removes the need for any quantized router decoder in the target runtime.
+
+## Native F32 router execution
+
+Dev13 adds two independent arithmetic paths.
+
+### CPU oracle
+
+- positional read of the real 4 MiB F32 router tensor;
+- independent 2048x512 matrix-vector product;
+- stable softmax;
+- deterministic top-k;
+- selected-weight renormalization.
+
+### Metal path
+
+- positional read of the same real router directly into a shared `MTLBuffer`;
+- correctness-first F32 Metal router matvec producing all 512 logits;
+- the same native softmax/top-k/renormalization stage.
+
+The CPU and GPU paths read the router independently so the field test checks the real GGUF bytes and the Metal arithmetic rather than comparing aliases of one copied buffer.
+
+## Validation executable
+
+On macOS, `make native` builds:
+
+`.deps/redmetal/redlite-router`
+
+### Router-only parity
+
+```text
+redlite-router router-parity MODEL --layer N --top-k 10
+```
+
+Checks:
+
+- all 512 GPU logits against the independent CPU oracle;
+- exact ordered top-10 expert IDs;
+- selected normalized router weights;
+- CPU/GPU router read and compute telemetry.
+
+### Real-router routed-MoE parity
+
+```text
+redlite-router routed-parity MODEL --layer N --top-k 10 --rows 8 --cache-mib 256
+```
+
+After router parity passes, this command feeds the **real router-selected** expert IDs and weights into the existing native resident Metal expert executor and compares the routed output against the independent C expert reference.
+
+This validates:
+
+`real F32 router -> softmax -> top-10 -> renorm -> LRU residency -> SSD expert loads -> IQ2_XS/IQ1_M Metal FFNs -> GPU weighted accumulation`
+
+The command intentionally validates only the routed-expert branch. Qwen3-Next's separate gated shared-expert branch is not integrated yet.
+
+## Portable regression coverage
+
+A platform-independent test verifies:
+
+- stable softmax;
+- descending top-k selection;
+- selected-weight renormalization to sum 1;
+- deterministic lower-index tie breaking.
+
+The synthetic GGUF fixture also proves exact `ffn_gate_inp.weight` discovery without matching `ffn_gate_inp_shexp`.
+
+## Next milestone
+
+If representative IQ2_XS and IQ1_M layers pass `routed-parity`, dev14 will integrate the shared-expert branch. Only after routed + shared FFN parity is established should Red Lite move upward into post-attention RMSNorm/full layer parity and eventually the Gated DeltaNet / attention graph.
+
+
+# Red Lite dev14 — complete Qwen3-Next FFN field validation
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+Dev14 closes the complete feed-forward block on the real model. The validated graph is:
+
+`F32 router -> softmax -> top-10 -> renormalized routed MoE + sigmoid-gated shared expert -> FFN output`.
+
+Both CPU and Metal paths are standalone native implementations with no Python or ctypes in the tested path.
+
+## Layer 0
+
+This layer exercises routed IQ2_XS experts plus a Q6_K shared expert.
+
+- router IDs match: YES;
+- router max logit error: `4.76837e-07`;
+- router max selected-weight error: `8.9407e-08`;
+- selected experts: `438,41,204,493,139,451,412,200,367,154`;
+- routed cold loads: 10;
+- routed positional reads: 30;
+- routed SSD reads during Metal compute: 0 bytes / 0 calls;
+- routed GPU / CPU: `9.285 / 21.592 ms`;
+- routed max abs / rel error: `2.20497e-08 / 4.09202e-06`;
+- routed parity: YES;
+- shared quant: Q6_K gate/up/down;
+- shared scalar gate CPU / GPU: `0.544462628 / 0.544462562`;
+- shared read calls: CPU=4, GPU=4;
+- shared SSD reads during Metal compute: 0 bytes / 0 calls;
+- shared GPU / CPU: `3.017 / 1.787 ms`;
+- shared max abs / rel error: `1.23826e-07 / 1.26553e-05`;
+- shared parity: YES;
+- complete FFN max abs / rel error: `1.32396e-07 / 6.31249e-05`;
+- complete FFN parity: YES.
+
+## Layer 6
+
+This layer exercises routed IQ1_M experts plus an IQ2_XXS shared expert.
+
+- router IDs match: YES;
+- router max logit error: `4.76837e-07`;
+- router max selected-weight error: `2.98023e-08`;
+- selected experts: `480,288,135,505,143,344,485,182,111,83`;
+- routed cold loads: 10;
+- routed positional reads: 30;
+- routed SSD reads during Metal compute: 0 bytes / 0 calls;
+- routed GPU / CPU: `8.301 / 22.242 ms`;
+- routed max abs / rel error: `1.19063e-08 / 2.6241e-06`;
+- routed parity: YES;
+- shared quant: IQ2_XXS gate/up/down;
+- shared scalar gate CPU / GPU: `0.407262824 / 0.407262862`;
+- shared read calls: CPU=4, GPU=4;
+- shared SSD reads during Metal compute: 0 bytes / 0 calls;
+- shared GPU / CPU: `2.926 / 1.736 ms`;
+- shared max abs / rel error: `8.18691e-08 / 4.46434e-06`;
+- shared parity: YES;
+- complete FFN max abs / rel error: `7.44724e-08 / 1.63362e-05`;
+- complete FFN parity: YES.
+
+## Q6_K oracle correction
+
+During dev14 bring-up, Q6_K Metal initially appeared to disagree with the native CPU reference. An isolated real-matrix probe showed Metal outputs at exactly twice the CPU result for affected rows. The actual defect was in the CPU FP16-to-FP32 conversion for half subnormal values: the exponent used `127 - 15 - shift` instead of `127 - 14 - shift`.
+
+After fixing the oracle and adding a dedicated FP16-subnormal regression fixture:
+
+- Q6_K gate matrix parity: YES;
+- Q6_K up matrix parity: YES;
+- Q6_K down matrix parity: YES;
+- complete Q6_K shared branch parity: YES.
+
+The routed dev12/dev13 reference converter used a different, correct half-subnormal implementation and is not invalidated by this fix.
+
+## Validation boundary
+
+Dev14 validates the complete Qwen3-Next FFN for representative real layers covering both routed quant families and both shared-expert quant families. It does not yet validate the complete decoder block. The next milestone must cover the surrounding graph:
+
+`RMSNorm -> DeltaNet/full attention -> residual -> RMSNorm -> complete FFN -> residual`.
+
+
+# Red Lite dev14 — shared expert field validation
+
+Target: Apple M4 Pro, 24 GiB unified memory, real `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+## Shared audit
+
+The real model contains 48 complete shared-expert layers. Each layer has:
+
+- `ffn_gate_inp_shexp.weight`: F32 scalar gate, hidden 2048;
+- `ffn_gate_shexp.weight`;
+- `ffn_up_shexp.weight`;
+- `ffn_down_shexp.weight`;
+- shared FFN width 512.
+
+The three shared FFN matrices are Q6_K in 24 layers and IQ2_XXS in 24 layers. Total shared payload is about 78 MiB.
+
+## IQ2_XXS field parity
+
+Layer 6, rows 0..7:
+
+- scalar gate CPU/GPU: `0.407262824 / 0.407262862`;
+- scalar-gate absolute error: `3.76363e-08`;
+- shared max absolute error: `8.18691e-08`;
+- shared max relative error: `4.46434e-06`;
+- shared parity: YES;
+- GGUF reads during Metal shared compute: zero.
+
+## Q6_K FP16-subnormal oracle bug
+
+Initial layer-0 shared parity failed while Metal outputs were stable. An isolated Q6_K matrix probe exposed a nearly exact factor-of-two discrepancy between GPU and CPU reference values.
+
+The fault was in the dev14 CPU half-to-float helper for FP16 subnormals. The exponent reconstruction used `127 - 15 - shift`; the correct half-subnormal exponent is `127 - 14 - shift`. Real Q6_K super-block scales in this model exercise the subnormal path, while the original synthetic test used normal FP16 `d=1.0` and therefore did not expose the bug.
+
+The native routed reference used by earlier dev12/dev13 validation already had a correct FP16-subnormal converter and is not invalidated by this fix.
+
+A new synthetic Q6_K regression test uses a subnormal half scale and is required to pass during `make native`.
+
+## Q6_K isolated field parity after oracle fix
+
+Layer 0, first 8 rows of each real shared matrix:
+
+- gate: max abs `4.26546e-07`, max rel `1.24716e-05`, parity YES;
+- up: max abs `1.2666e-07`, max rel `8.6496e-07`, parity YES;
+- down: max abs `1.00583e-07`, max rel `1.28063e-06`, parity YES;
+- overall Q6 matrix parity: YES.
+
+Representative gate row 1:
+
+- GPU `-0.5087475`;
+- CPU `-0.5087476`;
+- delta `+1.118e-07`.
+
+## Q6_K complete shared branch parity
+
+Layer 0, rows 0..7:
+
+- scalar gate CPU/GPU: `0.544462628 / 0.544462562`;
+- scalar-gate absolute error: `6.61313e-08`;
+- shared max absolute error: `1.23826e-07`;
+- shared max relative error: `1.26553e-05`;
+- shared parity: YES;
+- GGUF reads during Metal shared compute: zero.
+
+This validates both shared-expert quant families present in the real model.
+
+## Complete FFN composition checkpoint
+
+After Q6_K and IQ2_XXS shared parity both passed, dev14 adds `redlite-ffn parity` as a correctness-first composition test. It evaluates independently:
+
+1. F32 router CPU and Metal;
+2. softmax -> real top-10 -> renormalized weights;
+3. routed top-10 expert branch CPU and Metal;
+4. gated shared-expert branch CPU and Metal;
+5. `FFN = routed + shared` on both paths;
+6. final CPU/Metal FFN parity.
+
+The first complete-FFN field targets remain layer 0 (Q6_K shared / IQ2_XS routed) and layer 6 (IQ2_XXS shared / IQ1_M routed). This is a correctness milestone, not yet a fused or performance-optimized full-layer scheduler.
+
+
+# Red Lite dev14 — Qwen3-Next shared expert bring-up
+
+Dev14 starts after the real Qwen3-Next router and router-selected routed branch passed native field parity on the target Apple M4 Pro.
+
+## Pinned shared-expert semantics
+
+The pinned llama.cpp Qwen3-Next graph computes the shared branch from the same post-attention-normalized FFN input used by the routed MoE branch.
+
+The shared expert uses four tensors per layer:
+
+- `blk.<layer>.ffn_gate_inp_shexp.weight` — scalar shared-expert gate from the hidden state;
+- `blk.<layer>.ffn_gate_shexp.weight` — shared FFN gate projection;
+- `blk.<layer>.ffn_up_shexp.weight` — shared FFN up projection;
+- `blk.<layer>.ffn_down_shexp.weight` — shared FFN down projection.
+
+The pinned graph applies:
+
+1. `shared_ffn = down(SiLU(gate(x)) * up(x))`;
+2. `shared_gate = sigmoid(ffn_gate_inp_shexp(x))`;
+3. `shared_out = shared_ffn * shared_gate`;
+4. `ffn_out = routed_moe_out + shared_out`.
+
+The scalar gate is therefore separate from the internal gated-FFN SiLU gate.
+
+## Real-model field audit
+
+Target GGUF: `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+The standalone native audit found:
+
+- 192 exact shared tensors;
+- 48 shared layers;
+- 48/48 complete four-tensor sets;
+- shape consistency: YES;
+- hidden size: 2048;
+- shared FFN width: 512;
+- total shared payload: 78.000 MiB;
+- `ffn_gate_inp_shexp`: F32 on all 48 layers;
+- `ffn_gate_shexp`: Q6_K on 24 layers, IQ2_XXS on 24 layers;
+- `ffn_up_shexp`: Q6_K on 24 layers, IQ2_XXS on 24 layers;
+- `ffn_down_shexp`: Q6_K on 24 layers, IQ2_XXS on 24 layers.
+
+The three FFN matrices use the same quant type within every audited layer. Layer 0 is a Q6_K field-test target; layer 6 is an IQ2_XXS field-test target.
+
+The Q6_K matrix payload is 0.820 MiB per tensor for these shapes. The IQ2_XXS matrix payload is 0.258 MiB per tensor. The F32 scalar-gate vector is 0.008 MiB per layer.
+
+Because the complete shared payload is only 78 MiB, the final runtime should strongly consider keeping all shared-expert weights resident rather than placing them in the routed-expert LRU. Dev14 correctness testing still uses explicit per-layer reads so storage and arithmetic remain easy to audit.
+
+## Native arithmetic implementation
+
+Dev14 implements only the two real shared FFN formats found by the audit:
+
+- Q6_K (`GGML_TYPE_Q6_K = 14`): 256 values / 210-byte block, using the exact pinned ggml block layout and dequantization formula;
+- IQ2_XXS (`GGML_TYPE_IQ2_XXS = 16`): 256 values / 66-byte block, using the canonical IQ2_XXS grid already validated during earlier Red Metal bring-up.
+
+A portable native decoder test constructs exact synthetic all-ones blocks for each format and requires a 256-element unit-vector dot product of exactly `256.0`.
+
+`redlite-shared parity MODEL --layer N --rows N` then executes the real shared branch twice:
+
+1. independent native C CPU oracle;
+2. correctness-first Metal implementation.
+
+Both paths evaluate the F32 scalar gate, sigmoid, complete gate/up projections, `SiLU(gate) * up`, selected down rows, and scalar gating. Metal reads all four weight tensors before the command buffer; no GGUF reads occur during shared compute.
+
+Field targets:
+
+- layer 0: Q6_K;
+- layer 6: IQ2_XXS.
+
+Once both pass numerical parity, dev14 can compose the already validated real-router routed output with the shared output and validate the complete Qwen3-Next FFN result. The first composition may remain correctness-first; permanent shared residency and fused routed+shared scheduling are subsequent runtime optimizations.
+
+
+# Red Lite dev15 — DeltaNet projection bring-up
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+The dev15 layer audit field run established the real non-FFN graph layout:
+
+- 48 decoder layers;
+- 36 recurrent/DeltaNet layers;
+- 12 full-attention layers at `3,7,11,15,19,23,27,31,35,39,43,47`;
+- no mixed or unknown layers;
+- recurrent layers use the same tensor type/shape pattern across the model;
+- full-attention layers use the same tensor type/shape pattern across the model.
+
+The initial audit printed `norm pairs: 0/48` because Red Lite looked for `attn_post_norm.weight`, while the target GGUF stores the tensor as `post_attention_norm.weight`. This was an audit-name bug only: every layer contains both `attn_norm.weight` and `post_attention_norm.weight`. The audit has been corrected and now requires all discovered layers to have both norms.
+
+## Pinned DeltaNet order
+
+The pinned llama.cpp Qwen3-Next optimized recurrent path starts with:
+
+1. decoder input RMSNorm;
+2. `attn_qkv.weight` projection;
+3. separate `attn_gate.weight` projection producing Z;
+4. `ssm_ba.weight` projection producing beta/alpha parameters;
+5. beta sigmoid and alpha softplus/gating;
+6. convolution-state update and SiLU;
+7. Q/K L2 normalization and recurrent delta update;
+8. gated per-head RMSNorm;
+9. `ssm_out.weight` projection.
+
+Dev15 intentionally brings this up in smaller parity checkpoints rather than implementing the complete stateful path at once.
+
+## Field-derived recurrent dimensions
+
+Representative recurrent layer 0:
+
+- hidden: `2048`;
+- `attn_norm.weight`: F32 `(2048)`;
+- `attn_qkv.weight`: IQ2_XXS `(2048,8192)`;
+- `attn_gate.weight`: IQ2_XXS `(2048,4096)`;
+- `ssm_ba.weight`: Q8_0 `(2048,64)`;
+- `ssm_conv1d.weight`: F32 `(4,8192)`;
+- `ssm_dt.bias`: F32 `(32)`;
+- `ssm_a`: F32 `(32)`;
+- `ssm_norm.weight`: F32 `(128)`;
+- `ssm_out.weight`: Q4_K `(4096,2048)`.
+
+These shapes imply 32 value heads of width 128 and 16 key groups of width 128, consistent with the pinned optimized Qwen3-Next graph.
+
+## dev15a projection parity
+
+`redlite-deltanet-proj` validates the stateless front of a real recurrent layer before any recurrent-state arithmetic is introduced:
+
+`input -> RMSNorm -> {QKV IQ2_XXS, Z IQ2_XXS, beta/alpha Q8_0}`
+
+The CPU path is an independent native reference. The Metal path reads the full four real weight tensors into shared Metal buffers before dispatch, executes the RMSNorm and the requested output rows, and performs no GGUF reads during the command buffer.
+
+The tool also adds a standalone Q8_0 CPU decoder fixture and RMSNorm fixture to `make native`.
+
+Build:
+
+```bash
+make native
+```
+
+Field parity on recurrent layer 0:
+
+```bash
+.deps/redmetal/redlite-deltanet-proj parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0 \
+  --rows 8
+```
+
+Expected gate:
+
+```text
+RMSNorm ... parity=YES
+QKV ... parity=YES
+Z ... parity=YES
+BA ... parity=YES
+projection parity  : YES
+```
+
+## Next gates
+
+After real-model dev15a parity passes:
+
+1. implement beta/alpha transform plus convolution/state preparation and compare intermediate Q/K/V/gate/beta tensors;
+2. implement the recurrent delta update and gated per-head norm;
+3. add Q4_K `ssm_out` projection parity;
+4. compose recurrent attention residual + post-attention RMSNorm + the already field-validated dev14 complete FFN + final residual;
+5. bring up one representative full-attention layer separately before executing complete 48-layer token flow.
+
+
+# Red Lite dev15c — Gated DeltaNet recurrent-state parity
+
+## Scope
+
+This checkpoint isolates the single-token recurrent matrix update after the dev15a projection and dev15b prestate stages. It uses deterministic synthetic Q/K/V, beta, decay-gate and previous recurrent state so the state transition is validated independently before composing the full recurrent layer.
+
+Audited Qwen3-Next recurrent geometry:
+
+- state/key dimension: 128
+- key/query heads: 16
+- value/recurrent heads: 32
+- recurrent state: `32 × 128 × 128` F32 = 2 MiB
+
+## Pinned llama.cpp semantics
+
+The implementation follows llama.cpp commit `7798007a29a90e3053e799394da48cf53a2f8e0f`.
+
+For each value head `h`, Q/K are broadcast from key head `h % 16`. The recurrent state uses the transposed physical layout documented by the pinned CPU operator:
+
+`M[j][i] = S[i][j]`
+
+For one token:
+
+1. `M *= exp(gate[h])`
+2. `sk[j] = dot(M[j], k)`
+3. `delta[j] = (v[j] - sk[j]) * beta[h]`
+4. `M[j][i] += delta[j] * k[i]`
+5. `out[j] = dot(M[j], q) / sqrt(128)`
+
+The output uses the updated state.
+
+## Native implementation
+
+- `native/redlite_native_deltanet_state.h`
+- `native/redlite_native_deltanet_state_cli.c`
+- `native/redmetal_deltanet_state.m`
+- `scripts/build_deltanet_state.sh`
+- executable: `.deps/redmetal/redlite-deltanet-state`
+
+The Metal reference is deliberately split into four ordered dispatches: decay, delta, state update and output. This is a correctness checkpoint, not the final fused performance kernel.
+
+## M4 Pro ARM64 field validation
+
+Commit `572024cd8fba4f963554493c1c0e989b355f168a`, self-hosted runner `redlite-m4pro`:
+
+```text
+runtime            : native C + Metal DeltaNet recurrent-state parity (no Python/ctypes)
+layer              : 0
+state geometry     : S=128 key_heads=16 value_heads=32
+Q/K broadcast      : value_head % key_heads (0..15,0..15)
+state layout       : transposed M[j][i] = S[i][j]
+state payload      : 2.000 MiB
+CPU / GPU compute  : 0.404 / 2.147 ms
+delta max abs/rel  : 7.45058e-09 / 9.5523e-05 parity=YES
+state max abs/rel  : 1.86265e-09 / 0.00111594 parity=YES
+output max abs/rel : 4.65661e-10 / 0.00445835 parity=YES
+state parity       : YES
+```
+
+The larger relative errors occur only near zero; absolute agreement is at `1e-9` to `1e-10` scale.
+
+## Result
+
+**dev15c passed.** State layout, key-head broadcast, decay, delta update, persistent-state write and recurrent output are field-validated on native Apple Silicon.
+
+
+# Red Lite dev15d — DeltaNet gated tail + Q4_K output projection
+
+## Scope
+
+This checkpoint validates the final compute tail of a Qwen3-Next recurrent/DeltaNet layer after the recurrent state update:
+
+`recurrent output → gated RMSNorm → flatten 4096 → Q4_K ssm_out → hidden 2048`
+
+It deliberately isolates the two new primitives before end-to-end recurrent-layer composition.
+
+## Pinned graph semantics
+
+Pinned llama.cpp commit `7798007a29a90e3053e799394da48cf53a2f8e0f` performs:
+
+1. reshape recurrent output and Z into 32 value heads × 128;
+2. RMSNorm each 128-value head using the shared `ssm_norm.weight` vector;
+3. compute `SiLU(z)`;
+4. elementwise multiply normalized recurrent output by `SiLU(z)`;
+5. flatten to 4096;
+6. apply `ssm_out` to produce hidden size 2048.
+
+Real layer-0 GGUF tensors:
+
+- `blk.0.ssm_norm.weight`: F32, shape `(128)`;
+- `blk.0.ssm_out.weight`: Q4_K type 12, shape `(4096,2048)`.
+
+## Q4_K implementation
+
+The independent native decoder follows the pinned canonical layout:
+
+- 256 values per block;
+- 144 bytes per block;
+- F16 `d` + F16 `dmin`;
+- 12 packed 6-bit scale/min bytes;
+- 128 bytes of packed 4-bit quants.
+
+A 4096-value row therefore uses 16 blocks = 2304 bytes. The complete `4096 × 2048` `ssm_out` payload is 4.5 MiB.
+
+CPU and Metal decode the packed payload independently. The Metal path operates directly on Q4_K bytes; it does not use CPU-dequantized weights.
+
+## Native files
+
+- `native/redlite_native_deltanet_tail.h`
+- `native/redlite_native_deltanet_tail_cli.c`
+- `native/redmetal_deltanet_tail.m`
+- `scripts/build_deltanet_tail.sh`
+- executable `.deps/redmetal/redlite-deltanet-tail`
+
+## Field gate
+
+```bash
+.deps/redmetal/redlite-deltanet-tail parity MODEL --layer 0
+```
+
+The checkpoint passes only if:
+
+- all 4096 gated-normalized values agree CPU ↔ Metal;
+- all 2048 Q4_K projected outputs agree CPU ↔ Metal;
+- no SSD reads occur during compute;
+- `tail parity : YES`.
+
+After this passes, all mathematical/quantized primitives of the recurrent attention branch are independently validated and can be composed into a complete real DeltaNet layer.
+
+
+# Red Lite dev15e — complete recurrent DeltaNet layer composition
+
+Status: **FIELD VALIDATED on Apple M4 Pro / 24 GiB / ARM64**.
+
+Validated commit: `385557e93d0372c6e209b102bf74a28d8352a13d`
+
+M4 field workflow: `Red Lite M4 Field Validation`, run `33759672217`, success.
+
+This checkpoint composes the previously field-validated Qwen3-Next recurrent-attention stages into one single-token forward on the real GGUF layer 0:
+
+1. input RMSNorm using `blk.0.attn_norm.weight`
+2. full optimized projections:
+   - `attn_qkv` IQ2_XXS: 2048 -> 8192
+   - `attn_gate` IQ2_XXS: 2048 -> 4096
+   - `ssm_ba` Q8_0: 2048 -> 64
+3. real F32 conv/prestate path with beta/decay transforms and Q/K L2 normalization
+4. recurrent Gated DeltaNet state update using the pinned llama.cpp transposed state layout
+5. gated RMSNorm with `ssm_norm.weight` and `SiLU(z)`
+6. real Q4_K `ssm_out`: 4096 -> 2048
+
+CPU and Metal start from the same deterministic hidden vector, convolution cache and 2 MiB recurrent cache. Each implementation feeds its own stage output into the next stage; intermediate values are not reset to shared fixtures.
+
+## M4 field result
+
+```text
+runtime             : complete native single-token Qwen3-Next DeltaNet layer parity
+layer               : 0
+geometry            : hidden=2048 channels=8192 qk=2048 value=4096 heads(k/v)=16/32
+state               : conv=96.000 KiB recurrent=2.000 MiB
+CPU weight read     : 1.459 ms / 9 calls / 10.954 MiB
+CPU full compute    : 37.424 ms
+GPU projection      : 3.512 ms compute / 0.576 ms read / 6.328 MiB
+GPU prestate/state  : 1.888 / 2.081 ms
+GPU tail            : 2.129 ms
+SSD during compute  : prestate=0 bytes/0 calls; other stages=0
+full QKV abs/rel    : 9.05991e-06 / 0.00359473
+full Z abs/rel      : 6.67572e-06 / 0.000288968
+full BA abs/rel     : 8.34465e-07 / 4.63736e-06 projection=YES
+prestate Q/K/V abs  : 9.23872e-07 / 3.57628e-07 / 1.3411e-07
+prestate gate abs   : 3.05176e-05 parity=YES
+conv state abs/rel  : 9.05991e-06 / 0.00359473 parity=YES
+recurrent abs/rel   : 6.33299e-08 / 0.318283 parity=YES
+core output abs/rel : 1.16415e-09 / 0.0012068 parity=YES
+gated norm abs/rel  : 6.51926e-08 / 0.00120743 parity=YES
+FINAL output abs/rel: 2.8871e-08 / 0.000449752 parity=YES
+COMPLETE DELTANET   : YES
+```
+
+The large maximum relative error reported for the recurrent state is caused by values close to zero; the absolute maximum error is only `6.33299e-08`, and every element passes the field tolerance.
+
+The complete composed GPU diagnostic performs no SSD access during compute. Its currently separate diagnostic Metal stages total about `9.61 ms` of reported compute time (`3.512 + 1.888 + 2.081 + 2.129 ms`); this is a correctness-first unfused implementation and is not a final token/s estimate.
+
+All existing projection, prestate, recurrent-state, gated-tail, and FFN regression checks also passed in the same M4 workflow run.
+
+## Boundary of this checkpoint
+
+This validates the complete recurrent-attention branch for one deterministic single token, including both recurrent cache updates. It does **not** yet validate a complete transformer block because the following graph remains to be composed around it:
+
+- attention residual add
+- `attn_post_norm.weight` RMSNorm
+- full 2048-wide MoE + shared-expert FFN execution
+- FFN residual add
+
+Full-attention layers, embedding/final norm/LM head, tokenizer/sampling, and multi-token generation remain later milestones.
+
+
+# Red Lite dev15 — Qwen3-Next layer graph audit
+
+Dev15 starts after complete real-model FFN parity passed on representative routed/shared quant combinations.
+
+## Pinned decoder-block order
+
+The pinned llama.cpp Qwen3-Next graph executes each trunk layer as:
+
+1. RMSNorm with `blk.<layer>.attn_norm.weight`;
+2. recurrent gated DeltaNet or full attention, depending on the layer pattern;
+3. attention residual add;
+4. RMSNorm with `blk.<layer>.attn_post_norm.weight`;
+5. complete routed + shared FFN;
+6. FFN residual add.
+
+When an explicit recurrent-layer map is absent, the pinned implementation defaults to full attention every fourth layer and recurrent linear attention otherwise. Red Lite does not assume that fallback for the target GGUF; dev15 audits the actual tensor directory first.
+
+## Audit strategy
+
+`redlite-layer-audit` is a standalone native C GGUF tensor-directory scanner. It deliberately excludes all `blk.N.ffn_*` tensors already validated in dev12-dev14 and inspects the remaining per-layer graph tensors.
+
+It reports:
+
+- total non-FFN layer tensors and physical span;
+- number of discovered layers;
+- recurrent/DeltaNet vs full-attention classification counts;
+- exact recurrent and full-attention layer lists;
+- presence of both attention RMSNorm tensors per layer;
+- optional exact tensor suffix, GGML type, shape, physical span and absolute offset for every layer.
+
+The classifier uses structural signals rather than assuming a fixed interval:
+
+- recurrent: `ssm_*`, `attn_qkv.weight`, `attn_gate.weight`;
+- full attention: `attn_q.weight`, `attn_k.weight`, `attn_v.weight`, `attn_output.weight`, `attn_q_norm.weight`, `attn_k_norm.weight`.
+
+FFN tensors are explicitly excluded before classification.
+
+## Build and field command
+
+`make native` now also runs the layer-audit name/classifier selftest and builds:
+
+`.deps/redmetal/redlite-layer-audit`
+
+Field audit:
+
+```bash
+.deps/redmetal/redlite-layer-audit \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --tensors
+```
+
+Expected high-level architecture from the pinned fallback is 48 layers with 36 recurrent/DeltaNet and 12 full-attention layers, but field output is authoritative.
+
+## Next implementation gate
+
+No attention or DeltaNet arithmetic is added until this audit identifies the exact real tensor names, types, dimensions and layer pattern. After field validation, dev15 should bring up one representative recurrent layer first and one full-attention layer second, each with an independent native CPU oracle before composing the complete decoder block.
+
+
+# Red Lite dev15a — DeltaNet projection field validation
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+## Layer graph audit
+
+The corrected native layer audit passed on the real GGUF:
+
+- GGUF v3, 843 tensors;
+- 456 non-FFN layer tensors, 511.831 MiB physical span;
+- 48/48 layers discovered;
+- attention pattern: 36 recurrent/DeltaNet, 12 full-attention, 0 mixed, 0 unknown;
+- norm pairs: 48/48 after correcting the GGUF suffix to `post_attention_norm.weight`;
+- recurrent layers: `0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30,32,33,34,36,37,38,40,41,42,44,45,46`;
+- full-attention layers: `3,7,11,15,19,23,27,31,35,39,43,47`.
+
+All layers reported `norms=YES`.
+
+## DeltaNet projection parity — real layer 0
+
+`redlite-deltanet-proj parity ... --layer 0 --rows 8` passed on the real model.
+
+Discovered layout:
+
+- RMS epsilon: `9.99999997e-07`;
+- hidden: 2048;
+- QKV: IQ2_XXS `(2048,8192)`;
+- Z gate: IQ2_XXS `(2048,4096)`;
+- beta/alpha: Q8_0 `(2048,64)`.
+
+Telemetry:
+
+- CPU read: `0.703 ms / 4 calls / 33.250 KiB` (only requested rows for quant projections);
+- GPU read: `2.788 ms / 4 calls / 6.328 MiB` (full projection tensors into shared Metal buffers);
+- SSD during compute: `0 bytes / 0 calls`;
+- CPU compute: `0.065 ms`;
+- GPU compute: `3.939 ms`.
+
+Parity:
+
+- RMSNorm max abs/rel: `2.01322e-07 / 1.08407e-07`, YES;
+- QKV max abs/rel: `1.04662e-06 / 3.72052e-05`, YES;
+- Z max abs/rel: `9.24545e-07 / 1.02637e-05`, YES;
+- BA max abs/rel: `6.47018e-07 / 6.88752e-07`, YES;
+- overall projection parity: YES.
+
+Representative row 0:
+
+- QKV GPU/CPU: `-0.6311109 / -0.6311105`;
+- Z GPU/CPU: `-0.4139920 / -0.4139925`;
+- BA GPU/CPU: `+0.1260645 / +0.1260644`.
+
+## Validation boundary
+
+Dev15a validates the real-model input RMSNorm and the optimized DeltaNet front-end projections (`attn_qkv`, `attn_gate`, `ssm_ba`), including the first native Q8_0 path. It does not yet validate convolutional recurrent state handling or the Gated DeltaNet matrix-state update.
+
+Next checkpoint: beta/alpha parameter transforms, conv-state shift, real F32 `ssm_conv1d`, SiLU, Q/K/V split, and per-head Q/K L2 normalization before the recurrent delta update.
+
+
+# Red Lite dev15b — DeltaNet pre-state parity
+
+Dev15a field-validated the real-model input RMSNorm and optimized QKV/Z/BA projections. Dev15b advances into the stateful Gated DeltaNet path while keeping the recurrent matrix-state update out of scope for one more checkpoint.
+
+## Pinned semantics
+
+For Qwen3-Next recurrent layers, the pinned llama.cpp graph:
+
+1. splits the 64-value beta/alpha projection according to `ssm.group_count` and `ssm.time_step_rank`;
+2. computes `beta = sigmoid(b)`;
+3. computes `alpha_softplus = softplus(alpha + ssm_dt)`;
+4. computes the decay gate `g = alpha_softplus * ssm_a`;
+5. reshapes the persistent conv cache to `(d_conv - 1, conv_channels)`;
+6. transposes the current QKV projection and concatenates it after the previous conv state;
+7. applies real F32 `ssm_conv1d` over the 4-sample window per channel;
+8. applies SiLU;
+9. splits the result into Q, K, V;
+10. applies per-head L2 normalization to Q and K using `1 / max(sqrt(sum(x^2)), eps)`;
+11. updates the convolutional cache to the last `d_conv - 1` samples.
+
+The target GGUF metadata is read directly using the canonical keys:
+
+- `qwen3next.ssm.conv_kernel`;
+- `qwen3next.ssm.inner_size`;
+- `qwen3next.ssm.state_size`;
+- `qwen3next.ssm.time_step_rank`;
+- `qwen3next.ssm.group_count`;
+- `qwen3next.attention.layer_norm_rms_epsilon`.
+
+For the target model these should resolve to the audited layout:
+
+- `d_conv=4`;
+- `d_inner=4096`;
+- `d_state=128`;
+- `dt_rank=32` value heads;
+- `n_group=16` key groups;
+- conv channels = `4096 + 2*16*128 = 8192`;
+- Q = 16×128 = 2048 values;
+- K = 16×128 = 2048 values;
+- V = 32×128 = 4096 values.
+
+## Isolation strategy
+
+`redlite-deltanet-prestate` intentionally uses deterministic synthetic QKV/BA projection outputs and a deterministic previous conv state, while loading the real layer's F32 `ssm_conv1d`, `ssm_dt`, and `ssm_a` tensors from the GGUF. This separates recurrent-state semantics from the quantized projection kernels already field-validated in dev15a.
+
+The native CPU oracle and Metal path independently calculate:
+
+- all 32 beta values;
+- all 32 decay-gate values;
+- all 8192 conv+SiLU outputs;
+- all 2048 normalized Q values;
+- all 2048 normalized K values;
+- all 4096 V values;
+- the full 3×8192 next convolutional state.
+
+All real tensor reads complete before the Metal command buffer is submitted, so the test also reports zero SSD reads during compute.
+
+## Build and field test
+
+`make native` builds:
+
+`.deps/redmetal/redlite-deltanet-prestate`
+
+Field command:
+
+```bash
+.deps/redmetal/redlite-deltanet-prestate parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0
+```
+
+Expected gate:
+
+- beta parity: YES;
+- gate parity: YES;
+- conv+SiLU parity: YES;
+- Q L2 parity: YES;
+- K L2 parity: YES;
+- V split parity: YES;
+- conv state shift parity: YES;
+- prestate parity: YES;
+- SSD during compute: 0 bytes / 0 calls.
+
+## Next boundary
+
+After dev15b passes on the real model, dev15c can introduce the actual recurrent matrix state `S[128,128,32]` and validate the single-token autoregressive Gated DeltaNet update from the pinned graph:
+
+`S <- exp(g) * S; d <- beta * (v - S*k); S <- S + k*d^T; out <- S*q/sqrt(128)`.
+
+Only after that state update is field-validated should Red Lite add `ssm_norm` gated normalization and the real Q4_K `ssm_out` projection.
+
+
+# Red Lite dev16 — complete full-attention parity
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski
+`Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+Dev16 starts after the complete recurrent transformer block passed on the real
+model. The layer audit establishes the complementary path:
+
+- 48 total transformer layers;
+- 36 recurrent/DeltaNet layers;
+- 12 full-attention layers at `3,7,11,15,19,23,27,31,35,39,43,47`;
+- zero mixed or unknown layers and 48/48 attention/post-attention norm pairs.
+
+## Pinned full-attention graph
+
+The implementation follows pinned llama.cpp commit
+`7798007a29a90e3053e799394da48cf53a2f8e0f`:
+
+1. input RMSNorm;
+2. joint query + sigmoid-gate projection;
+3. separate key and value projections;
+4. per-head query and key RMSNorm;
+5. partial NeoX RoPE;
+6. grouped-query attention over the persistent K/V cache;
+7. sigmoid gate on the attention result;
+8. output projection.
+
+The real GGUF geometry is:
+
+- hidden width: 2048;
+- query heads: 16;
+- K/V heads: 2;
+- head width: 256;
+- NeoX RoPE dimensions: 64 of 256;
+- RoPE frequency base: 10,000,000;
+- `attn_q`: IQ2_XXS `(2048,8192)`, interleaved query/gate per head;
+- `attn_k` and `attn_v`: Q4_K `(2048,512)`;
+- `attn_output`: Q4_K `(4096,2048)`.
+
+`redlite-attention` uses an independent native C oracle and standalone Metal
+kernels. The parity fixture starts from deterministic prior K/V slots, appends
+the projected current K/V values, executes 16-to-2 GQA with causal softmax,
+gates the 4096-value attention result, and compares the complete 2048-value
+output. The field suite covers positions 0, 1 and 15 (contexts 1, 2 and 16), so
+both the RoPE identity case and non-zero positions are protected.
+
+`redlite-attention-block` composes the validated branch with the attention
+residual, real post-attention RMSNorm, full-width top-10 routed MoE plus shared
+expert, and final residual. CPU and Metal paths remain independent until each
+parity comparison.
+
+## Build and field validation
+
+```bash
+make native
+
+.deps/redmetal/redlite-attention parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 3 \
+  --position 7
+
+.deps/redmetal/redlite-attention-block parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 3 \
+  --position 7 \
+  --top-k 10 \
+  --cache-mib 256
+```
+
+Observed on the target M4 Pro:
+
+```text
+weight read CPU    : 3.488 ms / 7 calls / 9.760 MiB
+weight read GPU    : 1.065 ms / 7 calls / 9.760 MiB
+SSD during compute : 0 bytes / 0 calls
+CPU / GPU compute  : 25.527 / 8.575 ms
+Q+RoPE max abs     : 7.15256e-06
+K+RoPE max abs     : 4.52995e-06
+GQA softmax max abs: 6.91414e-06
+Q4_K out max abs   : 1.52588e-05
+FULL ATTENTION     : YES
+```
+
+Context regression on the same target:
+
+```text
+layer 3 / position 0  / context 1  : FULL ATTENTION YES
+layer 3 / position 1  / context 2  : FULL ATTENTION YES
+layer 3 / position 15 / context 16 : FULL ATTENTION YES
+```
+
+Complete block result:
+
+```text
+attention max abs     : 1.52588e-05
+KV cache max abs      : 4.52995e-06
+post-attn RMSNorm abs : 3.93391e-06
+full FFN max abs      : 3.33786e-06
+FINAL block max abs   : 1.52588e-05
+COMPLETE FULL ATTENTION BLOCK: YES
+```
+
+## Scope boundary
+
+This checkpoint validates one complete full-attention transformer block with a
+real autoregressive cache append. It does not claim 48-layer scheduling or
+end-to-end token-generation parity. The next correctness gate is the native
+48-layer scheduler that alternates the 36 recurrent and 12 full-attention block
+implementations according to the audited GGUF layer map.
+
+
+# Red Lite dev17 — audited 48-layer decoder stack
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski
+`Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+Dev17 begins after independent CPU/Metal parity passed for both complete decoder
+block variants. This checkpoint extracts those validators into reusable native C
+entry points and propagates separate CPU and Metal hidden vectors through the
+complete transformer trunk.
+
+## Structural dispatch
+
+`redlite-decoder-stack` does not infer the hybrid pattern from a fixed interval.
+It scans the real GGUF tensor directory and requires:
+
+- a contiguous layer sequence;
+- both attention norm tensors on every layer;
+- exactly one recurrent or full-attention structural signature per layer;
+- no mixed or unknown layers.
+
+The target model reports 48 layers: 36 recurrent DeltaNet blocks and 12
+full-attention blocks at layers `3,7,11,15,19,23,27,31,35,39,43,47`.
+
+## Execution boundary
+
+For one deterministic hidden vector, the diagnostic executes each audited block
+in order:
+
+1. recurrent DeltaNet or GQA full attention;
+2. attention residual;
+3. post-attention RMSNorm;
+4. full-width top-10 routed MoE plus shared expert;
+5. final residual;
+6. pass the complete 2048-value output to the next layer.
+
+CPU and Metal outputs are propagated independently. Isolated block CLIs retain
+their strict same-input substage checks; stack execution evaluates cumulative
+block parity so normal upstream floating-point error is not misreported as a
+local RMSNorm failure. A top-k router ID divergence remains a hard failure.
+
+## Field validation
+
+```bash
+make native
+
+.deps/redmetal/redlite-decoder-stack parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --position 7 \
+  --top-k 10 \
+  --cache-mib 256
+```
+
+Observed on the target M4 Pro:
+
+```text
+GGUF layer map       : 48 layers / recurrent=36 full-attention=12
+dispatch totals      : recurrent=36 full-attention=12
+stack max abs/rel    : 0.000238419 / 0.133136
+elapsed              : 9049.723 ms
+COMPLETE 48-LAYER DECODER STACK: YES
+```
+
+The large maximum relative error is attached to values near zero; the maximum
+absolute difference over every 2048-wide layer output is `2.38419e-04`.
+
+## Scope boundary
+
+This is a correctness-first, single-token transformer-trunk diagnostic. Previous
+recurrent/KV states are deterministic parity fixtures, and model structures are
+reopened per block. It is not yet a persistent multi-token runtime and the
+reported elapsed time is not a throughput benchmark.
+
+The next correctness gates are input embedding, final RMSNorm and LM-head logits,
+followed by tokenizer/sampling and persistent multi-token state management.
+
+
+# Red Lite dev18 — native end-to-end Qwen3-Next inference
+
+Target: Apple M4 Pro, 24 GiB unified memory, Bartowski
+`Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB, 48 layers,
+36 Gated DeltaNet + 12 full-attention blocks, 512 experts / top-10).
+
+Dev18 closes the gap between the audited per-stage validators (dev9–dev17) and a
+usable runtime: `redlite-generate` loads the GGUF, tokenizes a prompt, runs all
+48 layers with persistent recurrent state and KV cache, produces logits, samples
+and decodes text — natively, with no llama.cpp and no Python at inference time.
+The pinned llama.cpp (`7798007a29a90e3053e799394da48cf53a2f8e0f`) is used only as
+a development-time oracle.
+
+## Validation classes used below
+
+- **synthetic**: hand-computed fixtures, no model file;
+- **real-GGUF stage**: one stage on real tensors, CPU oracle vs Metal;
+- **engine parity**: the whole 48-layer engine replaying a stateful token
+  sequence through the CPU oracle and the Metal backend;
+- **oracle comparison**: the Metal engine vs the pinned llama.cpp activations,
+  logits and greedy tokens on the same token ids;
+- **end-to-end**: a prompt string generated to text.
+
+## Components
+
+| Piece | Files | Semantic reference | Validation |
+|---|---|---|---|
+| GGUF directory + metadata + mmap | `redlite_native_gguf_dir.[ch]` | GGUF v3 spec | synthetic fixture; real header (843 tensors, 49 KV) |
+| Dense quant oracle Q8_0/Q2_K/Q4_K/Q5_K/Q6_K/IQ2_XXS | `redlite_native_quant_cpu.[ch]` | pinned `ggml-quants.c` | synthetic blocks; real rows identical to gguf-py dequantization (`scripts/dev/quant_rows_reference.py`) |
+| Persistent engine (audit, states, CPU oracle) | `redlite_native_engine*.{h,c}` | `src/models/qwen3next.cpp`, `delta-net-base.cpp` | engine parity, oracle comparison |
+| Metal backend | `redmetal_engine.m` | validated dev14–dev16 kernels + new Q5_K rows, threadgroup GQA, fused DeltaNet state | engine parity, oracle comparison |
+| Batched expert pool | `redmetal_topk.m` (rewritten execution) | dev10/dev11 IQ2_XS/IQ1_M decode | `topk-parity`, `routed-parity`, full-width FFN parity, engine parity |
+| Tokenizer | `redlite_native_tokenizer.[ch]`, `redlite_native_unicode_data.h` | pinned `llama-vocab.cpp`, `unicode.cpp` | identical ids to `llama_tokenize` on the 30-input corpus `tests/fixtures/tokenizer_corpus.txt` |
+| Sampler | `redlite_native_sampler.[ch]` | llama.cpp default chain order (top-k → top-p → temperature) | greedy identical to llama.cpp; seeded runs reproducible; model-free selftest |
+| Generation CLI | `redlite_native_generate_cli.c` | hard-coded Qwen3-Next Instruct chat template (matches this GGUF's `tokenizer.chat_template` for system/user/assistant turns; not interpreted at runtime) | end-to-end + oracle comparison |
+
+## Model input / output path (real GGUF)
+
+- `token_embd.weight`: Q2_K `(2048, 151936)`; one row is dequantized on the CPU
+  per token (no scaling, `build_inp_embd` semantics).
+- `output_norm.weight`: F32 `(2048)`.
+- `output.weight`: Q5_K `(2048, 151936)`, **untied** (the tensor exists; the
+  tied fallback is implemented but not used by this GGUF). 151 936 logits per
+  token from a Q5_K row kernel.
+- Tokenizer: `gpt2` model, `qwen2` pre-tokenizer, 151 936 tokens, 151 387 merges,
+  EOS `151645` (`<|im_end|>`), BOS/PAD `151643` (`<|endoftext|>`),
+  `add_bos_token=false`. Generation stops on `<|im_end|>` or `<|endoftext|>`.
+
+## Semantic finding: DeltaNet key/value head pairing
+
+The dev15 state kernels paired value head `h` with key head `h % 16`. The pinned
+llama.cpp (`build_layer_attn_linear` → `ggml_repeat_4d` over a `[S,1,H_k]` view,
+i.e. repeat-interleave) pairs value head `h` with key head `h / (H_v / H_k)` =
+`h / 2`. Both variants are internally consistent, so CPU-vs-Metal parity could
+not detect it; the layer-0 comparison against llama.cpp activations did
+(max abs `1.4e-06` only with the interleave pairing). All CPU oracles and Metal
+kernels now use `h / (value_heads / key_heads)`; the dev15 validators were
+re-run and still report parity.
+
+## Engine parity (M4 Pro, real GGUF)
+
+```bash
+.deps/redmetal/redlite-engine parity models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64
+```
+
+Three-token excerpt (stateful: positions 0, 1, 2; conv/recurrent states and KV
+caches carried between tokens in both backends):
+
+```text
+token 0 id=9707 pos=0 : layer_max_abs=3.05e-05 final_norm_abs=2.67e-05 logits_abs=1.48e-05 argmax gpu=11 cpu=11 router_mismatch=0 -> OK
+token 1 id=11   pos=1 : layer_max_abs=8.81e-06 final_norm_abs=1.50e-05 logits_abs=7.15e-06 argmax gpu=358 cpu=358 router_mismatch=0 -> OK
+token 2 id=1879 pos=2 : layer_max_abs=1.14e-05 final_norm_abs=7.63e-06 logits_abs=6.68e-06 argmax gpu=0 cpu=0 router_mismatch=0 -> OK
+MULTI-TOKEN ENGINE PARITY: YES
+```
+
+Router selections (top-10 ids, all 48 layers) are identical between the CPU
+oracle and Metal for every token; a mismatch is a hard failure.
+
+## Oracle comparison against pinned llama.cpp
+
+`scripts/dev/ref_llama/redlite_ref_llama.cpp` (development-only, linked against
+the bootstrapped llama.cpp build, Metal backend, single-token decode, F32 KV
+cache) dumps `model.embed_tokens`, every `l_out-N`, `result_norm` and the logits;
+`scripts/dev/compare_dumps.py` compares them with the engine's dump.
+
+Tokens `9707,11,1879`, Metal engine vs llama.cpp Metal:
+
+| quantity | max abs | cosine | note |
+|---|---:|---:|---|
+| embedding | 0 | 1 | identical Q2_K dequantization |
+| layer outputs (48 layers × 3 tokens) | 5.1e-07 .. 6.3e-05 | 1.000000 | ref magnitudes up to 57 |
+| final norm | ≤ 1.3e-04 | 1.000000 | |
+| logits | ≤ 1.5e-05 | 1.000000 | KL(ref‖native) 6e-13 .. 3e-12 |
+
+Argmax and top-5 identical for all three tokens.
+
+Greedy generation of the chat-templated prompt *"Explain in one sentence why the
+sky is blue."* (19 template tokens): the native run produces 28 tokens
+(`785 12884 7952 … 71816 13 151645`) and stops at `<|im_end|>`; llama.cpp's
+greedy decode of the same prompt ids produces the identical 28-token prefix.
+
+Tolerance policy: float32 Metal accumulation vs float32 llama.cpp accumulation
+differs at the 1e-5 level on logits of magnitude ~10–20; the criterion is
+identical argmax/top-5 and identical greedy tokens, which holds.
+
+## Tokenizer
+
+`redlite-engine tokenize MODEL --text ... [--chat] [--no-special]` reproduces
+`llama_tokenize` ids on the 30-input corpus in `tests/fixtures/tokenizer_corpus.txt`
+(ASCII, contractions, digit runs, CJK/Cyrillic/Arabic/accents, emoji and flag
+sequences, code, tabs, LF runs, leading and trailing whitespace, URLs, special
+tokens inside text, the full chat template). `--file CORPUS` tokenizes one line
+per input; the regression suite compares it against `redlite-ref-llama tokenize
+--file` (check `tokenize.corpus_vs_llama`). Decoding round-trips UTF-8 byte-exactly.
+
+## End-to-end
+
+```bash
+make native
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 40 --cache-mib 4096 --stats
+```
+
+Output on the M4 Pro (greedy):
+
+```text
+The sky appears blue because molecules in the Earth's atmosphere scatter shorter blue wavelengths of sunlight more than other colors due to Rayleigh scattering.
+```
+
+See "Final field run" below for the exact numbers of the clean-build run.
+
+### Interactive terminal chat
+
+`redlite-generate --interactive` keeps the same `rl_engine` alive across user
+turns instead of reopening the GGUF for every prompt:
+
+```bash
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --interactive --context 4096 --cache-mib 4096 --max-tokens 256 --stats
+```
+
+The first message uses the complete Qwen ChatML generation template. Later
+messages append the previous assistant EOG token followed by the next
+`user`/`assistant` turn, and continue from the engine's current position. If a
+response reaches `--max-tokens`, the CLI closes that assistant turn with
+`<|im_end|>` before accepting the next user message. `/reset` clears both the
+native recurrent/KV state and the seeded sampler; `/quit` exits.
+
+A real-GGUF smoke test entered two successive turns in one process and observed
+the native engine position advance from 0 to 11 and then 26 before a clean
+`/quit`. This verifies the interactive control/state path; it is not a quality
+or throughput benchmark because each response was deliberately limited to one
+token.
+
+A longer run (70 template tokens of prompt, 96 generated tokens, 166 positions)
+about cooking pasta at altitude is also token-identical to llama.cpp's greedy
+decode; with a warm 8 GiB expert cache it reached a 95 % hit rate, 17 MiB of
+SSD expert traffic per token and 24.4 tok/s.
+
+## Performance work (all measured on the M4 Pro, greedy, 27 decode passes)
+
+| change | decode step | generation tok/s |
+|---|---:|---:|
+| first working engine (per-expert dispatches, 1-thread rows, 3 command buffers/layer) | 245 ms | 4.7 |
+| batched expert dispatches with SIMD-lane rows | 173 ms | 6.9 |
+| SIMD-lane dense row kernels, threadgroup norms | 106 ms | 11.4 |
+| threadgroup GQA kernel, shared expert folded into first buffer | 66 ms | 15.9 |
+| concurrent miss loads, CPU-side residual | 59 ms | 18.6 |
+| deferred expert buffer (one GPU sync per layer) | 50 ms | 21.6 |
+| fused DeltaNet state / tail / L2 / attention prep kernels | 43 ms | 25.9 |
+
+The rows above were measured with `--cache-mib 8192` on a warm page cache; the
+27.8 tok/s figure with the default 4 GiB cache is in the final field run below.
+
+Per-token GPU profile after these changes (`RL_ENGINE_PROFILE=1`, cumulative
+over a 46-pass run divided by 46): experts 9.0 ms, DeltaNet projections 3.8 ms,
+DeltaNet tail 2.0 ms, DeltaNet state 1.9 ms, shared expert 1.7 ms, router 1.3 ms,
+attention projections 1.0 ms, LM head 0.75 ms, attention output 0.6 ms,
+everything else < 0.5 ms; ~24 ms of GPU work per token, the remainder of the
+43 ms step is expert miss loading (~8 ms wall, concurrent `pread` into the LRU
+slots) and CPU/GPU synchronization (one wait per layer).
+
+Expert cache behaviour (this prompt): 1 GiB cache → 56 % hit rate, 150 MiB SSD
+traffic per token; 2 GiB → 70 %, 105 MiB; 4 GiB (default) → 79 %, 71 MiB;
+8 GiB → 80 %, 67 MiB. The routed experts are never resident as a whole: the
+~16.9 GiB of routed expert payload (`redlite-native inspect`) streams through
+the bounded cache.
+
+For reference, the pinned llama.cpp with the whole model resident in Metal
+memory generates at 36–38 tok/s on this machine (`docs/FIELD_VALIDATION_M4PRO_24GB.md`).
+Red Lite keeps only the ~1.06 GiB of dense weights plus the bounded expert cache
+resident.
+
+## Memory (M4 Pro, `--cache-mib 8192`, 48-token run)
+
+- dense weights wrapped in place from the mmap: 1083 MiB (file-backed, no copy);
+- per-backend state at `--context 4096`: 267 MiB (DeltaNet conv+recurrent 75 MiB,
+  KV caches 192 MiB);
+- expert cache: hard budget, 9446 slots of 0.9 MiB; 6387 slots resident after
+  46 passes;
+- process physical footprint / peak RSS: see the final field run.
+
+## Scope boundary
+
+- Prompt ingestion is token-by-token (correct, validated against llama.cpp's
+  single-token decode); batched prefill is a later optimization.
+- The Metal path supports the dense quant types present in this GGUF (F32,
+  Q8_0, Q4_K, Q5_K, Q6_K, IQ2_XXS) and routed IQ2_XS/IQ1_M; the CPU oracle also
+  decodes F16 and Q2_K.
+- Sampling parity with llama.cpp is claimed for greedy only; temperature /
+  top-k / top-p sampling follows the order of llama.cpp's default sampler chain
+  (top-k, then top-p over the untempered distribution, then temperature) and is
+  reproducible per seed, but the PRNG differs, so sampled outputs are not
+  compared token by token.
+- `--context` bounds the KV cache; the GQA kernel handles any length by chunked
+  online softmax. The multi-chunk path (> 1024 keys) is validated against the
+  pinned llama.cpp on the frozen 1200-token fixture
+  `tests/fixtures/long_context_prompt.txt` (`logits.long_context_vs_llama`,
+  positions 1100–1199 compared, argmax identical at every position). On that
+  fixture llama.cpp's layer-2 router hits an exact probability tie at position
+  1035 (experts 403 and 101, both 0.0077861) which the two implementations
+  break differently; before the tie, and on a second 1200-token prompt without
+  one, the drift at position 1199 is 1.5e-05 max abs / 1e-11 KL, after it the
+  logits differ by up to 1.1 (KL ≤ 6e-3) with identical argmax. This check
+  and the whole hardening round were run on an M4 Max / 48 GiB, where the
+  decode step at positions 1100–1199 is 28–31 ms; long-context throughput on
+  the 24 GiB M4 Pro has not been benchmarked.
+
+## Final field run (clean build)
+
+```bash
+rm -rf .deps/redmetal && make native
+.deps/redmetal/redlite-generate models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --prompt "Explain in one sentence why the sky is blue." --max-tokens 64 --cache-mib 8192 --stats
+```
+
+Commit of the run: `280f7881629a04faa15683f4db6140a6e5c4f2a3` (documentation and
+this record were committed on top; no code changed after the run).
+
+```text
+The sky appears blue because molecules in the Earth's atmosphere scatter shorter blue wavelengths of sunlight more than other colors due to Rayleigh scattering.
+--- redlite-generate stats ---
+model open           : 174.2 ms
+prompt tokens        : 19 (1341.3 ms, 14.17 tok/s)
+generated tokens     : 28 (1518.6 ms, 17.78 tok/s over 27 decode passes)
+last step            : 63.9 ms (rec 23.2 attn 8.5 router 0.2 routed 30.4 [load 76.5 gpu 8.8] shared 0.0 out 1.5) dense GPU 14.4 ms
+expert cache         : hits=10433 misses=2527 loads=2527 resident=6387/9446 slots (hit rate 80.5%)
+SSD expert traffic   : 1795.7 MiB / 7581 reads during generation (66.51 MiB/token)
+SSD expert total     : 4556.6 MiB / 19161 reads since open
+peak RSS             : 4653.5 MiB
+physical footprint   : 5940.7 MiB (process, incl. Metal buffers; mmap'd weights are file-backed)
+```
+
+Generated ids: `785 12884 7952 6303 1576 34615 304 279 9237 594 16566 44477 23327
+6303 92859 315 39020 803 1091 1008 7987 4152 311 13255 62969 71816 13 151645`
+(28 tokens, stop at `<|im_end|>`), identical to the pinned llama.cpp greedy decode.
+
+The same prompt immediately afterwards:
+
+| setting | prompt tok/s | generation tok/s | decode step | hit rate | SSD MiB/token | physical footprint |
+|---|---:|---:|---:|---:|---:|---:|
+| `--cache-mib 8192`, second run | 12.0 | 17.9 | 63.1 ms | 80.5 % | 66.5 | 5.8 GiB (5940 MiB) |
+| `--cache-mib 4096` (default) | 16.3 | **27.8** | 38.7 ms | 79.2 % | 71.2 | 4.4 GiB (4485 MiB) |
+
+The 8 GiB cache runs were slower only because their expert miss reads came from
+the SSD instead of the macOS page cache (the concurrent `pread` sum was 72–77 ms
+per step versus 14.5 ms); on a 24 GiB machine a larger explicit expert cache
+competes with the page cache for the 18 GiB file. The default 4 GiB cache is
+therefore the recommended setting for this model on 24 GiB. Full regression
+suite after the clean build: 31/31 pass (`scripts/regress_m4.sh`, 68 s).
+
+
+# Red Lite dev19 — user-facing native chat command
+
+Dev19 connects the native end-to-end engine from dev18 to the installed Red Lite
+command line. Users no longer need to know the internal
+`.deps/redmetal/redlite-generate` build path to open a persistent conversation.
+
+## Command
+
+```bash
+redlite chat --stats
+```
+
+`redlite chat` invokes the native generator with `--interactive`. The model is
+opened once; the DeltaNet recurrent state and full-attention KV cache remain live
+between turns. With no positional argument it uses the reference GGUF from the
+repository's `models/` directory; a different path can still be supplied as
+`redlite chat MODEL.gguf`. The default profile is intended for the field-validated M4 Pro
+with 24 GiB unified memory:
+
+- 4096 context positions;
+- 4096 MiB routed-expert cache;
+- 256 generated tokens per answer;
+- temperature 0.7, top-k 40 and top-p 0.95.
+
+Pass `--temperature 0` for the greedy path that was compared token-for-token with
+the pinned llama.cpp oracle. `--prompt` supplies an optional first user message;
+`--system` supplies a system instruction. The native interactive commands remain
+`/reset`, `/help` and `/quit`.
+
+## Failure behaviour
+
+The launcher checks Apple Silicon and the model path before starting. If the
+native executable is absent, it reports `make native` as the recovery action.
+`redlite doctor` now reports `native_redlite_generate` independently from the
+pinned llama.cpp and oversized-runtime binaries.
+
+## Validation
+
+- Python parser tests cover defaults and all exposed options.
+- A runner test verifies the exact native command without launching inference.
+- A real-GGUF one-token smoke test opened the native Metal engine through
+  `redlite chat`, completed the first turn and exited cleanly with `/quit`.
+- The existing dev18 native build, engine parity and real-model generation tests
+  remain the inference correctness gates; this milestone does not change engine
+  arithmetic.
+
+## Scope boundary
+
+This command is a terminal chat client. It does not add a native HTTP server,
+batched prompt ingestion or new model/quantization support. `redlite run` and
+`redlite serve` retain their v0.2 behavior and continue to select the pinned
+upstream engines through the memory planner.
+
+
+# Red Lite dev20 — batched prompt ingestion (native Metal prefill)
+
+Target machine for this milestone: Apple M4 Max, 48 GiB (see `CLAUDE.md` on
+naming the machine). Model: Bartowski `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+## What changed
+
+`rl_engine_prefill()` ingests a token sequence in chunks (`prefill_batch`,
+default 512; `--batch N` on `redlite-generate` / `redlite chat`; 1 = the old
+token-by-token path). The CPU oracle prefill is the sequential step sequence.
+On the Metal backend (`native/redmetal_engine_prefill.m`) every layer runs:
+
+1. one command buffer for the dense work of the whole chunk: per-token RMSNorm
+   and residuals, Gated DeltaNet with the causal conv and the gated delta rule
+   iterated over the chunk *inside* single dispatches (`dn_conv_seq`,
+   `dn_state_seq`, state updated in place), full attention appending all
+   keys/values (`attn_qk_prep_b`) then causal GQA per (token, head)
+   (`attn_gqa_b`, same chunked online softmax as decode), router, shared expert;
+2. the router selection of every token on the CPU (`rl_native_router_select_softmax_topk`);
+3. the routed experts of the chunk as one bounded-pool plan holding the union of
+   the selected experts (up to 512 per plan, `REDMETAL_TOPK_MAX`), executed by
+   three batched dispatches: `redmetal_topk_gateup_b` / `redmetal_topk_down_b`
+   over (expert, token) pairs sorted by expert, and `redmetal_topk_sum_b`
+   accumulating each token's top-k in router selection order (identical
+   summation order to decode and to the CPU oracle). When a chunk's union
+   exceeds the plan limit (min(512, half the cache slots)) the chunk is split
+   into consecutive token groups;
+4. the residual add of the whole chunk, then the LM head for the last token.
+
+Dense matmuls dequantize the weight to f32 once per chunk (`rl_dq_*`, functor
+decoders sharing the validated block arithmetic) and run a simdgroup-matrix
+GEMM (`rl_gemm_wt`, 32 rows × 32 tokens per threadgroup, f32 accumulate).
+Lane-row batched kernels (`rl_rowsb_*`) remain as the fallback for shapes the
+GEMM does not cover.
+
+## Validation (`redlite-engine prefill`, regression checks `prefill.parity.*`)
+
+Batched prefill versus the token-by-token Metal engine after a reset, last
+token of the sequence, plus the CPU oracle with `--cpu`:
+
+| prompt | chunks | router ids (48 layers) | worst layer abs | logits abs | argmax |
+|---|---|---|---:|---:|---|
+| 19-token chat prompt | 8 | identical | 1.2e-05 | 3.1e-05 | identical |
+| same, CPU oracle vs batched | 8 | identical | — | 1.1e-05 | identical |
+| 96 tokens of the long fixture | 32 and 96 | identical | 1.9e-05 | 2.1e-05 | identical |
+
+Against the pinned llama.cpp on the frozen 1200-token fixture (first 1100
+positions batched, positions 1100–1199 token by token, `logits.long_context_vs_llama`):
+argmax identical at every position; logits max abs 6.2e-05, KL 8.5e-12 with
+chunks of 32; `ORACLE LOGITS PARITY: YES` at chunks of 64, 128, 256, 512 and
+1100. Greedy generation after batched prefill is token-identical to the
+dev18 record and to llama.cpp (`generate.vs_llama`).
+
+## Throughput (M4 Max 48 GiB, prompt tokens per second)
+
+Before the LRU fix below (dev20b as first committed):
+
+| prompt | path | tok/s |
+|---|---|---:|
+| 1100 tokens, 4 GiB expert cache | token by token (dev18) | 22.6 |
+| 1100 tokens, 4 GiB | chunks of 32 / 128 / 256 / 512 | 33.7 / 40.3 / 49.7 / 65.7 |
+| 1100 tokens, 4 GiB | one chunk of 1100 | 99.1 |
+| 96 tokens, 4 GiB, chunk 96 | experts not resident | 38.1 |
+| 96 tokens, 12 GiB, chunk 96 | experts resident (no loads) | 189.2 |
+
+Profiling the expert phase of the 96-token chunk (`expert phase split` line of
+`redlite-engine prefill`) showed that copying the misses from the page cache
+took 78 ms of wall time for the whole prompt while the LRU reservation took
+1807 ms: `rl_native_lru_prepare_many` scanned every cache entry against the
+whole selection for each miss (capacity × selection × misses ≈ 4×10⁸ key
+compares per 300-expert plan), and key lookups were linear in the capacity.
+dev20c reserves all hits before any victim is chosen (so the selection never
+needs to be scanned) and indexes resident keys with an open-addressing hash;
+both changes preserve the LRU semantics and pass the model-free LRU tests.
+After the fix (same machine, `ORACLE LOGITS PARITY: YES` at every size):
+
+| prompt | path | tok/s |
+|---|---|---:|
+| 96 tokens, 4 GiB, chunk 96 | LRU reserve 31 ms, miss copies 78 ms, experts GPU 312 ms | **155.4** |
+| 1100 tokens, 4 GiB | chunks of 128 / 256 / 512 / 1100 | 152.4 / 163.9 / **171.4** / 166.3 |
+| 1100 tokens, 12 GiB | chunks of 512 | 163.4 |
+| reference: pinned llama.cpp fully resident (`llama-bench` pp48) | | 338.6 |
+
+After dev20c (96 tokens, one chunk, 618 ms): experts GPU 312 ms (3.3 ms/token),
+dense GPU 139 ms (1.5 ms/token), miss copies 78 ms, LRU 31 ms, router 18 ms.
+The copy path itself (`pread` from the page cache into the pool,
+`dispatch_apply` over the misses) is not the bottleneck; the expert kernels are.
+
+### dev20d: expert kernel layout
+
+The batched gate/up and down kernels were re-laid out step by step on the
+96-token chunk (experts GPU ms per 48 layers; every variant kept parity):
+
+| variant | experts GPU | note |
+|---|---:|---|
+| one thread per (expert, row, lane), pairs of the expert in sequence (dev20b) | 312 | baseline |
+| eight-pair register tile per thread | 981 | padding to 8 slots with ~3 pairs per expert; 8 scalar activation loads per weight |
+| adaptive 4/2/1-pair tiles, float4 activation loads | 370 | activation traffic is not the bound |
+| 4-row register tile (one activation load serves 4 rows) | 295 | neither is row reuse |
+| grid over pairs instead of experts (4-row tile) | 256 | the bound was load imbalance: 115 of ~300 experts serve one pair, a few serve 15–19, and a thread walked its expert's pairs serially |
+| grid over slices of 2 pairs of one expert | 182 | one decoded weight serves both pairs, imbalance bounded |
+| **slices of 4 pairs** (`REDMETAL_TOPK_SLICE`, `RM_S`) | **188 / 826 (512-token chunk, was 1361)** | kept: same at 96 tokens, 1.6× better at 512 |
+
+The kernels decode each IQ2_XS / IQ1_M block one 8-value group at a time
+(`rm_group8`, the same arithmetic as the validated block dots) for four rows in
+lockstep and apply it to up to four tokens with float4 activation loads.
+
+Throughput after dev20d (M4 Max, 4 GiB cache, `ORACLE LOGITS PARITY: YES` at
+every size): 96-token chunk 201 tok/s; 512-token chunk 294 tok/s (experts GPU
+1.6 ms/token, dense 1.2 ms/token); 1100-token prompt 231 / 249 / 271 tok/s with
+chunks of 256 / 512 / 1100 — versus 22.6 tok/s token by token before dev20 and
+339 tok/s for the pinned llama.cpp fully resident. The default chunk stays at
+512 tokens (scratch ≈ 0.26 MiB per chunk token plus the pair buffers).
+
+Reading the experts in place from the mmap instead of copying them
+(`RL_PREFILL_MAPPED_EXPERTS=1`, `redmetal_topk_pool_encode_mapped`) is
+numerically identical but 4–10× slower here: Metal re-establishes residency of
+each layer's whole ~350 MB expert window for every command buffer (~3.3 s per
+48-layer chunk regardless of chunk length). It stays as an opt-in experiment.
+
+## Scope boundary
+
+- Validated on the M4 Max 48 GiB only; the 24 GiB M4 Pro numbers of dev18 were
+  not re-measured. On a 24 GiB machine the same code runs with the default
+  512-token chunks (scratch ≈ 135 MiB) and the page cache, not the GPU, bounds
+  the expert copies.
+- Decode is unchanged (one token, deferred expert buffer); the batched kernels
+  are used for prompt ingestion only.
+- Prompt ingestion is now within 1.4× of llama.cpp's fully resident prefill;
+  the remaining split at a 512-token chunk is experts 1.6 ms/token, dense
+  1.2 ms/token, router selection 0.2 ms/token. Overlapping the miss copies
+  with GPU work is not worth it at ~80 ms per 96-token prompt.
+- No batched sampling, no multi-sequence batching.
+
+
+# Red Lite dev21 — GPU-routed decode (full residency)
+
+Target machine for this milestone: Apple M4 Max, 48 GiB. Model: Bartowski
+`Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`.
+
+## Why
+
+Decode was ~40 tok/s against 68 tok/s for the pinned llama.cpp fully resident,
+and the profile said the gap was not expert loading but the 48 CPU↔GPU round
+trips per token: the GPU computes a layer's router logits, the CPU selects the
+top-10, resolves their cache slots (loading misses) and encodes the expert
+dispatches, the GPU runs them. With a warm cache each round trip is ~0.3 ms of
+latency in which the GPU idles (~15 ms per token against ~12 ms of GPU work).
+
+## What changed
+
+- **Residency table** (`redmetal_topk_pool_residency_*`, maintained by
+  `redlite_native_metal.c` on every LRU commit and abort): `layers × experts`
+  GPU slot addresses, 0 when an expert is not resident. The LRU reservation
+  now reports the key a miss evicts (`rl_cache_reservation.evicted_key`).
+- **`rl_route` kernel**: softmax top-k selection on the GPU with the same rule
+  as `rl_native_router_select_softmax_topk` (candidates ordered by logit, ties
+  to the lower index; softmax is monotone so the order is identical), weights
+  renormalized over the selected experts, expert lookups in the residency
+  table; writes the slot table and weights the single-token expert kernels
+  read (`redmetal_topk_pool_encode_device`) and a per-layer miss count.
+- **Speculative step** (`step_speculative` in `redmetal_engine.m`): the whole
+  token — 48 layers, router, expert lookup, experts, residual, LM head — in one
+  command buffer with one wait. Before it, the DeltaNet conv/recurrent states
+  are blitted to backups; if any layer selected a non-resident expert the
+  states are restored and the token is decoded by the unchanged synchronous
+  path (`rl_metal_engine_step_sync`). The LRU stamps of the experts the GPU
+  used are refreshed afterwards (`rl_native_metal_touch_resident`).
+- **Policy**: a token is attempted speculatively only when the previous token
+  needed no expert load; `RL_ENGINE_SPECULATIVE=0` disables the path. With a
+  bounded cache (79–93 % hit rate) practically every token misses somewhere
+  in its 480 selections, so the path never triggers there and nothing changes
+  for 24 GiB machines.
+- **Full residency**: when the cache can hold every routed expert
+  (`--cache-mib ≥ 21300` for this GGUF: 24 576 slots of 0.87 MiB), every
+  expert is loaded at open (`RL_ENGINE_PRELOAD=0` disables; 3.7 s from the
+  page cache on the M4 Max) and every token is GPU-routed from the first one.
+- **Residency set**: the pool's slabs are attached to the engine queue through
+  an `MTLResidencySet` (macOS 15+), so no per-encoder `useResource` is needed.
+  Without it the first attempt ran at 11 tok/s: 384 slabs × 2 encoders × 48
+  layers of `useResource` made Metal redo the residency of 22 GiB per command
+  buffer. The first command buffer after the preload still pays ~2–3 s once;
+  the engine takes it at open with a warm-up blit.
+
+## Validation (M4 Max)
+
+`redlite-engine parity --repeat 2`: the second pass replays the sequence on a
+warm cache, so it exercises the GPU-routed path against the CPU oracle.
+
+| cache | GPU-routed tokens | router ids | worst layer abs | logits abs | argmax |
+|---|---|---|---:|---:|---|
+| 4 GiB, 6 tokens × 2 passes | 5 of 12 (pass 2 after the first token) | identical | 3.1e-05 | 1.5e-05 | identical |
+| 22 GiB (preloaded), 6 tokens × 2 passes | 12 of 12 | identical | 5.3e-05 | 1.7e-05 | identical |
+
+Greedy generation output is unchanged; `regress_m4.sh` 36/36 plus the new
+`engine.parity.gpu_routed` check (runs only on machines with ≥ 40 GiB).
+
+## Throughput (M4 Max, greedy, chat turns of 19–21 prompt tokens)
+
+| configuration | decode tok/s |
+|---|---:|
+| 4 GiB cache, synchronous (dev20d) | ~40 |
+| 22 GiB cache preloaded, `RL_ENGINE_SPECULATIVE=0` | 18 → 36 (cache warming) |
+| 22 GiB cache preloaded, GPU-routed | **54–57** (every token speculative, 0 fallbacks) |
+| 200-token answer, 22 GiB | 56.6 |
+| reference: pinned llama.cpp fully resident (`llama-bench` tg64) | 68.0 |
+
+The GPU-routed token is now GPU-bound: the single command buffer measures
+16.1–16.9 ms of GPU time per token, so the remaining gap to llama.cpp is kernel
+efficiency (dense row kernels ~9.6 ms, experts ~4.4 ms, DeltaNet/attention
+glue), not synchronization. Physical footprint at 22 GiB cache: 22.1 GiB.
+
+## Scope boundary
+
+- Validated on the M4 Max 48 GiB only. On 24 GiB machines the cache cannot
+  hold the routed payload, the path never triggers and decode is unchanged.
+- Speculation restarts a whole token on any miss; a per-layer restart with
+  early-out would make speculation neutral on bounded caches but not faster,
+  so it was not built.
+- The preload is page-cache bound (3.7 s warm); a cold SSD read of 22 GiB
+  takes correspondingly longer.
+- Prefill is unchanged (its expert plans keep the residency table in sync).
+
+
+# Red Lite dev22 — decode kernels: one encoder per token, sub-block GEMV
+
+Status: **target reached** on the M4 Max 48 GiB (macOS 27). Decode with full expert
+residency went from 57.6 to **66.2 tok/s**, against a target of ≥ 62 and 68 tok/s for the
+pinned llama.cpp fully resident. Parity with the CPU oracle and with llama.cpp is
+unchanged or better. Nothing here is measured on the M4 Pro.
+
+## Why
+
+dev21 put a whole GPU-routed token into one command buffer. That path spent 16.6 ms of GPU
+time per token (17.2 ms wall), while about 1.4 GB of weights are read per token. That is
+~86 GB/s against ~546 GB/s available, so the decode was kernel-bound, not bandwidth-bound.
+
+The LM head (Q5_K, 151 936 rows) already ran its row kernel at ~410 GB/s. The small
+matrices ran the same kernel at 95–150 GB/s: 512–12 288 rows in the recurrent
+projections, `ssm_out`, the router and the shared expert. In the dev18 row kernel one
+lane dequantizes a whole 256-value block serially and uses at most one lane per block.
+A 2048-column matrix therefore gets only 8 lanes per row, each doing 256 dependent
+multiply-adds with scalar loads.
+
+## What changed
+
+1. **One compute encoder per token** (GPU-routed path) and **one per layer** (synchronous
+   path).
+   - The layer bodies are written once as emitters (`emit_recurrent`, `emit_attention`,
+     `emit_ffn_pre`, `emit_scale_add`, `emit_rows`, `emit_rms`) that append dispatches
+     to an open serial encoder.
+   - The in-token blits (conv-state update, per-layer output copy) became an
+     `rl_copy_f32` dispatch.
+   - The routed experts are appended to the same encoder by
+     `redmetal_topk_pool_encode_device_into`.
+   - Under `RL_ENGINE_PROFILE` the emitter still closes the encoder and commits at every
+     stage boundary, so the profile keeps its meaning.
+   - The GPU-routed path went from about 25 encoders per layer (≈1 200 per token) to one
+     per token.
+2. **Sub-block decode GEMV** (`rl_rows2_q4k`, `rl_rows2_iq2xxs`, `rl_rows2_q6k`,
+   `rl_rows2_f32`).
+   - One lane handles one 32-value sub-block (Q4_K, IQ2_XXS) or 16-value sub-block
+     (Q6_K), with up to 32 lanes per row, so a 2048-column row gets 32 lanes instead
+     of 8.
+   - Activations are read as `float4`. The F32 router reads `float4` weights.
+   - The dequantization is the block kernels' own arithmetic, split per sub-block; only
+     the summation order changes.
+   - The old block kernels remain for the batched prefill, the Q5_K head (already
+     bandwidth-bound) and Q8_0. `RL_ENGINE_ROWS2=0` switches decode back to them for
+     A/B runs.
+
+## Validation (M4 Max 48 GiB, macOS 27)
+
+Gate for every change (`scripts/dev/quick_parity.sh`, the same commands as `regress_m4.sh`):
+
+- `engine.parity` (sync path);
+- `engine.parity.gpu_routed` (12 GPU-routed tokens, `router_mismatch=0`);
+- `logits.vs_llama`;
+- 24 greedy tokens with full residency identical to llama.cpp.
+
+| change | gpu_routed worst layer abs | router mismatches | greedy vs llama.cpp |
+|---|---:|---:|---|
+| dev21 baseline | 5.34e-05 | 0 | identical |
+| + one encoder | 5.34e-05 (bit-identical arithmetic) | 0 | identical |
+| + sub-block GEMV | 1.53e-05 | 0 | identical |
+
+Full suite after `rm -rf .deps/redmetal && make native` (0 warnings):
+`scripts/regress_m4.sh` **44/44 PASS**. That includes `generate.vs_llama` (24 tokens identical), `logits.long_context_vs_llama` and `server.stream_greedy`.
+
+## Throughput
+
+Command: `scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3`.
+It reports median `decode_tok_s` for 256 greedy tokens (255 decode passes) of a fixed
+prompt, and prefill of the first 1100 tokens of the long-context fixture in chunks of 512.
+
+| commit | decode, 22 GiB cache | decode, 4 GiB cache | prefill 1100 tok, 4 GiB |
+|---|---:|---:|---:|
+| `3e2257e` (dev21 + PR #2) | 57.57 | 39.85 | 240.1 |
+| one encoder per token | 58.65 | 40.17 | — |
+| + sub-block GEMV (dev22) | **66.23** | **44.70** | 248.5 (unchanged path) |
+| same build, `RL_ENGINE_ROWS2=0` | 59.87 | — | — |
+| pinned llama.cpp fully resident (`llama-bench` tg64, dev19 record) | 68.0 | — | 338.6 (pp48) |
+
+The 4 GiB decode is still the synchronous path, so it gains from the same kernels.
+Its target (≥ 45) belongs to dev23.
+
+### `RL_ENGINE_PROFILE=1` before / after
+
+The profile disables the GPU-routed path and commits every stage separately. It
+therefore measures the synchronous path with extra per-stage overhead, not the
+end-to-end token. Setup: cumulative GPU ms, 256 greedy tokens, 22 GiB cache, `--batch 1`,
+285 steps.
+
+| stage | before (`3e2257e`) | after (dev22) |
+|---|---:|---:|
+| rms | 136.8 | 128.7 |
+| dn_proj (IQ2_XXS qkv/gate, Q8_0 ba) | 682.6 | 580.6 |
+| dn_prestate | 200.5 | 190.1 |
+| dn_state | 237.6 | 216.2 |
+| dn_tail (+ Q4_K ssm_out) | 359.5 | 341.9 |
+| attn_proj | 207.7 | 172.2 |
+| attn_norm_rope | 25.7 | 25.3 |
+| attn_gqa | 242.3 | 244.4 |
+| attn_out | 115.2 | 108.7 |
+| resid_rms | 161.9 | 135.2 |
+| router (F32) | 383.9 | 227.9 |
+| shared (Q6_K) | 631.0 | 496.4 |
+| experts | 1514.9 | 1533.8 |
+| head (Q5_K) | 147.2 | 151.8 |
+
+## What did not matter
+
+- **Encoder count alone.** Going from ~1 200 encoders to one per token was worth only
+  +1.9% (57.6 → 58.7 tok/s). Encoder boundaries are cheap on this GPU; the time was inside
+  the kernels.
+
+## Scope boundary
+
+- **Machine.** Measured on the M4 Max 48 GiB only. The 22 GiB configuration needs
+  ≥ 40 GiB of RAM and does not exist on the M4 Pro 24 GiB. Nothing is claimed there.
+- **Scope of the change.** It covers only the decode GEMV of Q4_K, IQ2_XXS, Q6_K and F32
+  matrices, plus encoder structure.
+  - The routed-expert kernels (IQ2_XS/IQ1_M, ~5 ms of the token) are unchanged.
+  - The DeltaNet state and attention kernels are unchanged.
+  - The batched prefill is unchanged.
+- **Numbers.** Throughput numbers are medians of three runs on an otherwise idle
+  machine; single runs vary by ±1 tok/s. The profile numbers are not end-to-end timings.
+
+
+# Red Lite dev23 — per-layer early-out and pre-gated expert prefetch
+
+Status: **target reached** on the M4 Max 48 GiB (macOS 27). Decode with a 4 GiB expert
+cache rose from 44.7 (dev22) to **50.1 tok/s**, against a target of ≥ 45. Decode with full
+residency rose from 66.2 to **72.7 tok/s**. Greedy output is identical to llama.cpp and
+parity with the CPU oracle is unchanged.
+
+**Implemented and validated in parity on the M4 Max with a limited (4 GiB) cache; not
+measured on the M4 Pro 24 GiB.** The 4 GiB configuration is the one intended for
+24 GiB machines, but every number here comes from the 48 GiB machine, whose page cache
+holds the whole GGUF.
+
+## Why
+
+- **4 GiB cache.** The synchronous decode made one CPU/GPU round trip per layer: 48 per
+  token.
+  - Per token: 8.3 ms dense GPU, 6.2 ms expert GPU, 1.9 ms of miss loads, and about
+    6 ms of pure bubble (command-buffer completion and submission latency ×48).
+  - dev21's speculative token path never helps here. At a 85% per-expert hit rate
+    almost every token needs at least one load, so dev21 threw the token away and redid
+    it synchronously.
+- **Full residency.** dev21 backed up every DeltaNet state (~72 MiB of blits) at the
+  start of every token, only to restore it after a miss that cannot happen when every
+  expert is resident.
+
+## What changed
+
+1. **Per-layer early-out (`step_routed`).**
+   - Every decode kernel takes an early-out flag at buffer index 30 and returns at once
+     when it is set. That covers the 19 engine kernels, plus function-constant variants
+     of the three device-driven expert kernels, so the Python bridge's pipelines are
+     unchanged.
+   - The GPU router kernel `rl_route` raises the flag when layer *f* selects a
+     non-resident expert.
+   - Layers before *f* are then complete, and layer *f* ran up to its router exactly
+     once, so nothing is restored. The CPU loads only layer *f*'s missing experts, using
+     the ids and renormalized weights the GPU selected, runs them, and resumes the
+     GPU-routed chain at *f+1* in a new command buffer.
+   - The state backups and the whole-token redo of dev21 are gone.
+2. **Policy.**
+   - The early-out path is tried after a token that needed no expert load (as in dev21).
+   - A token with more than 4 early-outs sends the next tokens to the synchronous path.
+   - Reason: a resume re-encodes the rest of the token, and a skipped dispatch still
+     costs about 3 µs at the command processor. At 4 GiB, with ~32 missing layers per
+     token, always taking the early-out path ran at 8.3 tok/s.
+3. **Pre-gated prefetch** in the synchronous path.
+   - Layer *l*'s command buffer also applies layer *l+1*'s router to layer *l*'s FFN
+     input: an F32 GEMV of ~17 µs.
+   - While the GPU runs `experts_{l-1}` and `dense_l`, the CPU loads the predicted
+     non-resident experts of layer *l* through the normal LRU (prepare, then immediate
+     release).
+   - When layer *l*'s real selection arrives, most of its misses are already resident.
+   - `RL_ENGINE_PREFETCH=0` disables it.
+4. **Per-slot load generations** in the expert pool.
+   - The release check "no SSD reads while the experts were in flight" was global, and
+     rejected the prefetch's loads into *other* slots.
+   - Each plan now records its slots' load generations at encode and checks them at
+     release.
+   - The pool still refuses any load into an in-flight slot.
+
+## Validation (M4 Max 48 GiB)
+
+Gate for each change: `scripts/dev/quick_parity.sh`.
+
+| check | result |
+|---|---|
+| `engine.parity` (1 GiB cache: almost every layer misses) | YES. 287 early-outs over 6 tokens, 0 router mismatches, worst layer abs ≤ 1.5e-05 |
+| `engine.parity.gpu_routed` (22 GiB, `--repeat 2`) | YES. 12 GPU-routed tokens, 0 early-outs |
+| `logits.vs_llama` | YES |
+| 24 greedy tokens at 22 GiB, and at 4 GiB with prefetch | identical to the pinned llama.cpp |
+
+Full suite after `rm -rf .deps/redmetal && make native` (0 warnings):
+`scripts/regress_m4.sh` **44/44 PASS**. The label change made after it ("fallbacks" → "per-layer early-outs") was rechecked with `quick_parity.sh` and `generate.json`.
+
+## Throughput
+
+Command: `scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --reps 3`
+(medians, 256 greedy tokens).
+
+| build | decode 22 GiB | decode 4 GiB | prefill 1100 tok (4 GiB) |
+|---|---:|---:|---:|
+| dev22 (`fdd3c69`) | 66.23 | 44.70 | 248.5 |
+| + early-out, always taken | 69.87 | 8.32 | — |
+| + policy (early-out only after a load-free token) | 69.37 | 45.05 | — |
+| + prefetch, backups removed (dev23) | **72.72** | **50.11** | 252.3 |
+
+- **Prefetch A/B**, same build and command, runs alternated (`RL_ENGINE_PREFETCH`): off
+  45.31 / 44.93, on 47.62 / 47.07 tok/s.
+- **4 GiB with `--stats`:** misses loaded on the critical path went from 1.9 to 0.6 ms per
+  token. The reported hit rate rises from 85.4% to 91.0% because prefetch lookups are
+  counted too. SSD/page-cache traffic rises from 50.3 to 61.2 MiB per token, because
+  wrong predictions are loaded as well.
+- **Physical footprint:** 4 GiB cache 4806 MiB; 22 GiB cache 22 032 MiB (no backups).
+
+## What did not work (measured, reverted or superseded)
+
+- **Spin-waiting on `MTLCommandBuffer.status`** instead of `waitUntilCompleted`. 4 GiB
+  decode fell from 44.6 to 27.5 tok/s (A/B, alternated runs): polling the status contends
+  with the driver's completion path. Reverted.
+- **Early-out as the only 4 GiB path.** 8.3 tok/s, see *Policy* above.
+- **Periodic probing** (32 synchronous tokens, then one GPU-routed attempt). 39.5 tok/s:
+  the probes cost more than they gain. Replaced by the load-free-token rule.
+- **Per-layer miss statistics at 4 GiB** (215 tokens). Every layer misses on 45–87% of
+  tokens, on average 31.7 of 48 layers per token. A layer's miss state matches the
+  previous token's only 60% of the time. There are no "always-hit" layers the early-out
+  could chain, so round trips can only shrink once misses shrink: hence the prefetch.
+
+## Scope boundary
+
+- **Machine.** Measured on the M4 Max 48 GiB only, with the GGUF warm in the page cache.
+  Not measured on the M4 Pro 24 GiB. There, a 4 GiB cache sits next to a page cache
+  that cannot hold the whole model, so prefetch loads compete with real SSD reads. The
+  gain may be smaller or reversed; `RL_ENGINE_PREFETCH=0` exists for that reason.
+- **Prediction.** The prefetch predictor is the next layer's router on the current
+  layer's FFN input. Its accuracy is not measured separately; only the end-to-end effect
+  is.
+- **Where each technique helps.** At 4 GiB the early-out path is almost never taken
+  (≈ every token loads something). Its gain is at full residency, from removing the
+  backups. A chunked early-out with a bounded lookahead window is not built.
+- **Unchanged.** The prefill and the kernel arithmetic are unchanged.
+
+
+# Red Lite dev24 — prefill: pre-gated expert prefetch and parallel routing
+
+Status: **target reached** on the M4 Max 48 GiB (macOS 27). Prefill of the first 1100
+tokens of the long-context fixture with a 4 GiB expert cache, in the default 512-token
+chunks, went from 261.7 to **314.3 tok/s**, against a target of ≥ 300. Parity with
+llama.cpp on the 1100-token prompt holds at chunks of 96, 256, 512 and 1100. Nothing here
+is measured on the M4 Pro.
+
+## Why
+
+The dev23 profile of this prefill (chunk 512, 144 expert plans, wall ms) was:
+
+| part | ms |
+|---|---:|
+| dense GPU (norms, DeltaNet/attention, router and shared-expert GEMMs) | 1452 |
+| router selection on the CPU (softmax top-10 of 1100 × 48 tokens) | 167 |
+| expert phase wall | 2749 |
+| … of which expert loads into the pool (critical path) | 841 |
+| … of which expert GPU | 1720 |
+
+The GPU sat idle while the CPU routed and loaded experts, layer after layer. With a 4 GiB
+cache a layer's experts do not survive until the next chunk (the whole union of a
+512-token chunk is ~350 MB per layer, the cache holds about 11 layers), so every plan
+loads again.
+
+## What changed
+
+1. **Pre-gated prefetch in the batched prefill** (`prefill_prefetch`).
+   - Layer *l*'s dense command buffer also applies layer *l+1*'s router to layer *l*'s FFN
+     input (one extra F32 GEMM, the dev23 predictor applied to the whole chunk).
+   - While layer *l*'s experts run on the GPU, a background thread selects the predicted
+     top-10 of every token, takes their union and loads it through the normal LRU
+     (prepare, then immediate release).
+   - The thread keeps going through layer *l+1*'s dense pass and is joined just before
+     layer *l+1* routes. Layer *l*'s plan stays pinned until the join, so the prefetch
+     can never evict experts still in use.
+   - It is skipped when the cache cannot hold the in-flight plan and the predicted union
+     together. `RL_ENGINE_PREFETCH=0` disables it (it also controls the dev23 decode
+     prefetch).
+2. **Parallel router selection** (`route_tokens`). The chunk's softmax top-10 selections
+   are spread over the CPU cores with `dispatch_apply`, in blocks of 32 tokens. Each
+   selection is the unchanged single-token routine, so ids and weights are bit-identical.
+   Router selection went from ~180 to ~39 ms.
+3. **Stats.** `redlite-engine logits` prints a `prefill split:` line with the wall split
+   (dense, router, expert LRU/load/commit/GPU/wait and prefetch). The pool counters are
+   read once per chunk, after every prefetch has joined; they include the prefetch's
+   own loads.
+
+The expert and dense kernels are unchanged.
+
+## Validation (M4 Max 48 GiB)
+
+Gate for each change: `scripts/dev/quick_parity.sh MODEL --long --batch N`.
+
+| check | result |
+|---|---|
+| `engine.parity`, `engine.parity.gpu_routed` (12 GPU-routed tokens), `logits.vs_llama` | YES |
+| 24 greedy tokens at 22 GiB | identical to the pinned llama.cpp |
+| `logits.long_context_vs_llama` (1100-token prefill + 100 steps), chunks 96 / 256 / 512 / 1100 | YES at every size |
+
+Full suite after `rm -rf .deps/redmetal && make native` (0 warnings):
+`scripts/regress_m4.sh` **44/44 PASS**, including `logits.long_context_vs_llama` and `generate.vs_llama`.
+
+Two defects were found and fixed on the way.
+
+- **Stale-dump PASS.** The first prefetch build aborted (a command
+buffer committed twice), and `quick_parity.sh` still printed PASS, because it compared
+the dump left by the previous run. The script now deletes its outputs before running.
+- **Race on the predicted logits.** The prefetch thread read the predicted logits while
+  layer *l+1*'s dense pass wrote layer *l+2*'s prediction into the same buffer. Outputs
+  were not affected, only which experts got prefetched. There are now two buffers,
+  selected by layer parity.
+
+## Throughput
+
+Command (medians of three runs, 90 s cool-down before each run):
+`scripts/dev/bench_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --only prefill --reps 3 --cool 90`.
+The alternated A/B used the same prefill command directly.
+
+| build | prefill 1100 tok, 4 GiB, chunk 512 |
+|---|---:|
+| dev23 (`65a0624`), cooled | 261.7 (258.4 / 262.6 / 261.7) |
+| dev24, `RL_ENGINE_PREFETCH=0` (parallel routing only) | 271.6 (271.6 / 271.9 / 271.0) |
+| **dev24** | **314.3** (314.3 / 314.6 / 313.8) |
+| dev24 chunk 1100 (single run during the gate, not cooled) | 326.6 |
+| pinned llama.cpp fully resident (`llama-bench` pp48, dev19 record) | 338.6 |
+
+An earlier alternated A/B (before the race fix below; same method) gave the same
+picture: prefetch on 313.9 / 313.7 / 312.1, off 271.6 / 271.5 / 272.5.
+
+Expert phase wall at chunk 512, prefetch on: ~1850 ms against 1711 ms of expert GPU. The
+loads (~600 ms, now counting the prefetch) are almost entirely hidden.
+
+### Throttling under sustained load
+
+Back-to-back prefill runs on this machine slow down run after run, even though `pmset`
+reports no thermal or performance warning. Five consecutive runs gave 311 → 187 → 168 →
+147 → 133 tok/s. The GPU time itself grows: dense GPU went from 1480 to 4250 ms.
+Therefore:
+
+- The prefill numbers above are taken with a cool-down (`bench_m4.sh --cool`).
+- The dev22/dev23 prefill figures (248.5 / 252.3) were measured right after the decode
+  runs without a pause, and are not comparable to them. The dev23 build (a worktree of
+  `dev23-green`) was re-measured with the cool-down: 261.7.
+
+## Scope boundary
+
+- **Machine.** Measured on the M4 Max 48 GiB only, with the GGUF warm in the page cache.
+  Not measured on the M4 Pro 24 GiB. There, prefetch loads come partly from the SSD and
+  compete with the rest of the page cache, so the overlap may be smaller;
+  `RL_ENGINE_PREFETCH=0` exists for that.
+- **Memory.** The predicted-logit buffers add `2 × 512 experts × 4 B` per chunk token
+  (two buffers by layer parity: 2 MiB at chunk 512). The prefetch uses cache slots the in-flight plan does not need,
+  and never grows the cache.
+- **Not done.** Fused gate/up/down expert kernels, a GPU-side weighted sum folded into
+  the down projection, and GPU router selection for the batch were not needed for the
+  target and are not built. The expert GPU time (1.7 s at chunk 512) and the dense GPU
+  time (1.5 s) are now the whole critical path. The next gains are in those kernels.
+- **Numbers.** Throughput from a warm page cache and a cooled GPU. Elapsed times printed
+  by the parity tools are not benchmarks.
+
+
+# Red Lite dev25 (partial) — product surface: chat defaults, native server, Ctrl-C, JSON stats
+
+Status: **implemented, tested model-free on Linux, and validated with the real model on the
+M4 Max 48 GiB** (macOS 27, commit `7d96db1`, `scripts/regress_m4.sh` 44/44 after a clean
+build; see "Validation on the M4 Max" below). Nothing here is measured on the M4 Pro.
+dev22–dev24, the performance milestones, are not started, so this work comes ahead of
+them in time but is numbered by scope.
+
+## What changed
+
+### `redlite chat` defaults (`f4e8ddd`, `2c7ae6c`)
+
+- If `--cache-mib` is not given, `redlite.planner.native_defaults()` picks the cache from
+  RAM:
+  - **≥ 40 GiB → 22528 MiB.** Every routed expert is resident and preloaded at open, and
+    decode uses the GPU-routed path. This is the dev21 setting validated on the M4 Max
+    48 GiB.
+  - **< 40 GiB → 4096 MiB.** The field-validated bounded cache, as on the M4 Pro 24 GiB.
+  - The choice and its reason are printed. An explicit `--cache-mib` always wins.
+- `--batch N` (prefill chunk size) and `--json` are passed through to `redlite-generate`.
+- **Ctrl-C** now reaches the native runtime. Previously `subprocess.call` turned the
+  terminal's SIGINT into a KeyboardInterrupt in the Python launcher and killed
+  `redlite-generate`, so Ctrl-C always ended the whole chat. The launcher now ignores
+  SIGINT while the child runs.
+
+### `redlite-generate` (`f7e5887`)
+
+- **Ctrl-C stops the current answer.** The answer is closed exactly like a `--max-tokens`
+  stop: every emitted token is already in the KV/DeltaNet state, and `<|im_end|>` opens the
+  next turn. The conversation therefore stays consistent and the next question can follow.
+  - At the `you>` prompt, Ctrl-C quits and the engine is closed normally.
+  - Non-interactive runs print their statistics and exit 130.
+- **`--json`** writes one statistics object per answer on stderr:
+  - prefill and decode tokens, ms and tok/s;
+  - GPU-routed tokens and, since dev23, per-layer early-outs (`early_outs`);
+  - cache hits and misses, expert loads, SSD MiB;
+  - peak RSS and physical footprint;
+  - cache, context and batch;
+  - `finish` = `stop | length | interrupted`.
+- **One language.** The interactive chat was Italian while every other message was
+  English; it is now English.
+- **Chat template.** The GGUF `tokenizer.chat_template` is checked for ChatML
+  (`rl_tokenizer_chat_template_source`); if it is missing or not ChatML, the built-in
+  ChatML is used. The source is printed with `--stats`.
+  - **The template is not interpreted.** There is no Jinja engine. The Qwen3-Next Instruct
+    GGUF ships a ChatML template, and the hard-coded ChatML is the format validated
+    token-for-token against llama.cpp.
+
+### Native OpenAI-compatible server (`3060e9b`, `b6648c1`)
+
+- `native/redlite_native_server.[ch]` is portable C11 plus POSIX sockets.
+  - **Endpoints:** `POST /v1/chat/completions` with `stream` true or false, `GET /v1/models`,
+    `GET /health`.
+  - **Request handling:** one request at a time, `Connection: close`.
+  - **Streaming:** SSE chunks in the OpenAI `chat.completion.chunk` shape (role delta,
+    content deltas, then `finish_reason` + `usage` + `[DONE]`).
+  - **UTF-8 hold-back:** a character split across tokens is never sent in two chunks.
+  - **Rejected with 400 rather than silently ignored:** stop sequences, `n > 1`, tools and
+    non-text content.
+  - **Accepted extensions:** `developer` messages are treated as `system`, and `top_k` is
+    accepted.
+  - **Failures:**
+    - a failure mid-stream ends the stream with an error event and no `[DONE]`;
+    - a client that disconnects stops generation;
+    - SIGINT stops the current generation and shuts the server down cleanly.
+- `redlite-server MODEL` binds the core to `rl_engine`. Each request resets the engine,
+  ingests the ChatML conversation with the batched prefill and decodes like
+  `redlite-generate`. The backend is Metal on macOS; `--cpu` selects the CPU oracle, which
+  is the only backend elsewhere.
+- `redlite serve --native` launches it with the RAM-based cache default, `--context`
+  (default 4096) and `--batch`.
+
+## Validation
+
+Machine: **Linux x86_64 cloud container** (Ubuntu 24.04, gcc 13.3, clang 18.1). There is
+no Metal and no GGUF on it.
+
+| Check | Command | Result |
+|---|---|---|
+| protocol, fake engine | `PYTHONPATH=. python3 -m unittest tests.test_native_server` | 12/12. Covers streaming/blocking, split UTF-8, `max_tokens`, defaults, multi-turn ChatML, 400/404/405/500, mid-stream error, client disconnect, SIGINT, 300-mutation body fuzz |
+| same, sanitized server | `CC=gcc make sanitize` | no ASan/UBSan report |
+| server core selftest | `.deps/redmetal/redlite-server-fake --selftest` | OK |
+| launcher | `make test` | 57 OK. Covers RAM-based defaults (48/40/24 GiB), `serve --native` command, and a Ctrl-C test that fails with the old launcher |
+| builds | `rm -rf .deps/redmetal && CC={gcc,clang} make native` | rc 0, 0 warnings. `redlite-server` links against the CPU-oracle engine on Linux; `redlite-generate` was compiled by hand the same way |
+
+**Added to `regress_m4.sh` for the Mac:**
+
+- `server.stream_greedy` (`scripts/dev/server_check.py`). The temperature-0 SSE stream
+  and the blocking answer must equal `redlite-generate`'s greedy text byte for byte, and
+  SIGINT must end the server with exit 0.
+- `generate.json` checks that the statistics line is written.
+- `generate.sigint`: Ctrl-C mid-answer must give exit 130 and `"finish":"interrupted"`.
+
+### Validation on the M4 Max 48 GiB (commit `7d96db1`)
+
+`rm -rf .deps/redmetal && make native` (0 warnings), then
+`scripts/regress_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf`:
+**44/44 PASS**, including `server.stream_greedy` (SSE stream and blocking answer
+byte-identical to `redlite-generate` greedy, clean SIGINT), `generate.json` (the real
+GGUF's `tokenizer.chat_template` is confirmed ChatML: `"chat_template_from_gguf":true`) and
+`generate.sigint` (exit 130, `"finish":"interrupted"`).
+
+Manual checks on the same machine and commit:
+
+- `./bin/redlite chat --dry-run` with no flags picks `--cache-mib 22528` (48.0 GiB RAM,
+  full residency).
+- `redlite serve --native MODEL --port 8093`, then a streaming `curl` request
+  (temperature 0, 40 tokens): SSE chunks, `finish_reason:"stop"`, `usage` and `[DONE]`.
+  Every decode token was GPU-routed and SIGINT shut the server down cleanly. The engine
+  was ready in 5.6 s with every expert preloaded.
+- Interactive `redlite-generate --interactive --json`, Ctrl-C (SIGINT) mid-answer: the
+  answer ends with `[interrupted]`, `"finish":"interrupted"`. The next question ("What was
+  my previous request?") is answered correctly, so the conversation state survived, and
+  `/quit` exits 0.
+
+No benchmark record is added. The server log prints per-request tok/s, but a single
+request is an observation, not a benchmark, and throughput is not claimed here.
+
+## Scope boundary
+
+- **Validated on the M4 Max 48 GiB only.** Nothing is run on the M4 Pro 24 GiB. The
+  4096 MiB default for machines under 40 GiB is the field-validated dev18 setting, but
+  the new launcher logic that picks it has not run there.
+- **Throughput is not claimed.** The server's throughput should equal `redlite-generate`'s
+  plus HTTP overhead, but that is not measured.
+- **The server is single-sequence and stateless.** Every request re-ingests the whole
+  conversation; there is no prefix reuse between requests. Concurrent requests queue on
+  the accept loop.
+- **The server is not hardened for untrusted networks.**
+  - It binds 127.0.0.1 by default.
+  - Robustness measures: bounded headers (64 KiB) and bodies (8 MiB), a 30 s receive
+    timeout, and a JSON nesting limit of 64.
+  - There is no TLS, no authentication and no rate limiting.
+- **Other limits:**
+  - No Jinja chat-template interpretation. Stop sequences, tools and logprobs are not
+    supported.
+  - Interactive Ctrl-C cannot interrupt a prefill in progress; the answer stops right
+    after it.
+
+
+# Red Lite dev26 (completion) — long positions, sanitized chat turn, kernel self-test, split-K attention
+
+Status: **done** on the M4 Max 48 GiB (macOS 27). This completes the dev26 items left open
+by `docs/REDLITE_DEV26_ROBUSTNESS.md`:
+
+- parity and benchmarks at 4096 and 8192 positions;
+- a sanitizer run of a real chat turn;
+- model-free tests for the dev21–dev24 kernels.
+
+The long-position benchmark showed decode collapsing with context, so this milestone
+also adds a split-K decode attention. Nothing here is measured on the M4 Pro.
+
+## Long positions: parity with llama.cpp
+
+`scripts/dev/long_positions.sh MODEL`
+
+- **Prompt.** The 1397 token ids of the frozen `tests/fixtures/long_context_prompt.txt`,
+  repeated and cut to P+100 ids (no new fixture text).
+- **Native.** Batched prefill of the first P ids (chunks of 512, 4 GiB cache), then 100
+  decode steps.
+- **Reference.** `redlite-ref-llama` on the same ids: pinned llama.cpp, F32 K/V, no flash
+  attention.
+- **Compared.** The logits of positions P..P+99.
+
+| P | argmax agreement | worst KL (limit 2e-2) | worst logit abs (limit 4.0) | result |
+|---:|---|---:|---:|---|
+| 4096 | 100/100 | 6.4e-3 | 3.03 | YES |
+| 8192 | 100/100 | 9.8e-7 | 2.27 | YES |
+
+**Threshold.** The 1100-position check (`logits.long_context_vs_llama`) uses a max-logit
+bound of 2.0. At 4096 that bound fails on 7 of 100 positions, while every argmax agrees
+and the KL stays at most 6.4e-3. So before accepting a looser bound for long positions,
+this was measured:
+
+- Early and attention layers match as well as at 1100: layer 0 1.2e-7, layer 3 3.3e-6,
+  layer 7 5.6e-5 (median max-abs). The drift starts in the late layers (layer 47 median
+  0.44, against 0.12 at 1100).
+- **Native against native, without llama.cpp.** Token-by-token decode vs the batched
+  prefill over the same 4196 ids (the same kernels, a different summation order and
+  chunking) differ by up to **2.62** in the logits, KL 8.0e-3. That is as much as either
+  differs from llama.cpp (3.03 and 2.38).
+
+So at this length, rounding-order differences alone move a few low-probability logits by
+more than 2. The long-position check keeps argmax agreement and the KL limit, and uses a
+max-logit bound of **4.0** (about 1.5× the measured native self-consistency floor). This
+bound was chosen after the measurement above; it is not a pre-registered threshold.
+`logits.long_context_vs_llama` in `regress_m4.sh` keeps 2.0.
+
+## Long positions: throughput
+
+`scripts/dev/long_positions.sh MODEL --bench-only`
+
+- `redlite-generate --raw` on the fixture text repeated to at least P tokens, 128 greedy
+  tokens.
+- One run per cell, 90 s cool-down before each (see dev24 on throttling). These are
+  single runs, not medians.
+
+| position (prompt tokens) | cache | before split-K: prefill / decode tok/s | after split-K: prefill / decode tok/s |
+|---|---|---:|---:|
+| ~4096 (4193) | 4 GiB | 266.7 / 24.8 | 266.7 / **43.6** |
+| ~4096 (4193) | 22 GiB | 267.0 / 31.5 | 265.8 / **65.5** |
+| ~8192 (8387) | 4 GiB | 203.3 / 17.2 | 201.9 / **38.8** |
+| ~8192 (8387) | 22 GiB | 204.1 / 20.1 | 204.3 / **57.4** |
+
+After the final threshold change (split only above 256 positions), a repeat gave 42.3 / 63.8 /
+39.2 / 56.3 tok/s decode in the same cells. In that repeat the first cell's prefill read
+196 tok/s, an outlier of the single-run method.
+
+**Short context** (`bench_m4.sh --only decode22|decode4 --reps 3 --cool 60`, medians; 256
+tokens after a ~30-token prompt, so the first ~256 positions use the old kernel):
+
+| build | decode 22 GiB | decode 4 GiB |
+|---|---:|---:|
+| split-K for every length (first version) | 68.47 | 45.84 |
+| `RL_ENGINE_ATTN_SPLIT=0` (old kernel) | 70.20 | 46.83 |
+| **dev26** (split-K above 256 positions) | 69.83 / 69.81 | 46.51 |
+| dev23 build (`65a0624`), re-measured the same hour | 70.12 | 47.10 |
+
+- At up to 256 positions the split has the same 16 threadgroups as the old kernel, plus the
+  merge dispatch, and measured slower. So it is used only above 256 positions.
+- Crossover, single cooled runs at 22 GiB:
+
+  | positions | split-K | old kernel |
+  |---:|---:|---:|
+  | ~970 | 65.1 | 54.7 |
+  | ~1880 | 65.1 | 45.3 |
+
+- The dev22/dev23 records (72.7 / 50.1) were taken earlier the same night. Re-measured
+  here, the dev23 build gives 70.1 / 47.1, so the lower short-context numbers are the
+  machine's state, not a regression.
+
+## Split-K decode attention (`attn_gqa_split` + `attn_gqa_merge`)
+
+**Before.** The dev18 decode attention ran one threadgroup per query head: 16
+threadgroups on a 40-core GPU. Each thread dotted a whole 256-float key row serially with
+uncoalesced loads, then walked every position serially for the values. At ~8400
+positions, `RL_ENGINE_PROFILE` gave attention 2269 ms of GPU time over 63 steps, 36 ms per
+token, against ~12 ms for everything else in the token.
+
+**Now:**
+
+- `attn_gqa_split` runs one threadgroup per (query head, block of 256 positions).
+  - Scores are simdgroup-cooperative dot products: lanes stride the head dimension, so key
+    reads are coalesced.
+  - The block writes its max, exp-sum and unnormalized value sum as a partial.
+- `attn_gqa_merge` combines a head's partials with the same online-softmax algebra as the
+  old kernel, then applies the sigmoid output gate.
+- Same profile: **254 ms** (−89%).
+- Used in both decode paths (synchronous and GPU-routed); the batched prefill keeps its
+  own kernel.
+- `RL_ENGINE_ATTN_SPLIT=0` restores the old kernel for A/B runs.
+
+**Gate.** `quick_parity.sh` (engine parity, GPU-routed parity, logits vs llama.cpp, greedy
+identical to llama.cpp, 1100-token long context) and `long_positions.sh` at 4096 and 8192:
+all YES.
+
+## Sanitized chat turn
+
+`scripts/dev/sanitize_chat.sh MODEL`, new `regress_m4.sh` check `generate.sanitize`.
+
+- **Build.** `redlite-generate` with `-fsanitize=address,undefined,float-cast-overflow
+  -fno-sanitize-recover=all`.
+- **Turn.** A 359-token chat turn in batched-prefill chunks of 64, which runs the dev24
+  prefetch thread, then 32 tokens of decode through the synchronous path with the dev23
+  prefetch. It is run twice: greedy, then a seeded top-k/top-p/min-p draw.
+- **Result.** No sanitizer report, and the greedy text is identical to the normal build's.
+- **Limits.** The Metal framework is not instrumented, and LeakSanitizer is unavailable on
+  Apple platforms.
+
+## Model-free kernel self-test
+
+`redlite-engine kernel-selftest` runs from `build_engine.sh`, `make native` and
+`make sanitize` (under ASan/UBSan on macOS), and is the new `regress_m4.sh` check
+`selftest.engine_kernels`. It compiles the engine's own kernel library, reads no GGUF, and
+checks:
+
+| kernels | check |
+|---|---|
+| `rl_rows2_{f32,q4k,q6k,iq2xxs}` (dev22) and `rl_rows_*` (dev18) | 16 shapes (37 rows, 64–4096 columns, both lane regimes) against the double-precision CPU row dot; relative error ≤ 2e-5 of Σ\|w·x\| (worst 1.1e-7) |
+| early-out guard (dev23) | with the flag set, `rl_rows2`, `rl_copy_f32` and `rl_route` leave their outputs untouched |
+| `rl_copy_f32` | exact copy |
+| `rl_route` (dev21) | 64 cases against `rl_native_router_select_softmax_topk`: ids, weights, slot addresses, exact ties, and a non-resident expert raising the flag |
+| `attn_gqa_split` + `attn_gqa_merge` (dev26), `attn_gqa` (dev18) | 6 lengths (1, 200, 256, 257, 1024, 1500) against a double-precision GQA with the output gate; abs error ≤ 2e-6 |
+
+**Mutation check.** A deliberately wrong Q6_K sub-block scale index in `rl_rows2_q6k` makes
+the test fail (relative error 0.026), and restoring it passes again.
+
+## Regression
+
+After `rm -rf .deps/redmetal && make native` (0 warnings): `scripts/regress_m4.sh`
+**46/46 PASS**. That includes the new `selftest.engine_kernels` and `generate.sanitize`
+checks, `selftest.sanitize` (which now includes the sanitized kernel self-test) and every
+llama.cpp oracle check. The self-test is also a step of the M4 field-validation workflow.
+
+## Defects found on the way (fixed)
+
+- **`compare_dumps.py` reported `ORACLE LOGITS PARITY: YES` on an empty native dump.** A
+  crashed native run therefore passed every logits check that uses it. It now fails
+  unless both dumps hold the same non-zero number of tokens. The existing regression
+  dumps pass under the stricter check.
+- **`redlite-engine --tokens` capped a list at 4096 ids and silently truncated longer
+  lists.** The capacity is now 65 536, and a longer list is rejected.
+
+## Scope boundary
+
+- **Machine.** Measured on the M4 Max 48 GiB only. Not measured on the M4 Pro 24 GiB.
+- **Positions.** Parity covers one synthetic long prompt (a repeated frozen fixture) at two
+  positions, with 100 decode steps each. The 4.0 bound is justified by a native
+  self-consistency measurement on the same prompt, not by a model of the error.
+- **Not changed.** The batched-prefill attention (`attn_gqa_b`) is unchanged. It dominates
+  prefill time at 8192: prefill falls from ~314 tok/s at 1100 tokens to ~205 at 8192.
+- **Self-test.** It is synthetic. It checks each kernel's arithmetic against the CPU
+  reference, not the model.
+- **Not unit-tested.** The pool's per-slot load generations and the prefill prefetch thread
+  have no model-free test. They run in every real-model check, and the sanitized chat turn
+  exercises both.
+
+
+# Red Lite dev26 (partial) — model-free robustness: GGUF fuzz, sanitizers, sampler parity
+
+> The items this document lists as not done (4096/8192-position parity and benchmarks, a sanitized
+> chat turn, model-free tests for the dev22–dev24 kernels) were completed later on the M4 Max:
+> see `REDLITE_DEV26_LONG_CONTEXT.md`.
+
+Status: **partial**. This document covers only the dev26 items that need neither
+Metal nor the model:
+- the sanitizer run of the model-free tests;
+- a GGUF reader fuzz, and the fixes it led to;
+- a fix to the portable (Linux) build;
+- sampler distributional parity against the pinned llama.cpp.
+
+The llama.cpp side of the sampler comparison runs the real pinned library; its sampler
+needs no model.
+
+Not done: 4096/8192-position parity and benchmarks, and a sanitized chat turn. Both need
+Metal and the model. There are no dev22–dev24 kernels yet to write model-free tests for.
+See "Scope boundary".
+
+## Why
+
+The native runtime opens an 18 GiB file and reads counts, lengths and offsets from
+it before anything else, and until now only well-formed fixtures had tested that
+code. `make native` on Linux (the portable subset that CLAUDE.md documents) had
+also stopped building at some point after dev15, without anyone noticing.
+
+## What changed
+
+- **Portable build restored** (`2ed500b`). `redlite_native_deltanet_{state,tail}_cli.c`
+  used the Metal telemetry struct outside its `#ifdef __APPLE__`. The Linux build
+  is now also warning-clean under `-Wall -Wextra -Wpedantic`: the misleading
+  indentation in the prestate CLI is split, and the Linux `redlite-native` link
+  gets the same `-Wno-overlength-strings` as the macOS one.
+- **GGUF reader hardening** (`ee80ff7`). The fuzz found three defects:
+  1. `rl_native_build_expert_map` sized a `calloc` straight from the header's
+     `tensor_count`. A corrupted count requested 56 TiB.
+     `rl_gguf_model_open` accepted up to 2^24 tensors or kv entries (~1.8 GiB of
+     descriptors) whatever the file size. Both now reject counts the file cannot
+     hold (tensor descriptor ≥ 24 bytes, kv ≥ 13 bytes).
+  2. The expert map did not check tensor offsets against the file. Two routed
+     tensors with offsets near 2^64 sort next to each other, pass the slice check,
+     and then `data_base + offset` wraps into the `pread` offsets. Offsets beyond EOF
+     are now rejected, as `rl_gguf_model_open` already did.
+  3. Tokenizer arrays are now bounded by the bytes left in the file before
+     allocation. `token_type` values outside int32 are rejected instead of going
+     through an undefined float→int conversion. Nested arrays are rejected in both
+     readers, as llama.cpp does.
+- **Tooling** (`cad2e69`).
+  - `redlite-gguf-fuzz` builds two valid synthetic seeds (full directory with
+    tokenizer and chat template; routed triplet plus router). It feeds both readers
+    every strict truncation, 4- and 8-byte boundary values at every header offset,
+    and seeded random multi-mutations.
+    - Seeds must be accepted, and every truncation of the directory seed must be
+      rejected.
+    - For accepted mutants it mmaps the file, reads the first and last payload
+      bytes, and walks every expert layout.
+    - `make native` runs 2000 random iterations; `regress_m4.sh` runs 20000.
+  - `scripts/sanitize_offline.sh` (`make sanitize`) rebuilds the model-free tests
+    and the fuzz with `-fsanitize=address,undefined,float-cast-overflow
+    -fno-sanitize-recover=all` and runs them. It is also a new `regress_m4.sh`
+    check, `selftest.sanitize`.
+
+Since then (dev25, `3060e9b`), `make sanitize` also builds `redlite-server-fake` with the
+sanitizers and runs `tests/test_native_server.py` against it. That covers the HTTP parser,
+the JSON request parser (including a 300-mutation body fuzz) and the SSE writer.
+
+- **Sampler parity with llama.cpp** (`8c9e138`, `046cbed`).
+  - **Before:** the native sampler implemented top-k → top-p → temperature → draw. It had
+    no min-p, so llama.cpp's default chain differed (it applies `min_p = 0.05` after
+    top-p). It also did the nucleus and weights in double precision.
+  - **Now:** the sampler follows the pinned chain `top_k → top_p → min_p → temp → dist`
+    (`src/llama-sampler.cpp`, `common/sampling.cpp`) with the same float arithmetic:
+    - top-p: float softmax and float running sum, cut at the first `cum >= p`;
+    - min-p: `logit >= max + logf(min_p)`;
+    - temp: `logit / T`, then weights `expf(l - max)` summed in double;
+    - draw: the first candidate whose running weight reaches `u · sum`.
+  - `rl_sampler_distribution()` returns the exact distribution a draw uses.
+    `--min-p` is exposed in `redlite-generate`, `redlite chat` and `redlite-server`
+    (`min_p` request field, as in llama-server). The default stays 0 (off), so
+    `redlite chat` keeps its documented defaults. Pass `--min-p 0.05` to match
+    llama.cpp's defaults.
+  - Greedy is unchanged: argmax, lowest id on ties. Seeded non-greedy draws can differ
+    from dev21 in the last bit of a weight, because the arithmetic now mirrors llama.cpp.
+  - Tools:
+    - `redlite-sampler-dist` is native and model-free;
+    - `scripts/dev/ref_llama/redlite_ref_sampler.cpp` is the dev-only oracle linked
+      against the pinned libllama, built by `scripts/dev/build_ref_sampler.sh` on
+      macOS or Linux;
+    - `scripts/dev/compare_sampler.py` compares the two.
+    - `regress_m4.sh` gains `sampler.vs_llama`.
+  - **Documented differences** (not distributional):
+    1. **PRNG.** Native uses splitmix64; llama.cpp uses `std::mt19937` with
+       `uniform_real_distribution<double>`. Distributions are identical, but the same
+       seed does not give the same token sequence.
+    2. **Exact logit ties across a cut** (top-k boundary, nucleus cut, greedy mode).
+       llama.cpp keeps whichever tied ids `std::partial_sort` leaves in front, which is
+       implementation-defined and can differ between libstdc++ and libc++. Native keeps
+       the lowest ids. The probability multiset is the same; only the identities of
+       equally-scored tokens differ.
+
+## Validation
+
+Machine: **Linux x86_64 cloud container** (Ubuntu 24.04, 4 vCPU, 15 GiB, gcc 13.3,
+clang 18.1). There is no Metal and no GGUF on it. Commit `cad2e69`, except the sampler
+row.
+
+| Check | Command | Result |
+|---|---|---|
+| portable build, gcc | `rm -rf .deps/redmetal && CC=gcc make native` | rc 0, 0 warnings, all self-tests OK |
+| portable build, clang | `rm -rf .deps/redmetal && CC=clang make native` | rc 0, 0 warnings, all self-tests OK |
+| sanitizers (gcc; the container's clang lacks the ASan runtime) | `CC=gcc make sanitize` | selftest + 4 offline tests + fuzz: no report |
+| fuzz, longer | `.deps/redmetal/sanitize/redlite-gguf-fuzz --iterations 100000 --seed {1,0xdeadbeef,424242}` | 3 × 152 374 inputs, 0 reports, 0 accepted truncations |
+| Python | `make test`; `ruff check redlite tests --select E9,F63,F7,F82` | 36 OK; clean |
+| sampler vs pinned llama.cpp `7798007` (libllama built in the container, CPU) | `REDLITE_LLAMA_DIR=… bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py --draws 20000` | commit `046cbed`: **SAMPLER PARITY: YES** on 32 grid points (4 logit shapes × 8 parameter sets). Worst probability difference 0.0 (bit-identical float probabilities). The 5 exact-tie cuts are resolved differently, with the same probability lists. Draws: 20000 per point (1000 without top-k) from each side, all p-values ≥ 0.047. |
+
+Before the fixes, the same fuzz aborted under ASan on defect 1, and its own
+invariant check caught defect 2.
+
+The first sampler comparison failed its goodness-of-fit check on the llama.cpp side for
+one configuration: one token at p = 0.99995 and the rest pooled. A direct count showed
+both implementations drawing rare tokens at the expected rate (1 in 12 000 each,
+expected 0.58). The fault was the statistic: a chi-square on a pooled cell expecting
+0.05 draws is invalid. It now folds that cell into a regular one and tests it with an
+exact Poisson tail.
+
+Only the llama.cpp **library** was built in the container, as the sampler oracle:
+source-only shallow fetch of the pinned commit, `-DGGML_NATIVE=OFF`, CPU. It never
+touches a model, and no runtime binary links it.
+
+**Validated on the M4 Max 48 GiB** (macOS 27, commit `7d96db1`): clean `make native` and
+`make redmetal` with 0 warnings, then `scripts/regress_m4.sh` **44/44**. The real 18 GiB
+GGUF opens through the hardened readers in every model check. `selftest.gguf_fuzz`,
+`selftest.sanitize` and `sampler.vs_llama` all pass.
+
+On macOS, libllama is built with libc++. The sampler comparison there again gives
+bit-identical probabilities (worst difference 0.0), with 4 exact-tie cuts resolved
+differently, against 5 with libstdc++ on Linux. This confirms that the tie order is
+implementation-defined in llama.cpp.
+
+The first macOS run found two problems, both fixed and re-validated:
+- `scripts/sanitize_offline.sh` did not link the macOS `redlite-native`, which needs the
+  Metal top-k sources. A foreign `tests` package in the user's site-packages also
+  shadowed the repository's tests (`7d96db1`).
+- The macOS 27 SDK deprecates `didModifyRange:`, which produced 21 warnings. Every
+  affected buffer is Shared storage, where the call was a no-op, so the calls were
+  removed (`8a16b72`).
+
+No benchmark record is added: nothing here measures throughput. Tool run times
+are not benchmarks.
+
+## Scope boundary
+
+- Implemented and tested synthetically on Linux x86_64 only. Nothing here is
+  validated on the M4 Max or the M4 Pro, and nothing here changes Metal code, kernel
+  arithmetic, decode or prefill.
+- The fuzz is a deterministic mutation fuzzer over two small seeds, not
+  coverage-guided (no libFuzzer/AFL). It exercises the header, metadata and
+  directory parsers and the expert layout, not the tokenizer or the engine's
+  tensor-table audit.
+- The sanitizer run covers the portable model-free tests only. The dev26 item
+  "sanitizer run of a chat turn" needs Metal and the model and is **not done**.
+- Also **not done** from dev26: parity and benchmark at 4096/8192 positions, and
+  model-free tests for the dev22–dev24 kernels, which do not exist yet.
+- Sampler parity is checked on synthetic logit vectors over the real vocabulary size
+  (peaked, three strong candidates, flat top, exact ties) and an 8-point parameter
+  grid. It does not use model logits. The sampler is a pure function of the logits, so
+  that is the whole contract.
+- dev22–dev24 are not started. Their targets need Metal, the model and llama.cpp on the
+  M4 Max: decode ≥ 62 / ≥ 45 tok/s and prefill ≥ 300 tok/s. dev25 is partial, see
+  `docs/REDLITE_DEV25_PRODUCT.md`. The work was done in a cloud container without any
+  of these.
+
+
+# Red Lite dev27 — release 0.3.0
+
+Status: **released as 0.3.0** (2026-09-30).
+- The release was prepared on the `v0.3-streaming` branch and tagged `v0.3.0` at `6c1f650`.
+- The maintainer merged it into `main` through pull request #1 (merge commit `3cd58a7`),
+  and the branch was then deleted.
+- The GitHub Release is `v0.3.0`.
+
+## What the release changes
+
+- **Version.** 0.3.0 in `VERSION`, `pyproject.toml` and `redlite/__init__.py`, and in the
+  usage text of the product binaries (`redlite-engine`, `redlite-generate`,
+  `redlite-server`). The stage parity CLIs keep the dev tag of the milestone that built
+  them.
+- **CHANGELOG.** The "Unreleased" block became `0.3.0 — 2026-09-30`. It opens with a release
+  summary, the measured numbers and the milestone targets of the cycle, followed by every
+  dev entry.
+- **README, rewritten for new readers:**
+  - what the two runtimes are;
+  - a native quick start;
+  - a per-machine table of measured numbers, each traced to a record;
+  - correctness, limits, and the status of every tool (product, launcher, regression,
+    legacy).
+  - The launcher documentation follows unchanged under its own heading.
+- **`docs/README.md`** points to the release summary and marks the legacy material.
+- **Legacy marking.** The Python streaming oracle (`redlite-stream`, `redlite-ffn`,
+  `redlite-topk`) states in its `--help` that it is the frozen dev1–dev8 reference, and
+  names the native binaries.
+
+No runtime code changed in dev27 apart from the version strings.
+
+## Milestone results of the 0.3.0 cycle (M4 Max 48 GiB)
+
+| Milestone | Target | Reached | Commit |
+|---|---|---|---|
+| dev22 decode kernels | decode ≥ 62 tok/s at 22 GiB | yes, 66.2 | `fdd3c69` (record `314d483`) |
+| dev23 early-out + prefetch | decode ≥ 45 tok/s at 4 GiB | yes, 50.1 | `a4e4a26` (record `65a0624`) |
+| dev24 prefill overlap | prefill ≥ 300 tok/s, 1100 tokens, 4 GiB | yes, 314.3 | `8ed6d56` (record `e96add9`) |
+| dev26 completion | parity + benchmark at 4096/8192; sanitized chat turn; model-free kernel tests | yes; also split-K attention | `45a45e9`, `1b67f87` (record `0f289c2`) |
+| dev27 release | 0.3.0; CHANGELOG; README; docs index; legacy marked; PR to main open, not merged | yes | this commit series |
+
+## Final validation (M4 Max 48 GiB, macOS 27)
+
+Run in this order, on the release tree:
+
+| Check | Command | Result |
+|---|---|---|
+| Python tests | `make test` | 57 tests OK |
+| Lint | `ruff check redlite tests --select E9,F63,F7,F82` | all checks passed |
+| Python bridge | `rm -rf .deps/redmetal && make redmetal` | rc 0, 0 warnings |
+| Native build + self-tests | `make native` | rc 0, 0 warnings |
+| Sanitizers | `make sanitize` | rc 0, 0 warnings; no ASan/UBSan report (including the Metal kernel self-test) |
+| Regression | `scripts/regress_m4.sh models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` | **46/46 PASS** |
+
+The regression includes, among others:
+
+- `generate.vs_llama`: 24 greedy tokens identical to the pinned llama.cpp.
+- `logits.long_context_vs_llama`.
+- `engine.parity.gpu_routed`.
+- `generate.sanitize`.
+- `selftest.engine_kernels`.
+
+## Scope boundary
+
+- **Machine.** Every 0.3.0 number is from the M4 Max 48 GiB. The native runtime was last
+  measured on the M4 Pro 24 GiB at dev18. The 24 GiB memory policy and the launcher
+  presets come from the M4 Pro and are unchanged.
+- **Not in this release.** Multi-sequence batching, concurrent server requests, GGUFs with
+  other routed-expert quantizations, and an optimized batched-prefill attention.
+- **Merge.** Not part of this milestone's work: the maintainer merged the pull request into
+  `main` afterwards (#1, `3cd58a7`).
+
+
+# Red Lite dev28 — Linux CI and release packaging
+
+Status: **done, except "green on GitHub": not reached** (GitHub does not start hosted
+jobs on this account, see Validation). Branch `dev/0.4` (0.4.0 cycle). Machine for every local number: Apple
+M4 Max / 48 GiB (the daily machine). Nothing here was run on an M4 Pro or an M4 Air.
+
+## What changed
+
+- **GitHub CI runs on every push and pull request again** (`.github/workflows/ci.yml`).
+  One Linux job (`ubuntu-latest`), no model, no Metal:
+  - `ruff check redlite tests --select E9,F63,F7,F82` (the lint the project enforces) and
+    `python -m compileall` of `redlite`, `tests` and `scripts`;
+  - `make native` — the portable subset of the native tree (GGUF parser/fuzz, CPU
+    references, engine offline test, sampler, server core); the Metal-only build scripts
+    print a skip message. Any `warning:` in the log fails the job;
+  - `make sanitize` — ASan + UBSan build and run of every model-free test, the GGUF fuzz
+    and the OpenAI protocol tests against the sanitized server core; warnings fail the job;
+  - `make test` — the Python unit tests.
+  The macOS hosted jobs and the separate `lint.yml` were removed: the Metal paths cannot be
+  exercised without an Apple GPU and the model, so macOS minutes bought nothing that
+  `scripts/regress_m4.sh` on the local machine does not already cover. The self-hosted
+  `mac-m4-field-validation.yml` stays manual (`workflow_dispatch` only).
+- **`scripts/package_release.sh`** builds `dist/redlite-<version>-macos-arm64.tar.gz`
+  (`bin/redlite-generate`, `bin/redlite-server`, `bin/redlite-engine`, `INSTALL.md`,
+  `LICENSE`, `NOTICE.md`, `VERSION`, `BUILDINFO`) plus a `.sha256` file checked with
+  `shasum -a 256 -c`. The binaries are rebuilt into `.deps/package/build` (the development
+  build in `.deps/redmetal` is untouched) with `-mcpu=apple-m1` by default instead of
+  `-mcpu=native`, so the tarball does not depend on CPU instructions newer than the first
+  Apple Silicon generation. The Metal kernels are compiled at start-up on the target GPU.
+  The model is never packaged.
+- **Build scripts** accept `REDLITE_MCPU` (default `native`) and `build_engine.sh` /
+  `build_server.sh` accept `REDLITE_BUILD_OUT` (default `.deps/redmetal`); nothing changes
+  for a plain `make native`.
+- **Development measurement tools.** `redlite-ref-llama MODEL bench --tokens ... [--max N]`
+  times the pinned llama.cpp (its default context parameters: `n_batch` 2048, `n_ubatch`
+  512, flash attention auto, f16 KV, fully resident) on exactly the same token ids as the
+  native runtime: one prefill, then N greedy tokens one at a time. `scripts/dev/bench_m4.sh`
+  gained `--only prefill8192` (the fixture ids repeated to 8192, as `long_positions.sh`
+  does), `--only llama` (the same 1100 / 8192 prefill ids and 256 decode tokens after the
+  same chat prompt, through llama.cpp) and `--cache-mib N` for the full-residency cache of
+  another GGUF.
+
+## 0.4.0 baseline (main 48c96cd = release 0.3.0, M4 Max 48 GiB)
+
+The reference for every 0.4.0 milestone, measured before any 0.4.0 change
+(`scripts/dev/bench_m4.sh MODEL --reps 3 --cool 90`, median of three cooled runs; commit
+48c96cd, 2026-09-30; record `benchmarks/m4max-48gb-0.4.0.json`):
+
+| | native 0.3.0 | pinned llama.cpp, same ids |
+|---|---:|---:|
+| decode, 256 tokens, 22 GiB cache (every expert resident) | 71.50 tok/s | 72.46 tok/s |
+| decode, 256 tokens, 4 GiB cache | 47.93 tok/s | — |
+| prefill 1100 tokens (chunks of 512, 4 GiB cache) | 307.30 tok/s | 858.34 tok/s |
+| prefill 8192 tokens (chunks of 512, 4 GiB cache) | 212.60 tok/s | 893.71 tok/s |
+
+llama.cpp runs fully resident with its defaults (`n_batch` 2048, `n_ubatch` 512, flash
+attention auto, f16 KV cache); its prefill on the same 1100 ids is 2.8× the native one, far
+above the 339 tok/s `llama-bench pp48` figure recorded in dev19 (48 tokens only).
+
+`RL_ENGINE_PROFILE=1` single runs (the profile commits every stage, so its totals are lower
+than the bench):
+
+| prefill | tok/s | dense GPU | of which recurrent / attention wall | experts GPU | expert loads |
+|---|---:|---:|---|---:|---:|
+| 1100 | 279.7 | 1629 ms | 1290 / 474 ms | 1925 ms | 682 ms (overlapped) |
+| 8192 | 201.3 | 25629 ms | 8936 / 17273 ms | 13510 ms | 2654 ms |
+
+At 8192 positions the batched attention (`attn_gqa_b`, one threadgroup per token and head)
+is the largest single cost; at 1100 the routed experts and the dense GEMMs split the time.
+These are the dev30 targets.
+
+## Validation
+
+- **GitHub.** The `CI` workflow had been disabled by hand on GitHub on 2026-09-08 together
+  with the others; it was re-enabled (only `CI`; `Lint` is deleted and the M4 workflow stays
+  disabled and manual). Its first run, 36706964887 (workflow_dispatch on a scratch branch
+  with the dev28 commits), **was not started by GitHub**: *"The job was not started because
+  recent account payments have failed or your spending limit needs to be increased."* The
+  same message stopped every hosted job of this private repository on 2026-09-08. There is
+  no self-hosted Linux runner. **"CI green on GitHub": not reached** — it needs the
+  account's billing to be fixed; nothing in the repository can work around it.
+- **The same steps in a Linux container** (`python:3.12`, Debian, arm64, under colima on the
+  M4 Max; the workflow's commands verbatim): ruff clean, compileall clean, `make native` 0
+  warnings, `make sanitize` OK (12 protocol tests), `make test` 57 tests OK.
+- **Package.** `scripts/package_release.sh` built `redlite-0.3.0-macos-arm64.tar.gz` (476 KiB)
+  with `-mcpu=apple-m1`, `minos 14.0` (`vtool -show-build`); `shasum -a 256 -c` OK; the
+  extracted `bin/redlite-generate` produced the regression greedy answer ("... due to
+  Ray[leigh scattering]") on the IQ2_XXS model with a 2 GiB cache.
+- **Regression.** `rm -rf .deps/redmetal && scripts/regress_m4.sh MODEL`: 46/46, 0
+  compiler warnings in `build.native`.
+
+## Scope boundary
+
+- CI covers only what runs without Apple Metal and without the 18 GiB model: parser,
+  CPU references, sampler, server protocol, sanitizers, Python. Every Metal kernel and
+  every real-model parity check is still validated only by `scripts/regress_m4.sh` on the
+  M4 Max 48 GiB.
+- The release tarball is built and its binaries start (`--help`) on the M4 Max; the
+  `-mcpu=apple-m1` build was **not** run on an M1/M2/M3 machine, nor on the M4 Pro 24 GiB
+  or the M4 Air 16 GiB. It is not signed or notarized (INSTALL.md explains the quarantine
+  attribute).
+- No runtime code changed in dev28.
+
+
+# Red Lite dev29 — server: state reuse across turns, stop sequences, FIFO queue
+
+Status: **done** on `dev/0.4`. Implemented in the portable server core and the engine
+binding; protocol tested model-free (Linux container and macOS, also under ASan/UBSan);
+real-model checks on the Apple M4 Max 48 GiB only. Nothing measured on an M4 Pro or Air.
+
+## What changed
+
+### State reuse when a request extends the previous conversation
+
+`redlite-server` keeps the token ids its engine state holds: the prompt of the last request
+plus every generated token that was fed back into the model (a token is fed back only when
+another one is decoded after it, so the end-of-turn token, the token that hit `max_tokens`
+and the token that completed a stop sequence are not part of the state).
+
+For a new request it tokenizes the whole ChatML conversation as before and calls
+`rl_prefix_reuse(history, ids)`:
+
+- **reuse** only when the held ids are a *proper prefix* of the new ids — the new request is
+  exactly the previous conversation (its prompt and its answer, as generated) followed by
+  new tokens. Only the suffix is prefilled (batched prefill from the current position);
+- **otherwise reset** and ingest the whole prompt, as 0.3.0 always did.
+
+The Gated DeltaNet state cannot be rolled back to an earlier position, so there is no
+partial reuse: an edited earlier message, a different system prompt, a regenerated answer,
+an answer truncated by a stop sequence or modified by the client, or a re-tokenization that
+does not give back the same ids all fall back to the reset. A failed request invalidates the
+history (the next request resets). `--no-reuse` disables the mechanism.
+
+Responses report the reused ids as `usage.prompt_tokens_details.cached_tokens` (the OpenAI
+field); the server log prints `prefill N tok (M cached)` and the time to the first token.
+
+### Stop sequences
+
+`"stop"`: a string or an array of up to 4 non-empty strings (≤ 256 bytes). The text is
+scanned before it is sent (`rl_stop_scan`): output up to the earliest match is sent, the
+stop sequence and everything after it is dropped, generation ends with
+`finish_reason: "stop"`. A tail that could still become a stop sequence is held back (like
+an incomplete UTF-8 character) and flushed if generation ends otherwise. 0.3.0 rejected
+`stop` with a 400.
+
+### FIFO request queue
+
+The accepting thread now only reads and parses requests. `/health` and `/v1/models` are
+answered at once, even while a generation runs (0.3.0 answered them only between
+generations). Chat requests go into a FIFO served by one worker thread (the engine is
+single-sequence), in arrival order. `--queue N` (default 16) requests may wait behind the
+running one; more get `503 server busy`. A queued client that closed its connection is
+skipped. On SIGINT the running generation stops through its sink as before and waiting
+requests get `503 server is shutting down`.
+
+## Tests
+
+- **Model-free** (`tests/test_native_server.py`, fake echo backend, which simulates the
+  engine's state with bytes): stop sequences across chunk boundaries, the earliest match
+  winning, multi-byte stop strings, a held-back partial match flushed at the end; reuse
+  reported only for a proper extension (not for an edited turn, a repeated prompt, an answer
+  cut by a stop sequence, or after a failed request); four concurrent requests completing
+  in arrival order with `/health` answered in < 0.5 s meanwhile; `503` with `--queue 1`.
+  `rl_server_selftest` covers the stop scan, the prefix rule and the new parse errors.
+  16 protocol tests, also run against the ASan/UBSan server by `make sanitize`.
+- **Real model** (`scripts/dev/server_check.py`, regress checks `server.stream_greedy` and
+  the new `server.reuse_greedy`): turn 1, then turn 2 = turn 1 + its answer + a follow-up,
+  greedy. The warm server reuses 46 of 69 prompt ids; a second server with `--no-reuse`
+  ingests all 69. Both answers are byte-identical, with the 2 GiB cache of the regression
+  and with the 22 GiB full-residency cache (GPU-routed decode).
+
+## Second-turn latency (TTFT)
+
+`python3 scripts/dev/server_ttft.py MODEL --cache-mib C [--bin DIR] [--server-args=--no-reuse]`:
+turn 1 = the first 4400 characters of the long-context fixture + "Summarize the text above in
+one sentence." (1185 prompt ids, greedy, 32 tokens); turn 2 = turn 1 + its answer + "Which
+detail matters most, and why?" (1235 ids). A fresh server per run, 60 s pause before each,
+median of 3, time from the request to the first streamed content byte of turn 2. "Before"
+is the 0.3.0 `redlite-server` built from `pre-dev28` (= 48c96cd).
+
+| cache | 0.3.0 (before) | dev29 `--no-reuse` | dev29 (reuse) | reused ids |
+|---|---:|---:|---:|---:|
+| 4 GiB | 3833 ms | 3833 ms | **173 ms** | 1216 of 1235 |
+| 22 GiB | 3779 ms | 3845 ms | **167 ms** | 1216 of 1235 |
+
+The turn-2 answer is the same text in every configuration and run (SHA-1 `1f94f64826b2`):
+0.3.0, `--no-reuse` and reuse, at both caches. The first turn itself is unchanged (≈ 3.8–4.3 s
+for 1185 ids: batched prefill plus the first decode).
+
+## Validation (M4 Max 48 GiB)
+
+- `rm -rf .deps/redmetal && scripts/regress_m4.sh MODEL`: **47/47** (46 + `server.reuse_greedy`),
+  0 compiler warnings; `make sanitize` and `make test` (61 tests) green on macOS and in a Linux
+  container (`python:3.12`, arm64), `ruff` clean.
+
+## Scope boundary
+
+- Reuse covers exactly one retained conversation (the last one). Two clients alternating
+  conversations reset each other every time; there is no prefix cache and no multi-sequence
+  batching.
+- The reuse decision is on token ids, not text: the answer the client sends back must
+  re-tokenize to the ids that were generated. On the regression prompts it does; text that
+  BPE splits differently when re-tokenized simply resets (correct, not faster).
+- Warm and cold second turns are identical on the regression conversations; in general the
+  warm path ingests the first answer token by token (decode) and the cold path in one batch,
+  so they are the same computation in a different order, compared here only greedily.
+- The queue is FIFO with no priorities or per-client fairness; a slow client sending its
+  headers still occupies the accepting thread up to the 30 s receive timeout.
+- Measured on the M4 Max 48 GiB only.
+
+
+# Red Lite dev30 — batched prefill: tiled attention, matrix experts, faster dense pass
+
+Status: **done; both targets reached** on the Apple M4 Max 48 GiB in the configuration this
+machine runs by default (full residency, 22 GiB cache). Every number below was measured
+there; nothing was run on an M4 Pro or an M4 Air. The 4 GiB-cache path (the 24 GiB
+configuration) is faster too and did not regress, but on this machine it is still below
+llama.cpp at 1100 tokens.
+
+## Targets
+
+| target | result | reached |
+|---|---|---|
+| prefill 1100 tokens ≥ pinned llama.cpp on the same ids (858.34 tok/s here) | **891.9 tok/s** at 22 GiB, default chunk (545.8 at 4 GiB, 512-token chunks) | yes (full residency) |
+| prefill 8192 tokens ≥ 280 tok/s | **926.9 tok/s** at 22 GiB; 645.6 at 4 GiB | yes |
+| decode at 22 GiB not below 0.3.0 (71.50 tok/s) | 71.15 tok/s (5 runs); alternating A/B with the 0.3.0 binary: 71.09 vs 70.47 | yes |
+
+Method: `scripts/dev/bench_m4.sh MODEL --reps 3 --cool 90 --only prefill|prefill8192|prefill22`,
+median of three runs, 90 s pause before each. `prefill` / `prefill8192`: 4 GiB cache,
+512-token chunks (from dev30 on with one untimed warm-up run first). `prefill22`: 22 GiB cache
+and the engine's default chunk. llama.cpp: `--only llama` (dev28), fully resident.
+
+## Changes, one at a time (each kept only after the parity gates)
+
+| # | change | prefill 1100 / 8192 tok/s (4 GiB, chunks of 512) | commit |
+|---|---|---|---|
+| — | 0.3.0 baseline | 307.3 / 212.6 | 48c96cd |
+| 1 | tiled causal attention `attn_fa_b` | 310.1 / 309.1 | d5d7fd8 |
+| 2 | experts on simdgroup matrices (`redmetal_topk_gateup_mm`, `_down_mm`) | 428.3 / 439.0 | f058a0f |
+| 3 | DeltaNet recurrence, one simdgroup per state row (`dn_state_seq_sg`) | 490.2 / 534.0 | 65bce55 |
+| 4 | threadgroup-staged dense GEMM `rl_gemm_tg` (bit-identical output) | 518.0 / 631.1 | 55e6cbe |
+| 5 | one Metal residency set for every engine buffer | 565.6 / 605.4 | 7e96a3e |
+| 6 | 2048-token chunks by default under full residency | 22 GiB: 881.9 / 911.9 | aed1ec5 |
+| 7 | no expert prefetch under full residency (bit-identical) | 22 GiB: **891.9 / 926.9** | fca7d78 |
+
+1. **Tiled attention.** One threadgroup per (query head, 8 tokens), key blocks of 32
+   positions: S = QKᵀ and O = diag(α)·O + P·V on f32 simdgroup matrices, online softmax in the
+   flash-attention order. The KV caches get 32 padding positions for the block overhang.
+   Attention was 17.3 s of the 40.7 s of an 8192-token prefill in the baseline profile.
+2. **Matrix experts.** A threadgroup computes 32 weight rows × up to 16 (expert, token) pairs
+   of one expert: the 128 threads decode the rows with the validated `rm_group8` arithmetic
+   and stage the activations in threadgroup memory; f32 multiply-accumulate. The first version
+   used one accumulator per output along the 2048-column reduction and **flipped an argmax**
+   of the long-context check (position 1135, logits 0.012 apart after the documented router
+   near-tie at 1035): not kept. Four partial accumulators per output (one per 8-column
+   sub-step) fixed it; summing them through threadgroup memory cost occupancy (experts
+   966 ms), summing them in registers with an exact `x·I + y` did not (777 ms).
+3. **DeltaNet recurrence.** `dn_state_seq` ran a 128-thread group per state row with three
+   threadgroup barriers per token; `dn_state_seq_sg` gives each row to one simdgroup (four
+   columns per lane, `simd_sum` only). DeltaNet conv/state/tail GPU time for 1100 tokens:
+   389 → 96 ms.
+4. **Staged GEMM.** 64 rows × 32 tokens per threadgroup, K steps of 32 staged in threadgroup
+   memory, the same k order as `rl_gemm_wt`: the logits dump is byte-identical (`cmp`).
+5. **Residency set.** The dense weights are no-copy windows of the GGUF mmap. Without a
+   residency set every command buffer re-established their residency: the prefill's dense
+   wall time was 1236 ms against 712 ms of GPU time for 1100 tokens (~3.8 ms per layer
+   command buffer). All engine buffers (and the prefill scratch) now live in one
+   `MTLResidencySet` attached to the queue (macOS 15+; `RL_ENGINE_RESIDENCY=0` for A/B).
+   Output byte-identical.
+6. **Chunk size.** With every expert resident there are no loads to bound, and larger chunks
+   give each expert tile more pairs: 1100 tokens at 22 GiB, single runs, 663 tok/s in chunks
+   of 512, 722 in chunks of 1100, 811 with a 2048 cap. `rl_engine_prefill_batch()` returns
+   `--batch`, else 2048 when every expert was preloaded, else 512 (the bounded-cache path is
+   unchanged). Decode is unaffected (alternating A/B at 22 GiB: 70.9 vs 70.8 tok/s).
+7. **No prefetch under full residency.** The dev24 pre-gating (next-layer router GEMM +
+   loader thread) has nothing to load there.
+
+`RL_PREFILL_PROFILE=1` (development) commits at every stage boundary and prints the GPU time
+per prefill stage. Every change has an environment switch back to the previous kernel:
+`RL_PREFILL_ATTN_TILE=0`, `RL_PREFILL_EXPERT_MM=0`, `RL_PREFILL_STATE_SG=0`,
+`RL_PREFILL_GEMM_TG=0`, `RL_ENGINE_RESIDENCY=0`, `--batch 512`.
+
+### Tried and reverted
+
+- **Router selection on the GPU** (batched form of the dev21 `rl_route` arithmetic). Parity
+  green, zero router-id mismatches. Alternating cooled A/B at 4 GiB: 571.3 / 481.7 / 614.0
+  tok/s with it, 577.4 / 566.5 / 513.3 without (medians 571 vs 567). The CPU selection step
+  fell from 70–115 to ~45 ms, but the gain is inside the run-to-run spread: reverted.
+- **Skipping the empty 8-pair block** of the matrix expert kernels for slices of ≤ 8 pairs.
+  With a variable loop bound the accumulators spilled (experts 1729 ms); with a constant
+  bound and a uniform `break`, 901 ms against 750–850 without: reverted.
+
+## Profiles (single runs, `RL_PREFILL_PROFILE=1` / `prefill split`)
+
+1100 tokens, 4 GiB, chunks of 512: baseline dense GPU 1629 ms, experts GPU 1925 ms. After
+change 4: recurrent input GEMMs 304 ms, DeltaNet core 104, `ssm_out` 117, attention q/k/v 75,
+attention core 25, attention output 38, router 55, shared expert 77; experts GPU ≈ 780 ms.
+At 22 GiB with one 2048 chunk the whole prefill is ≈ 600 ms dense + ≈ 600 ms experts.
+
+## Parity
+
+For every kept change: `scripts/dev/quick_parity.sh MODEL --long --batch N` (engine parity
+CPU vs Metal, GPU-routed parity, logits vs llama.cpp, greedy vs llama.cpp, 1100-position long
+context vs llama.cpp) at N = 512, 1100, 256, 96 (and 2048 for change 6), the batched-prefill
+parity checks of `regress_m4.sh` (19 tokens in chunks of 8, 96 tokens in chunks of 32, zero
+router-id mismatches) and `scripts/dev/long_positions.sh` at 4096 / 8192. The long-context
+check stays at worst max-abs 0.99 / KL 3.5e-3 (argmax identical), as in 0.3.0.
+
+**Bound at 8192 positions.** With 2048-token chunks at 22 GiB the 8192-position check gave
+argmax 100/100 and KL 2.2e-6, but a worst max-abs logit of 4.48 against the 4.0 bound that
+dev26 set from a 4096-position measurement. Measured on the **0.3.0** binary at 22 GiB: its
+token-by-token path differs by 4.29 from llama.cpp and by 4.45 from its own batched prefill at
+8192 positions (KL ~1e-6). The dev30 binary is byte-identical to 0.3.0 token by token, and its
+512- and 2048-token chunks are byte-identical to each other at 22 GiB. The native
+self-consistency floor at 8192 is therefore above 4.0, and `long_positions.sh` uses 5.0 at
+P ≥ 8192 (argmax and KL gates unchanged). At 4 GiB with 512-token chunks the dev30 build gives
+3.81 at 8192 (0.3.0: 2.27; 0.3.0 vs dev30: 3.87).
+
+`regress_m4.sh` adds `logits.long_context_full_residency`: the 1100-position check at
+22 GiB with the default chunk (≥ 40 GiB machines).
+
+## Validation
+
+- `rm -rf .deps/redmetal && scripts/regress_m4.sh MODEL`: **48/48** (47 + the new
+  `logits.long_context_full_residency`), 0 compiler warnings.
+- Decode, 5 cooled runs: 71.15 tok/s at 22 GiB (0.3.0 baseline 71.50, runs 68.6–72.4),
+  47.77 at 4 GiB (0.3.0: 47.93). Alternating A/B at 22 GiB, 4 runs each, 90 s pauses: this
+  build 71.09, the 0.3.0 binary 70.47 (medians). The decode kernels did not change (the
+  token-by-token path is byte-identical to 0.3.0); the residency set applies to it too.
+
+## Scope boundary
+
+- Measured on the M4 Max 48 GiB only. The 4 GiB path uses the same kernels (changes 1–5);
+  it was not measured on the M4 Pro 24 GiB or the M4 Air 16 GiB, where the page cache,
+  not the GPU, may bound expert loads.
+- At 4 GiB with 512-token chunks the 1100-token prefill (545.8 tok/s) is below llama.cpp's
+  fully resident 858; the target is reached with full residency only.
+- Kernels are f32 throughout (no half-precision staging), so the parity margins of 0.3.0
+  are kept; the matrix kernels change the summation order, which the long-context and
+  long-position checks above bound.
+- The matrix expert kernels cover the IQ2_XS / IQ1_M experts of the reference GGUF; other
+  expert types use the dev20d kernels until dev31 adds them.
+
+
+# Red Lite dev9 — native runtime foundation
+
+Dev9 freezes the Python/ctypes path as a correctness oracle and starts the migration to a DS4-style native runtime.
+
+The new `redlite-native` executable is written in C and has no Python dependency. In this milestone it owns two pieces that previously lived in Python:
+
+1. GGUF v2/v3 tensor-directory parsing and routed-expert mapping;
+2. hard-bounded LRU metadata scheduling with top-k and in-flight victim protection.
+
+The field-validated dev8 Metal kernels remain unchanged and continue to be the numerical oracle while the control plane moves native.
+
+## Build
+
+```bash
+make native
+```
+
+The binary is written to:
+
+```text
+.deps/redmetal/redlite-native
+```
+
+`make native` also runs the standalone native scheduler selftest.
+
+## Inspect the real Qwen3-Next model
+
+```bash
+.deps/redmetal/redlite-native inspect \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --cache-mib 256 \
+  --layers
+```
+
+For the field model, the native parser is expected to reproduce the Python oracle observations:
+
+- GGUF routed layers: 48
+- routed tensors: 144
+- expert count: 512
+- quant tensors: 33 IQ2_XS and 111 IQ1_M
+- layer patterns: 11 IQ2_XS layers and 37 IQ1_M layers
+- all merged routed tensors slice-safe
+- top-10 fits in a 256 MiB cache
+
+The exact routed payload and slot size must also agree with the existing Python planner within normal binary-unit formatting.
+
+## Native selftest
+
+```bash
+.deps/redmetal/redlite-native selftest
+```
+
+It validates:
+
+- hard capacity enforcement;
+- LRU hit/miss/eviction behavior;
+- current top-k selection protection during `acquire_many`;
+- in-flight slot protection;
+- zero Python dependency.
+
+## Architecture after dev9
+
+```text
+Development / oracle                 Runtime direction
+--------------------                 -----------------
+Python GGUF parser       ───────►     native/redlite_native_gguf.c
+Python LRU policy        ───────►     native/redlite_native_cache.c
+Python CLI planning      ───────►     redlite-native
+Python parity reference  retained     tests/oracle only
+ctypes Metal probes      retained     correctness oracle
+Metal kernels            retained     production kernels
+```
+
+Dev9 does **not** yet execute a token entirely through the native binary. The next native milestones are to embed canonical IQ2_XS/IQ1_M codebooks, bind the already validated Metal top-k executor directly to the native cache, then port the Qwen3-Next router and full layer/token scheduling. Python should eventually be unnecessary for normal inference.
+
+
+# Red Metal dev7 — resident single-expert FFN
+
+Dev7 moves the field-validated IQ2_XS and IQ1_M arithmetic into a hard-bounded resident expert cache.
+
+For one `(layer, expert)` miss, gate/up/down are read once from the GGUF directly into one shared Metal slot. The same resident slot is then used for:
+
+1. gate matvec
+2. up matvec
+3. `SiLU(gate) * up`
+4. down matvec
+
+The validation probe intentionally compares only a small selectable set of final down rows, but both gate and up projections are evaluated in full so the intermediate FFN vector is real.
+
+The native pool enforces a hard byte budget, slab allocation, global Python-side LRU recycling and native in-flight slot protection. `expert-ffn-parity` also asserts that the Metal execution phase performs zero additional GGUF reads after residency.
+
+## Field commands
+
+Build and install:
+
+```bash
+git pull --ff-only
+./scripts/install.sh
+make redmetal
+make test
+```
+
+IQ2_XS layer:
+
+```bash
+redlite-ffn parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0 --expert 0 --rows 8 --cache-gib 0.25
+```
+
+IQ1_M layer:
+
+```bash
+redlite-ffn parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 6 --expert 0 --rows 8 --cache-gib 0.25
+```
+
+Success requires `parity match: YES`, `SSD during FFN: 0 bytes`, non-zero gate/up/down GPU addresses and `slot in-flight: NO` after the synchronous wait.
+
+This remains a correctness-first scalar Metal path. SIMD-group kernels, selected-expert batching, router weights, top-k accumulation, asynchronous SSD prefetch and overlap are later milestones.
+
+
+# Red Metal dev8 — resident routed top-k layer
+
+Dev8 extends the field-validated dev7 single-expert FFN into one correctness-first routed top-k layer.
+
+For a selected set of experts in one routed layer:
+
+1. the hard-bounded LRU makes every selected expert resident;
+2. selected experts are protected from eviction while remaining misses are filled;
+3. the native executor pins every selected Metal slot for one command buffer;
+4. each expert runs gate, up, `SiLU(gate) * up`, and down from its resident slot;
+5. a Metal kernel performs `accumulator += router_weight * expert_output` after each expert;
+6. only the final routed-layer output is copied back to the CPU.
+
+The first top-10 cold selection should therefore produce 10 expert loads and 30 positional GGUF reads (gate/up/down for every expert), followed by zero SSD reads during the routed-layer command buffer.
+
+The default validation uses ten deterministic non-contiguous expert ids and positive FP32 router weights normalized to approximately 1.0. Explicit `--experts` and `--weights` lists can override these values.
+
+## Field validation
+
+Build and install:
+
+```bash
+git pull --ff-only
+./scripts/install.sh
+make redmetal
+make test
+```
+
+IQ2_XS routed layer:
+
+```bash
+redlite-topk parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 0 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-gib 0.25
+```
+
+IQ1_M routed layer:
+
+```bash
+redlite-topk parity \
+  models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --layer 6 \
+  --top-k 10 \
+  --rows 8 \
+  --cache-gib 0.25
+```
+
+Success requires:
+
+- `expert loads: 10` on a cold top-10 selection;
+- `pread calls: 30` on that cold selection;
+- `SSD during top-k: 0 bytes / 0 calls`;
+- `slots in-flight: NO` after the synchronous wait;
+- `parity match: YES` against the independent CPU reference.
+
+This is still a correctness-first scalar path. It deliberately does not yet claim production performance. Router-network integration, real token router outputs, SIMD/simdgroup expert kernels, async prefetch, cross-layer scheduling and SSD/GPU overlap remain later milestones.
+
+
+# Red Lite v0.3 streaming runtime
+
+Status: historical design note. It was written on the `v0.3-streaming` branch, which was merged
+into `main` with release 0.3.0.
+
+## Design direction
+
+Red Lite v0.3 follows the storage/residency shape used by DS4 rather than treating virtual-memory mappings as the expert cache.
+
+Validated Qwen3-Next IQ2_XXS layout on the target M4 Pro 24 GiB system:
+
+- 48 layers
+- 512 routed experts per layer
+- 144 routed tensors (`gate`, `up`, `down`)
+- 16.91 GiB routed payload
+- merged tensors are physically sliceable per expert
+- largest gate+up+down expert triplet is about 0.87 MiB
+
+## dev3 storage path
+
+```text
+GGUF on SSD
+   |
+   | one read-only fd
+   v
+ExpertStore
+   | positional preadv()/pread()
+   v
+ExpertSlotCache
+   | fixed-size reusable slots
+   | hard byte budget
+   | global LRU by (layer, expert)
+   | async prefetch workers
+   v
+expert gate+up+down bytes in RAM
+```
+
+The cache allocates slots lazily, but the number of slots is fixed by `floor(cache_budget_bytes / max_expert_triplet_bytes)`. Eviction recycles an existing slot instead of allocating more memory.
+
+## Why dev1/dev2 were replaced
+
+- dev1 created one mmap per expert tensor slice and hit macOS `EMFILE` / `Too many open files` under realistic traces.
+- dev2 used one whole-file mmap plus `madvise`. It fixed the file-descriptor failure, but mmap page residency is not a sufficiently deterministic representation of a hard expert-cache budget.
+- dev3 uses explicit reads into reusable allocated slots, matching the broad DS4 SSD-streaming design more closely.
+
+## dev4 Red Metal residency
+
+The first native Metal milestone removes the production-path `bytearray` copy. Expert slots are ranges inside lazily allocated `MTLStorageModeShared` slabs:
+
+```text
+GGUF / SSD
+   |
+   | pread() directly into MTLBuffer.contents
+   v
+shared Metal slab
+   |
+   +-- slot N
+       +-- gate
+       +-- up
+       +-- down
+   |
+   v
+Metal compute-visible bytes
+```
+
+Build with:
+
+```bash
+make redmetal
+```
+
+Verify storage-to-GPU visibility with:
+
+```bash
+redlite-stream metal-probe MODEL.gguf \
+  --cache-gib 0.25 \
+  --steps 1 \
+  --top-k 10
+```
+
+Field validation on the Apple M4 Pro reference machine produced an exact GPU/CPU checksum match while respecting a 0.25 GiB hard Metal cache budget.
+
+## dev5 address tables, lifetime and IQ2 parity
+
+Dev5 adds the first arithmetic execution path while keeping the dev4 probe intact as a regression baseline.
+
+Each resident `(layer, expert)` is installed in three GPU-visible shared address tables:
+
+```text
+layer L
+  gate[expert] -> slab GPU address + slot base
+  up[expert]   -> gate + gate_bytes
+  down[expert] -> up + up_bytes
+```
+
+Before a slot is reused, the LRU queries native in-flight state. `pread()` refuses to overwrite a slot while a Metal command still references it. Eviction also clears the old address-table entry before the slot is recycled.
+
+The first IQ2 kernel is intentionally correctness-first, not performance-tuned. It uses the canonical ggml IQ2_XXS physical format:
+
+```text
+256 values / block
+66 bytes / block
+  2 bytes  FP16 d
+ 64 bytes  packed IQ2 codebook/sign/scale data
+```
+
+For each tested row, Metal decodes the quantized expert weights directly from the SSD-filled shared slab and computes a FP32 dot product. An independent pure-Python decoder rereads the same GGUF row and computes the reference value.
+
+Run the parity probe with:
+
+```bash
+redlite-stream iq2-parity MODEL.gguf \
+  --layer 0 \
+  --expert 0 \
+  --kind gate \
+  --rows 8 \
+  --cache-gib 0.25
+```
+
+The command validates before dispatch that:
+
+- the selected routed tensor is GGML type 16 (`IQ2_XXS`)
+- the expert axis and rank match the mapped Qwen3-Next layout
+- `ncols` is a multiple of 256
+- the physical expert slice length equals `nrows * (ncols / 256 * 66)`
+- the gate/up/down GPU addresses are non-zero
+- the slot is no longer in-flight after the synchronous parity command returns
+
+The key output is `parity match: YES`, together with max absolute/relative error and per-row GPU/CPU values.
+
+## Python storage probe
+
+```bash
+redlite-stream probe MODEL.gguf \
+  --cache-gib 4 \
+  --steps 2 \
+  --top-k 10 \
+  --prefetch-depth 1 \
+  --prefetch-workers 2
+```
+
+The Python probe remains useful for cache-policy and prefetch experiments. It measures demand hits/misses, prefetch waits, evictions, allocated cache bytes, bytes read and positional-read throughput.
+
+## Next Metal milestone
+
+After dev5 numerical parity is field-validated on the target M4 Pro, the next path is:
+
+1. vectorize the IQ2_XXS matvec with SIMD-groups while preserving parity
+2. run gate and up from the resident address table
+3. fuse SiLU(gate) * up
+4. add the down projection
+5. accumulate the router top-k weighted expert outputs
+6. overlap expert `pread` with useful Metal work
+7. compare complete routed-FFN output with the pinned llama.cpp Qwen3-Next implementation
+
+Full generation is not claimed until that routed-FFN parity exists.
+
+
+# Red Lite v0.3 streaming development
+
+Branch: `v0.3-streaming` (merged into `main` with release 0.3.0 and deleted; this page is the
+historical dev1–dev8 log)
+
+Status: **historical**. When this was written, the stable launcher was v0.2.1 on `main`.
+
+## Implemented in dev1
+
+- dependency-free GGUF tensor-directory parser;
+- discovery of Qwen3-Next merged routed tensors named `blk.N.ffn_{gate,up,down}_exps.weight`;
+- validation that the expert dimension is the outer GGUF dimension before physical slicing is enabled;
+- byte-range mapping for individual experts inside merged tensors;
+- bounded file-backed LRU using `mmap`;
+- `MADV_WILLNEED` prefetch hints and `MADV_DONTNEED` eviction hints where macOS/Python expose them;
+- synthetic top-k router probe to measure mmap/cache behavior without running a fake inference path;
+- separate `redlite-stream` CLI so stable `redlite` behavior is unchanged.
+
+## Status (dev18)
+
+The native runtime now performs complete inference through the bounded expert
+cache: `redlite-generate` tokenizes, embeds, runs all 48 layers on Metal with
+persistent DeltaNet state and KV caches, produces logits, samples and decodes
+text without llama.cpp or Python. Greedy output is token-identical to the
+pinned llama.cpp on the validated prompts. See `docs/REDLITE_DEV18_ENGINE.md`
+and `CHANGELOG.md` for the dev9–dev18 progression; the dev1 Python probes
+below remain as the original mmap/residency experiment.
+
+## First real-model validation on the M4 Pro
+
+```bash
+git switch main
+git pull
+./scripts/install.sh
+
+redlite-stream plan models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf --cache-gib 4
+```
+
+The important fields are `layers`, `routed tensors`, `slice safe`, `max expert triplet`, and `cache capacity`.
+
+If `slice safe` is `YES`, run a small file-residency probe:
+
+```bash
+redlite-stream probe models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
+  --cache-gib 4 \
+  --steps 2 \
+  --top-k 10
+```
+
+This will intentionally touch only a page-sized prefix of each selected expert window. It validates offsets, mmap behavior, LRU eviction and SSD-backed page residency without reading the entire model into Python memory.
+
+## Next milestones
+
+1. Batched prompt prefill (the decoder currently ingests prompts token by token).
+2. Expert prefetch / speculative loading to overlap SSD reads with compute.
+3. Larger routed quantizations (IQ2_XS / IQ2_S / Q4_K_M experts) through the same
+   bounded cache, benchmarked against the v0.2.1 IQ2_XXS resident baseline.
+4. Long-context throughput measurements and KV-cache layout work.
+
+
