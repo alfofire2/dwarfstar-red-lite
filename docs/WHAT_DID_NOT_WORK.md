@@ -73,9 +73,9 @@ them.
     35.2 GiB). The planner's 75 % rule admitted it; the rule is now 70 %.
   - A 28 GiB cache gives 28.7 tok/s (97 % hits), against ~70 tok/s for IQ3_XXS with full residency.
   - Perplexity on the frozen corpus is 14.05 ± 0.26 against 14.29 for IQ3_XXS: inside the error bar.
-  - The comparison against llama.cpp (logits, greedy, long context) was **not run**; only dequantization
-    (bit-identical to ggml) and CPU vs Metal parity were. IQ3_M is therefore not in the automatic model
-    choice.
+  - Correctness is not the problem: with bounded caches it matches llama.cpp (logits, 24 greedy tokens,
+    1200-token long context). It is left out of the automatic model choice because on this Mac it is
+    slower than IQ3_XXS for no measurable quality gain.
 - **IQ3_XS, IQ4_XS: not run.** Header reads (no download) show IQ3_XS needs no new type and would fit
   at full residency only under the old 75 % rule; IQ4_XS (39168 MiB of experts) does not fit this Mac.
 - **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan

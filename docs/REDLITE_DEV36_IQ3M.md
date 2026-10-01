@@ -1,6 +1,6 @@
 # Red Lite dev36 — the IQ3_M GGUF: supported, measured, not chosen
 
-Status: **done** on branch `dev/iq3m` (from `dev/long-decode` at 6eddd40). Apple M4 Max 48 GiB only.
+Status: **done**, IQ3_M validated against llama.cpp with bounded caches; on branch `dev/iq3m` (from `dev/long-decode` at 6eddd40). Apple M4 Max 48 GiB only.
 
 ## Why
 
@@ -43,6 +43,16 @@ LFS id).
   **14.05 ± 0.26**, against 14.29 for IQ3_XXS and 16.47 for IQ2_XXS. The gain over IQ3_XXS is inside
   the error bar.
 
+## Comparison with the pinned llama.cpp (IQ3_M, bounded caches)
+
+Run on the M4 Max with the `regress_m4.sh` checks and thresholds, except the full-residency ones:
+
+- tokenizer corpus: identical;
+- logits on `9707,11,1879` (1 GiB cache): `ORACLE LOGITS PARITY: YES`;
+- 24 greedy chat tokens (4 GiB cache): identical to llama.cpp;
+- 1200-token long context, positions 1100–1199 (4 GiB cache, `--max-logit-abs 2.0 --max-kl 2e-2`):
+  `ORACLE LOGITS PARITY: YES`.
+
 ## Validation
 
 `rm -rf .deps/redmetal`, `make redmetal`, `make native`, `make sanitize`: 0 warnings; `make test` and
@@ -50,9 +60,7 @@ ruff green; `scripts/regress_m4.sh` on the two existing files: IQ2_XXS **49/49**
 
 ## Scope boundary
 
-- **Not compared with llama.cpp.** Logits, greedy tokens and the long-context check of IQ3_M against
-  the pinned llama.cpp were not run (the run was not permitted in this session). IQ3_M support is
-  "implemented and synthetically tested", with dequantization and CPU vs Metal parity on the real
-  file; it is not validated end to end.
+- **Validated with bounded caches only.** The llama.cpp comparison below ran with 1–4 GiB caches. Full
+  residency of IQ3_M was checked only by CPU vs Metal parity, and does not hold on this Mac in real use.
 - M4 Max 48 GiB only. Full residency of IQ3_M needs a larger Mac; nothing was run on one.
 - IQ3_XS, Q3_K_M and IQ4_XS were not downloaded or run.
