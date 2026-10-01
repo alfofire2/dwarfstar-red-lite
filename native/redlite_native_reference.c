@@ -72,7 +72,7 @@ size_t rl_native_row_bytes(uint32_t ggml_type, uint32_t ncols) {
     if (!ncols || ncols % QK_IQ) return 0;
     if (ggml_type == 17u) return (size_t)(ncols / QK_IQ) * 74u;
     if (ggml_type == 29u) return (size_t)(ncols / QK_IQ) * 56u;
-    return rl_iq3_row_bytes(ggml_type, ncols);   /* dev31: IQ3_XXS / IQ3_S experts (0 for other types) */
+    return rl_iq3_group8_supported(ggml_type) ? rl_iq3_row_bytes(ggml_type, ncols) : 0;   /* dev31 IQ3, dev36 Q4_K experts */
 }
 
 static double input_value(const float *xf, const double *xd, int use_double, uint32_t index) {
@@ -92,11 +92,11 @@ static int row_dot_impl(
         double *out,
         char *error,
         size_t error_cap) {
-    if (!row || !out || (!input_f && !input_d) || (!grid && !rl_iq3_supported(ggml_type))) {
+    if (!row || !out || (!input_f && !input_d) || (!grid && !rl_iq3_group8_supported(ggml_type))) {
         set_error(error, error_cap, "invalid native quant row-dot arguments");
         return 0;
     }
-    if (rl_iq3_supported(ggml_type)) {   /* dev31: exact f32 dequantization (bit-identical to ggml), double accumulation */
+    if (rl_iq3_group8_supported(ggml_type)) {   /* dev31/dev36: exact f32 dequantization (bit-identical to ggml), double accumulation */
         (void)grid_count;
         if (row_bytes != rl_iq3_row_bytes(ggml_type, ncols) ||
             !(use_double ? rl_iq3_row_dot_d(ggml_type, row, input_d, ncols, out) : rl_iq3_row_dot(ggml_type, row, input_f, ncols, out))) {

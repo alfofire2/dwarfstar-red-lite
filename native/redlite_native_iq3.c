@@ -28,6 +28,8 @@ static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1]
 /* ksigns_iq2xs[i] of ggml-common.h: the 7 stored sign bits plus an odd-parity eighth bit */
 static uint8_t ksign(uint32_t s7) { return (uint8_t)(s7 | ((uint32_t)(__builtin_popcount(s7) & 1) << 7)); }
 
+int rl_iq3_group8_supported(uint32_t t) { return rl_iq3_supported(t) || t == 12u; }
+
 int rl_iq3_supported(uint32_t t) { return t == RL_GGML_IQ3_XXS || t == RL_GGML_IQ3_S || t == RL_GGML_IQ2_S || t == RL_GGML_IQ4_XS; }
 
 uint32_t rl_iq3_block_bytes(uint32_t t) {
@@ -36,6 +38,7 @@ uint32_t rl_iq3_block_bytes(uint32_t t) {
         case RL_GGML_IQ3_S: return 110u;    /* d, qs[64], qh[8], signs[32], scales[4] */
         case RL_GGML_IQ2_S: return 82u;     /* d, qs[64] (32 indices + 32 signs), qh[8], scales[8] */
         case RL_GGML_IQ4_XS: return 136u;   /* d, scales_h, scales_l[4], qs[128] */
+        case 12u: return 144u;              /* Q4_K (dev36: routed-expert decoder only, see rl_iq3_group8_supported) */
         default: return 0u;
     }
 }
@@ -49,6 +52,16 @@ size_t rl_iq3_row_bytes(uint32_t t, uint32_t ncols) {
 void rl_iq3_group8(uint32_t t, const uint8_t *bp, uint32_t g, float out[8]) {
     const float d = f16_to_f32(rd16(bp));
     const uint32_t ib32 = g / 4u, l = g % 4u;
+    if (t == 12u) {   /* Q4_K, as ggml dequantize_row_q4_K: sub-block ib32 has scale/min pair ib32 */
+        const uint8_t *sc = bp + 4u;
+        uint8_t s6, m6;
+        if (ib32 < 4u) { s6 = sc[ib32] & 63u; m6 = sc[ib32 + 4u] & 63u; }
+        else { s6 = (uint8_t)((sc[ib32 + 4u] & 0x0fu) | ((sc[ib32 - 4u] >> 6) << 4)); m6 = (uint8_t)((sc[ib32 + 4u] >> 4) | ((sc[ib32] >> 6) << 4)); }
+        const float d1 = d * (float)s6, m1 = f16_to_f32(rd16(bp + 2u)) * (float)m6;
+        const uint8_t *q = bp + 16u + (ib32 / 2u) * 32u + l * 8u;
+        for (uint32_t j = 0; j < 8u; ++j) out[j] = d1 * (float)((ib32 & 1u) ? (q[j] >> 4) : (q[j] & 0x0fu)) - m1;
+        return;
+    }
     if (t == RL_GGML_IQ3_XXS) {
         const uint8_t *qs = bp + 2u + 8u * ib32;
         const uint32_t aux32 = rd32(bp + 2u + 64u + 4u * ib32);
@@ -180,6 +193,13 @@ char *rl_iq3_metal_source(void) {
         "        const uint idx = uint((bp + 2u)[4u * ib32 + l]) | ((uint((bp + 66u)[ib32]) << (8u - 2u * l)) & 0x300u);\n"
         "        const ulong gv = rl_iq2s_grid[idx]; const uint s = (bp + 34u)[4u * ib32 + l];\n"
         "        for (uint j = 0; j < 8u; ++j) v[j] = dl * float(uint(gv >> (8u * j)) & 255u) * rl3_sgn(s, j);\n"
+        "    } else if (t == 12u) {\n"
+        "        device const uchar *sc = bp + 4u; uint s6, m6;\n"
+        "        if (ib32 < 4u) { s6 = sc[ib32] & 63u; m6 = sc[ib32 + 4u] & 63u; }\n"
+        "        else { s6 = (sc[ib32 + 4u] & 15u) | ((sc[ib32 - 4u] >> 6) << 4); m6 = (sc[ib32 + 4u] >> 4) | ((sc[ib32] >> 6) << 4); }\n"
+        "        const float d1 = d * float(s6), m1 = float(as_type<half>(rl3_rd16(bp + 2u))) * float(m6);\n"
+        "        device const uchar *q = bp + 16u + (ib32 >> 1) * 32u + l * 8u;\n"
+        "        for (uint j = 0; j < 8u; ++j) v[j] = d1 * float((ib32 & 1u) ? (q[j] >> 4) : (q[j] & 15u)) - m1;\n"
         "    } else {\n"
         "        const uint sh = rl3_rd16(bp + 2u); device const uchar *qs = bp + 8u + 16u * ib32;\n"
         "        const int ls = int(((bp + 4u)[ib32 >> 1] >> (4u * (ib32 & 1u))) & 15u) | int(((sh >> (2u * ib32)) & 3u) << 4);\n"
@@ -244,6 +264,17 @@ char *rl_iq3_metal_source(void) {
         "        }\n"
         "        return d * float(1 + 2 * int(((bp + 106u)[sb >> 1] >> (4u * (sb & 1u))) & 15u)) * acc;\n"
         "    }\n"
+        "    if (t == 12u) {   /* Q4_K sub-block: d*sc * sum(q*x) - dmin*m * sum(x) */\n"
+        "        device const uchar *sc = bp + 4u; uint s6, m6;\n"
+        "        if (sb < 4u) { s6 = sc[sb] & 63u; m6 = sc[sb + 4u] & 63u; }\n"
+        "        else { s6 = (sc[sb + 4u] & 15u) | ((sc[sb - 4u] >> 6) << 4); m6 = (sc[sb + 4u] >> 4) | ((sc[sb] >> 6) << 4); }\n"
+        "        device const uchar *q = bp + 16u + (sb >> 1) * 32u; const uint sh = (sb & 1u) * 4u; float xs = 0.0f;\n"
+        "        for (uint i = 0; i < 8u; ++i) { const float4 xv = x4[i]; const uchar4 qb = uchar4(q[4u*i], q[4u*i+1u], q[4u*i+2u], q[4u*i+3u]);\n"
+        "            acc += dot(xv, float4((uint4(qb) >> sh) & 15u)); xs += (xv.x + xv.y) + (xv.z + xv.w); }\n"
+        "        return d * float(s6) * acc - float(as_type<half>(rl3_rd16(bp + 2u))) * float(m6) * xs;\n"
+        "    }\n"
+        );
+    ok = ok && append(&buf, &len, &cap,
         "    if (t == 22u) {\n"
         "        const uint sc = (bp + 74u)[sb]; const uint qh = (bp + 66u)[sb]; float a2[2] = {0.0f, 0.0f};\n"
         "        for (uint l = 0; l < 4u; ++l) {\n"
@@ -267,7 +298,7 @@ char *rl_iq3_metal_source(void) {
         "        return d * float(ls - 32) * acc;\n"
         "    }\n"
         "}\n"
-        "static inline uint rl_iq3_block_bytes(uint t) { return t == 18u ? 98u : t == 21u ? 110u : t == 22u ? 82u : 136u; }\n");
+        "static inline uint rl_iq3_block_bytes(uint t) { return t == 18u ? 98u : t == 21u ? 110u : t == 22u ? 82u : t == 12u ? 144u : 136u; }\n");
     if (!ok) { free(buf); return NULL; }
     return buf;
 }

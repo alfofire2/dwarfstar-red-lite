@@ -25,6 +25,10 @@ extern "C" {
 /* 1 for the four types above */
 int rl_iq3_supported(uint32_t ggml_type);
 
+/* dev36: rl_iq3_group8 / the Metal decoders also cover Q4_K (12) for routed experts (the IQ3_M GGUF has Q4_K down
+ * projections); rl_iq3_supported() stays IQ-only so dense Q4_K keeps its own kernels */
+int rl_iq3_group8_supported(uint32_t ggml_type);
+
 /* bytes of one 256-value block (0 for other types) */
 uint32_t rl_iq3_block_bytes(uint32_t ggml_type);
 

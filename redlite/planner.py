@@ -178,7 +178,10 @@ NATIVE_FULL_RESIDENCY_MIN_RAM_GIB = 40.0
 NATIVE_BOUNDED_CACHE_MIB = 4096
 # Metal's recommendedMaxWorkingSetSize is ~78% of RAM on Apple Silicon (37.44 GiB on the M4 Max 48 GiB):
 # a full-residency cache plus the mapped dense weights must stay below this fraction of RAM.
-NATIVE_WORKING_SET_FRACTION = 0.75
+# dev36: was 0.75. On the 48 GiB M4 Max the IQ3_M file (34944 MiB + 1.6 GiB dense = 74% of RAM) passed 0.75 but its
+# GPU-routed decode fell from 46.8 to 6.0 tok/s on the second run and then failed with kIOGPUCommandBufferCallbackErrorOutOfMemory;
+# IQ3_XXS (63% of RAM) is stable there
+NATIVE_WORKING_SET_FRACTION = 0.70
 NATIVE_SLOT_ALIGNMENT = 4096
 # dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
 # first one present whose full residency fits, else the 24 GiB reference file

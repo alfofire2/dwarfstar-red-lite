@@ -42,7 +42,7 @@ class NativeDefaultsTests(unittest.TestCase):
 
     def test_full_residency_must_fit_the_working_set(self):
         with patch("redlite.planner.native_residency", return_value=IQ3):
-            d = native_defaults(40 * GIB, "m.gguf")   # 29376 MiB + 1.42 GiB > 75% of 40 GiB
+            d = native_defaults(40 * GIB, "m.gguf")   # 29376 MiB + 1.42 GiB > 70% of 40 GiB
         self.assertFalse(d.full_residency)
         self.assertEqual(d.cache_mib, NATIVE_BOUNDED_CACHE_MIB)
 
@@ -66,6 +66,12 @@ class NativeDefaultsTests(unittest.TestCase):
                 self.assertEqual(select_native_model(d, 48 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
                 self.assertEqual(select_native_model(d, 40 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")
                 self.assertEqual(select_native_model(d, 24 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")
+
+    def test_iq3m_does_not_get_full_residency_on_48gb(self):
+        # dev36: measured on the M4 Max 48 GiB, full residency of IQ3_M ran out of GPU memory
+        with patch("redlite.planner.native_residency", return_value=NativeResidency(34944, int(1.6 * GIB))):
+            self.assertFalse(native_defaults(48 * GIB, "m.gguf").full_residency)
+            self.assertTrue(native_defaults(64 * GIB, "m.gguf").full_residency)
 
     def test_24gb_gets_bounded_4gb_cache(self):
         d = native_defaults(24 * GIB)

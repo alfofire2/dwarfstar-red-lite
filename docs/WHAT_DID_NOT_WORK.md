@@ -25,6 +25,7 @@ them.
 | dev30 | matrix expert kernels: split accumulators summed through threadgroup memory | experts 966 vs 777 ms | 26 KB of threadgroup memory per group cut occupancy; kept: summed in registers with an exact `x·I + y` ([DEV30](REDLITE_DEV30_PREFILL.md)) |
 | dev33 | IQ codebooks staged in threadgroup memory, 256-thread GEMV groups (what llama.cpp does) | IQ2_S 35.7 vs 33.2 µs, IQ3_XXS 38.2 vs 37.9 µs | divergent `constant`-memory reads were not the bound once the GPU was warm ([DEV33](REDLITE_DEV33_IQ_KERNELS.md)) |
 | dev33 | `uchar4` codebook loads in the IQ2_XXS dense GEMV | 25.6 / 27.5 vs 27.3 / 25.1 µs | not the bound; the IQ2_XXS GEMV stays at ~169 GB/s ([DEV33](REDLITE_DEV33_IQ_KERNELS.md)) |
+| dev36 | IQ2_XXS dense GEMV with two rows per lane (one activation load serves both rows) | 25.4 vs 25.5 µs (8192 × 2048, warm kernel-bench) | third attempt on this kernel without gain; activation loads are not the bound. The IQ2_XXS dense GEMV stays at ~169 GB/s |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -65,8 +66,18 @@ them.
   loaded) is inferred from load counts, not measured on an M4 Pro.
 - **Dense stage tools on the IQ3_XXS GGUF.** The dev11–dev17 per-stage parity tools only accept
   the IQ2_XXS dense layout; `regress_m4.sh` reports 13 SKIPs on the IQ3_XXS file.
-- **Larger GGUFs (IQ3_XS, IQ3_M, IQ4_XS): not run.** They do not fit with every expert resident
-  in the 37.44 GiB Metal working set of this Mac (dev31).
+- **IQ3_M on this Mac (dev36): runs, but is not worth it.** The file is supported since dev36
+  (its Q4_K expert down projections got a decoder). Measured on the 48 GiB M4 Max:
+  - Full residency (34944 MiB) does not hold: GPU-routed decode ran at 46.8 tok/s, then 6.0 tok/s
+    on the next run, then failed with `kIOGPUCommandBufferCallbackErrorOutOfMemory` (footprint
+    35.2 GiB). The planner's 75 % rule admitted it; the rule is now 70 %.
+  - A 28 GiB cache gives 28.7 tok/s (97 % hits), against ~70 tok/s for IQ3_XXS with full residency.
+  - Perplexity on the frozen corpus is 14.05 ± 0.26 against 14.29 for IQ3_XXS: inside the error bar.
+  - Correctness is not the problem: with bounded caches it matches llama.cpp (logits, 24 greedy tokens,
+    1200-token long context). It is left out of the automatic model choice because on this Mac it is
+    slower than IQ3_XXS for no measurable quality gain.
+- **IQ3_XS, IQ4_XS: not run.** Header reads (no download) show IQ3_XS needs no new type and would fit
+  at full residency only under the old 75 % rule; IQ4_XS (39168 MiB of experts) does not fit this Mac.
 - **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan
   accepts and add ~0.5 GB of scratch (dev34).
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)

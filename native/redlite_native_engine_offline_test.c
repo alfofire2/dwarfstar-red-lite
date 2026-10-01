@@ -205,6 +205,19 @@ int main(int argc, char **argv) {
     printf("quant selftest        : OK (Q8_0 Q2_K Q4_K Q5_K Q6_K IQ2_XXS)\n");
     if (!rl_iq3_selftest(error, sizeof(error))) { fprintf(stderr, "IQ3 selftest failed: %s\n", error); return 1; }
     printf("IQ3 selftest          : OK (IQ3_XXS IQ3_S IQ2_S IQ4_XS block sizes, codebooks, decode)\n");
+    {   /* dev36: the routed-expert Q4_K group decoder equals the dense Q4_K dequantizer bit for bit */
+        uint8_t blk[144];
+        uint32_t st = 12345u;
+        for (int i = 0; i < 144; ++i) { st = st * 1103515245u + 12345u; blk[i] = (uint8_t)(st >> 16); }
+        blk[0] = 0x00; blk[1] = 0x1c; blk[2] = 0x00; blk[3] = 0x18;   /* d = 2^-8, dmin = 2^-9: finite */
+        float ref[256], v[8];
+        if (!rl_quant_dequant_row(12u, blk, 256u, NULL, ref)) { fprintf(stderr, "Q4_K dequant failed\n"); return 1; }
+        for (uint32_t g = 0; g < 32u; ++g) {
+            rl_iq3_group8(12u, blk, g, v);
+            if (memcmp(v, ref + 8u * g, sizeof(v)) != 0) { fprintf(stderr, "Q4_K expert group %u differs from the dense dequantizer\n", g); return 1; }
+        }
+        printf("Q4_K expert decoder   : OK (bit-identical to the dense Q4_K dequantizer)\n");
+    }
     if (!synthetic_gguf_test(error, sizeof(error))) { fprintf(stderr, "synthetic GGUF test failed: %s\n", error); return 1; }
     printf("synthetic GGUF parse  : OK (token_type length mismatch rejected)\n");
     if (!sampler_selftest(error, sizeof(error))) { fprintf(stderr, "sampler selftest failed: %s\n", error); return 1; }

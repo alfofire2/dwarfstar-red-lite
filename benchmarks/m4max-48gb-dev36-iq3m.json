@@ -1,0 +1,16 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev36",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_M.gguf",
+  "model_bytes": 36643914208,
+  "model_sha256": "77eee87b804626f0e66992d6cc009097ad5b3beb0c6c904dc23111e375eaf2cd",
+  "full_residency_cache_mib": 34944,
+  "dense_mib": 1628.651,
+  "observations": [
+    {"cache_mib": "full", "command": "redlite-generate MODEL --prompt RAINBOW --max-tokens 256 --cache-mib full --json", "runs_decode_tok_s": [46.81, 6.01], "third_run": "GPU-routed token command buffer failed: Insufficient Memory (kIOGPUCommandBufferCallbackErrorOutOfMemory)", "phys_footprint_mib": 36084},
+    {"cache_mib": 28672, "command": "redlite-generate MODEL --prompt RAINBOW --max-tokens 256 --cache-mib 28672 --json", "decode_tok_s": 28.71, "expert_hit_rate": 0.971, "phys_footprint_mib": 18421, "note": "single run"},
+    {"cache_mib": "full", "env": "RL_ENGINE_SPECULATIVE=0", "decode_tok_s": [26.42, 24.03], "note": "synchronous decode, single runs"}
+  ],
+  "perplexity": {"command": "scripts/dev/perplexity.sh MODEL", "ctx": 512, "IQ3_M": [14.0509, 0.2579], "IQ3_XXS": 14.29, "IQ2_XXS": 16.47},
+  "parity": {"dequant_vs_ggml": "bit-identical", "engine_cpu_vs_metal": "YES", "gpu_routed_full_residency": "YES (12/12, worst logit 1.12e-5)", "vs_llama_cpp": {"cache_mib": "1024-4096", "tokenizer_corpus": "identical", "logits_short": "ORACLE LOGITS PARITY: YES", "greedy_24": "identical", "long_context_1200": "ORACLE LOGITS PARITY: YES (--max-logit-abs 2.0 --max-kl 2e-2)"}}
+}

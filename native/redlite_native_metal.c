@@ -36,7 +36,7 @@ void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, dou
 }
 
 /* dev31: routed quant types with Metal expert kernels */
-static int routed_type_ok(uint32_t t) { return t == 17u || t == 29u || t == 18u || t == 21u; }
+static int routed_type_ok(uint32_t t) { return t == 17u || t == 29u || t == 18u || t == 21u || t == 12u; }   /* dev36: Q4_K (IQ3_M down) */
 
 static void set_error(char *error, size_t cap, const char *message) {
     if (error && cap) snprintf(error, cap, "%s", message ? message : "unknown native Metal error");
@@ -193,7 +193,7 @@ int rl_native_metal_execute_topk(
     rl_native_layer_info info;
     if (!rl_native_get_layer_info(map, layer, &info, error, error_cap)) return 0;
     if (!routed_type_ok(info.ggml_type) || !routed_type_ok(info.down_type)) {
-        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS and IQ3_S only");
+        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS, IQ3_S and Q4_K only");
         return 0;
     }
     if (input_count != info.hidden_size || !output_row_count ||
@@ -389,7 +389,7 @@ int rl_native_metal_prepare_topk(
     rl_native_layer_info info;
     if (!rl_native_get_layer_info(map, layer, &info, error, error_cap)) return 0;
     if (!routed_type_ok(info.ggml_type) || !routed_type_ok(info.down_type)) {
-        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS and IQ3_S only");
+        set_error(error, error_cap, "native Metal supports routed IQ2_XS, IQ1_M, IQ3_XXS, IQ3_S and Q4_K only");
         return 0;
     }
     if (top_k > runtime->lru.capacity) {
