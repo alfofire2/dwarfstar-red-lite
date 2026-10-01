@@ -67,6 +67,10 @@ them.
   the long-context check against llama.cpp is the gate.
 - **Shared GPU (dev39).** With other applications using the GPU, the same binary measured 30–45 tok/s decode and
   335 tok/s prefill (instead of ~85 and ~800). Pairs run in such a window are excluded.
+- **A stale binary in a release benchmark (0.4.1).** After reverting the dev40 kernels in the source, `.deps/redmetal`
+  was not rebuilt, and the first 0.4.1 table was measured on the experimental build (IQ2_XXS prefill 854.3 / 858.3
+  tok/s instead of 0.4.0's 891.9 / 926.9). The table was re-measured after `rm -rf .deps/redmetal` and a clean build.
+  Rule: rebuild from a clean tree before any benchmark that goes into a record.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

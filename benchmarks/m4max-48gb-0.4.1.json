@@ -1,0 +1,12 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "release": "0.4.1",
+  "sources": "9bb6e41 (native/ identical to main 547539f), clean build 2026-10-01",
+  "command": "scripts/dev/bench_m4.sh MODEL --reps 3 --only decode22|decode4|prefill22|prefill4 --cache-mib full --cool 90",
+  "medians_tok_s": {
+    "IQ2_XXS": {"decode_full": 81.15, "decode_4096": 52.89, "prefill1100_full": 900.4, "prefill8192_full": 921.5, "prefill1100_4096": 808.9, "prefill8192_4096": 898.9, "full_residency_mib": 17316},
+    "IQ3_XXS": {"decode_full": 76.88, "decode_4096": 49.59, "prefill1100_full": 876.7, "prefill8192_full": 917.5, "prefill1100_4096": 763.0, "prefill8192_4096": 889.2, "full_residency_mib": 28800}
+  },
+  "llama_cpp_same_ids": {"IQ2_XXS_0.4.0": {"decode": 72.46, "prefill1100": 858.3, "prefill8192": 893.7}, "IQ3_XXS_0.4.0": {"decode": 68.54, "prefill1100": 861.3, "prefill8192": 900.7}, "IQ3_XXS_prefill1100_2026-10-01": 878.8},
+  "note": "prefill at 4096 MiB uses the engine default 2048-token chunk (0.4.0 table: 512). A first run of this table on a stale experimental binary was discarded (docs/WHAT_DID_NOT_WORK.md)."
+}
