@@ -30,6 +30,7 @@ Developed on the `dev/0.4` branch; M4 Max 48 GiB only.
 | dev32 release 0.4.0 | [REDLITE_DEV32_RELEASE.md](REDLITE_DEV32_RELEASE.md) |
 | dev33 faster IQ kernels (after 0.4.0) | [REDLITE_DEV33_IQ_KERNELS.md](REDLITE_DEV33_IQ_KERNELS.md) |
 | dev34 bounded-cache prefill: fewer expert reloads | [REDLITE_DEV34_BOUNDED_PREFILL.md](REDLITE_DEV34_BOUNDED_PREFILL.md) |
+| dev35 long-context decode: grouped split-K attention | [REDLITE_DEV35_LONG_DECODE.md](REDLITE_DEV35_LONG_DECODE.md) |
 
 ## Native runtime milestones (v0.3, released as 0.3.0)
 

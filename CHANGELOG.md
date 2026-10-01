@@ -2,6 +2,13 @@
 
 ## Unreleased (after 0.4.0, branch `dev/iq3-kernels`)
 
+### dev35 — long-context decode: grouped split-K attention (M4 Max 48 GiB)
+
+- One threadgroup per (128-position block, KV head) for the 8 query heads that share it: K/V read
+  once instead of 8 times. Attention at ~8400 positions 253 → 113 ms per 64 tokens; decode at
+  ~8192 positions 57.8 → 66.0 tok/s (IQ2_XXS, full residency, A/B). Parity unchanged.
+  See `docs/REDLITE_DEV35_LONG_DECODE.md`.
+
 ### dev34 — bounded-cache prefill: 2048-token chunks (M4 Max 48 GiB)
 
 - With a bounded cache each chunk reloads nearly every expert: 8192 tokens at 4 GiB loaded
