@@ -29,6 +29,7 @@ them.
 | dev37 | smarter expert replacement than LRU (simulated on routing traces, 4 GiB): decayed frequency (the Mira-style score), segmented LRU | best 60.9 vs 64.1 misses/token (−5 %); long half-lives and a 95 % protected segment are worse than LRU | decode routing is recency-dominated; the real waste was slot padding, fixed instead (dev37) |
 | dev38 | two more concurrent-encoder groups ({ssm_out, conv-state copy}, {layer-output copy, next RMSNorm}) | 83.72 vs 83.77 tok/s | the removed barriers were not on the critical path |
 | dev38 | (bound, not a change) concurrent decode encoder with no barriers at all | 74 → 118 tok/s, wrong output | most dispatches depend on the previous one; the kept version gains 2–6 % |
+| dev39 | expert tail + next RMSNorm in one single-threadgroup kernel (−3 barriers per layer) | 79.1 vs 84.4 tok/s (5 pairs) | the 10-expert weighted sum on one GPU core costs more than the barriers; the parallel tail without the RMSNorm is kept (+1.6 %) |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -56,6 +57,14 @@ them.
 - **Page cache state.** 4 GiB-cache numbers depend on whether the GGUF is still cached: after
   runs that allocate 22–29 GiB of expert slots, the first 4 GiB run read from SSD (IQ3_XXS 8192
   tokens: 169 vs ~600 tok/s). `bench_m4.sh` warms up before 4 GiB prefill runs.
+- **Ad-hoc parity token lists (dev39).** `redlite-engine parity --tokens 9707,11,1879,0,785,12884,13,151645,198
+  --cache-mib 2048` fails at position 7 with a 2-id router mismatch and ~1e-5 logit errors, identically with the
+  dev37 engine: a router near-tie on that sequence. Use the regression token lists.
+- **`redlite-engine prefill` on long IQ3_XXS sequences (dev39)** reports `BATCHED PREFILL PARITY: NO` at 1100
+  tokens (worst 0.027, 0 router mismatches, same argmax; dev37: 0.040). Its bound is sized for short sequences;
+  the long-context check against llama.cpp is the gate.
+- **Shared GPU (dev39).** With other applications using the GPU, the same binary measured 30–45 tok/s decode and
+  335 tok/s prefill (instead of ~85 and ~800). Pairs run in such a window are excluded.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

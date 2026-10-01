@@ -145,6 +145,9 @@ int redmetal_topk_pool_encode_device(
  * (serial dispatch) instead of three encoders of a command buffer.
  * dev23: uses the early-out kernel variants; the encoder must have a uint flag bound at buffer index 30
  * (a non-zero flag makes the three dispatches return immediately). */
+/* dev39: with mtl_output_buffer NULL the weighted sum is not encoded; the per-expert down outputs stay in
+ * redmetal_topk_pool_tmp_buffer() as tmp[e * hidden_size + r] for the caller to combine. */
+void *redmetal_topk_pool_tmp_buffer(redmetal_topk_pool_t pool);
 int redmetal_topk_pool_encode_device_into(
     redmetal_topk_pool_t pool,
     void *mtl_compute_encoder,

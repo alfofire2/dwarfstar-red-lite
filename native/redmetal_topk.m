@@ -1010,6 +1010,11 @@ int redmetal_topk_pool_set_classes(redmetal_topk_pool_t handle, uint32_t n, cons
     return p ? [p setClasses:n slotBytes:slot_bytes capacity:capacity] : 0;
 }
 
+void *redmetal_topk_pool_tmp_buffer(redmetal_topk_pool_t handle) {
+    RMTopKPool *p = topk_obj(handle);
+    return p ? (__bridge void *)p->_tmpBuffer : NULL;
+}
+
 uint32_t redmetal_topk_pool_capacity(redmetal_topk_pool_t handle) {
     RMTopKPool *p = topk_obj(handle); return p ? p->_capacity : 0;
 }
@@ -1704,7 +1709,7 @@ int redmetal_topk_pool_encode_device_into(
         uint64_t output_offset) {
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
-        if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer || !mtl_output_buffer) return 0;
+        if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer) return 0;
         if (!top_k || top_k > REDMETAL_TOPK_MAX || !tw_ok(ggml_type) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
             topk_set_error("invalid device-driven top-k request"); return 0;
         }
@@ -1713,7 +1718,7 @@ int redmetal_topk_pool_encode_device_into(
         id<MTLBuffer> table = (__bridge id<MTLBuffer>)slot_table_buffer;
         id<MTLBuffer> weights = (__bridge id<MTLBuffer>)weight_buffer;
         id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
-        id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
+        id<MTLBuffer> output = mtl_output_buffer ? (__bridge id<MTLBuffer>)mtl_output_buffer : nil;
         const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
         const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
         const uint64_t up_offset = gate_bytes;
@@ -1749,6 +1754,7 @@ int redmetal_topk_pool_encode_device_into(
         [enc setBytes:&down_lanes length:sizeof(down_lanes) atIndex:10];
         [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * down_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
 
+        if (!output) return 1;   /* dev39: the caller sums tmp[e * hidden + r] * weights[e] itself (redmetal_topk_pool_tmp_buffer) */
         [enc setComputePipelineState:p->_sumGPipeline];
         [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
         [enc setBuffer:weights offset:(NSUInteger)weight_offset atIndex:1];
