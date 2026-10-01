@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased (after 0.4.0, branch `dev/iq3-kernels`)
+## Unreleased (after 0.4.0, branches `dev/iq3-kernels` … `dev/iq3m`)
+
+### dev36 — the IQ3_M GGUF (M4 Max 48 GiB)
+
+- Q4_K routed experts (IQ3_M's down projections): decoder bit-identical to the dense Q4_K
+  dequantizer; IQ3_M dequantizes bit-identically to ggml and passes CPU vs Metal parity.
+- Not worth it on 48 GiB: full residency runs out of GPU memory (46.8 → 6.0 tok/s, then
+  `kIOGPUCommandBufferCallbackErrorOutOfMemory`), a 28 GiB cache gives 28.7 tok/s, and perplexity
+  14.05 ± 0.26 vs 14.29 for IQ3_XXS is inside the error bar. Not compared with llama.cpp; not in
+  the automatic model choice. The planner's full-residency limit is now 70 % of RAM (was 75 %).
+- `docs/WHAT_DID_NOT_WORK.md` collects every reverted attempt, trap and unreached target.
+  See `docs/REDLITE_DEV36_IQ3M.md`.
 
 ### dev35 — long-context decode: grouped split-K attention (M4 Max 48 GiB)
 
