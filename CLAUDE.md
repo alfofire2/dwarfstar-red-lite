@@ -232,6 +232,8 @@ executables, so ABI-visible changes there affect both layers.
 - Each milestone (`dev15e`, `dev16`, `dev17`, …) gets a `docs/REDLITE_DEVnn_*.md` with
   a "Scope boundary" section, a CHANGELOG entry, and commits prefixed like
   `dev17:` / `feat(native):` / `ci:` / `docs:`.
+- Every attempt that is reverted (no gain, slower, parity failure), every trap and every
+  unreached target also goes into `docs/WHAT_DID_NOT_WORK.md` with its measurement.
 - A top-k router ID divergence between CPU and Metal is always a hard failure; small
   float drift is compared cumulatively across the stack, not per substage.
 - Benchmarks and field observations are recorded as JSON in `benchmarks/` and

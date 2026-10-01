@@ -16,6 +16,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [../CHANGELOG.md](../CHANGELOG.md) | 0.4.0 and 0.3.0 release summaries with milestone targets, then every dev milestone |
 | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
 | [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
+| [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
 
 ## Native runtime milestones of 0.4.0
 

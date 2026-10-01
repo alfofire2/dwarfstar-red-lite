@@ -126,6 +126,8 @@ will be SSD reads instead of page-cache copies.
 - **Model-free tests.** The GGUF readers are fuzzed. The model-free tests run under
   ASan/UBSan (`make sanitize`), and so does a real chat turn. GitHub CI runs them on Linux
   for every push (when the account's GitHub Actions billing allows hosted jobs).
+- **What did not work:** `docs/WHAT_DID_NOT_WORK.md` lists every reverted attempt, trap and
+  unreached target with its measurement.
 - **Details:** `docs/REDLITE_DEV18_ENGINE.md` (the engine); `docs/REDLITE_DEV22_*` to
   `docs/REDLITE_DEV26_*` (0.3.0 performance); `docs/REDLITE_DEV28_*` to `docs/REDLITE_DEV32_*`
   (0.4.0).
