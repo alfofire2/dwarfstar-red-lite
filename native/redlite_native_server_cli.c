@@ -150,7 +150,7 @@ static void usage(FILE *out) {
         "  --port P            TCP port (default 8080; 0 = ephemeral)\n"
         "  --context N         KV cache positions per request (default 4096)\n"
         "  --cache-mib N|full  routed-expert cache in MiB (default 4096); full = every expert of the file (preloaded)\n"
-        "  --batch N           prompt tokens per batched prefill chunk (default 2048 with every expert preloaded, else 512)\n"
+        "  --batch N           prompt tokens per batched prefill chunk (default 2048)\n"
         "  --max-tokens N      default max_tokens when a request omits it (default 256)\n"
         "  --temperature T     default temperature (default 0.7)\n"
         "  --top-k K           default top-k (default 40)\n"

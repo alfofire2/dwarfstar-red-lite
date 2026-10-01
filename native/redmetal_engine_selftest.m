@@ -51,7 +51,9 @@ static void st_put_half(uint8_t *p, float v) { const uint16_t h = st_half(v); p[
 static size_t st_row_bytes(uint32_t type, uint32_t cols) {
     switch (type) {
         case 0:  return (size_t)cols * 4u;
+        case 8:  return (size_t)cols / 32u * 34u;
         case 12: return (size_t)cols / 256u * 144u;
+        case 13: return (size_t)cols / 256u * 176u;
         case 14: return (size_t)cols / 256u * 210u;
         case 16: return (size_t)cols / 256u * 66u;
         default: return rl_iq3_row_bytes(type, cols);   /* dev31: IQ3_XXS, IQ3_S, IQ2_S, IQ4_XS */
@@ -63,10 +65,12 @@ static void st_fill_row(uint32_t type, uint32_t cols, uint8_t *row) {
     const size_t bytes = st_row_bytes(type, cols);
     if (type == 0u) { float *f = (float *)(void *)row; for (uint32_t i = 0; i < cols; ++i) f[i] = st_uniform(); return; }
     for (size_t i = 0; i < bytes; ++i) row[i] = (uint8_t)st_next();
+    if (type == 8u) { for (uint32_t b = 0; b < cols / 32u; ++b) st_put_half(row + (size_t)b * 34u, 0.001f + 0.01f * fabsf(st_uniform())); return; }
     for (uint32_t b = 0; b < cols / 256u; ++b) {
         if (type == 12u) { uint8_t *bp = row + (size_t)b * 144u; st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); st_put_half(bp + 2, 0.001f + 0.01f * fabsf(st_uniform())); }
         if (type == 14u) { uint8_t *bp = row + (size_t)b * 210u; st_put_half(bp + 208, 0.001f + 0.004f * fabsf(st_uniform())); }
         if (type == 16u) { uint8_t *bp = row + (size_t)b * 66u; st_put_half(bp, 0.01f + 0.05f * fabsf(st_uniform())); }
+        if (type == 13u) { uint8_t *bp = row + (size_t)b * 176u; st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); st_put_half(bp + 2, 0.001f + 0.01f * fabsf(st_uniform())); }
         if (rl_iq3_supported(type)) { uint8_t *bp = row + (size_t)b * rl_iq3_block_bytes(type); st_put_half(bp, 0.002f + 0.01f * fabsf(st_uniform())); }
     }
 }
@@ -208,7 +212,7 @@ static int st_route(rl_metal_engine *m, uint32_t *cases, char *error, size_t cap
 static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char *error, size_t cap) {
     const uint32_t head_dim = 256u, qheads = 16u, kvheads = 2u;
     static const uint32_t lens[6] = { 1u, 200u, 256u, 257u, 1024u, 1500u };
-    const uint32_t max_len = 1500u, nblocks_max = (max_len + 255u) / 256u;
+    const uint32_t max_len = 1500u, nblocks_max = (max_len + 127u) / 128u;
     id<MTLBuffer> q = [m->dev newBufferWithLength:qheads * head_dim * 4u options:MTLResourceStorageModeShared];
     id<MTLBuffer> gate = [m->dev newBufferWithLength:qheads * head_dim * 4u options:MTLResourceStorageModeShared];
     id<MTLBuffer> kc = [m->dev newBufferWithLength:(size_t)max_len * kvheads * head_dim * 4u options:MTLResourceStorageModeShared];
@@ -224,7 +228,7 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
     for (size_t i = 0; i < (size_t)max_len * kvheads * head_dim; ++i) { kf[i] = 0.5f * st_uniform(); vf[i] = st_uniform(); }
     int ok = 1;
     for (uint32_t c = 0; c < 6u && ok; ++c) {
-        const uint32_t seq_len = lens[c], nblocks = (seq_len + 255u) / 256u;
+        const uint32_t seq_len = lens[c];
         for (uint32_t h = 0; h < qheads; ++h) {
             const uint32_t kvh = h / (qheads / kvheads);
             double mx = -INFINITY, l = 0.0;
@@ -240,19 +244,21 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
                 ref[h * head_dim + i] = (a / l) / (1.0 + exp(-(double)gf[h * head_dim + i]));
             }
         }
-        for (int variant = 0; variant < 2 && ok; ++variant) {
+        for (int variant = 0; variant < 3 && ok; ++variant) {   /* 0 single group, 1 split-K per head, 2 split-K per KV head (dev35) */
             memset(out.contents, 0, qheads * head_dim * 4u);
             ok = st_run(m, ^(id<MTLComputeCommandEncoder> enc) {
                 [enc setBuffer:m->abort_zero offset:0 atIndex:30];
                 if (variant) {
-                    [enc setComputePipelineState:m->p_attn_split];
+                    [enc setComputePipelineState:variant == 2 ? m->p_attn_split_g : m->p_attn_split];
                     [enc setBuffer:q offset:0 atIndex:0]; [enc setBuffer:kc offset:0 atIndex:1]; [enc setBuffer:vc offset:0 atIndex:2];
                     [enc setBuffer:ml offset:0 atIndex:3]; [enc setBuffer:acc offset:0 atIndex:4];
+                    const uint32_t blk = variant == 2 ? 128u : 256u, nb = (seq_len + blk - 1u) / blk;
                     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
-                    [enc dispatchThreadgroups:MTLSizeMake(nblocks, qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+                    [enc setBytes:&blk length:4 atIndex:9];
+                    [enc dispatchThreadgroups:MTLSizeMake(nb, variant == 2 ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                     [enc setComputePipelineState:m->p_attn_merge];
                     [enc setBuffer:ml offset:0 atIndex:0]; [enc setBuffer:acc offset:0 atIndex:1]; [enc setBuffer:gate offset:0 atIndex:2]; [enc setBuffer:out offset:0 atIndex:3];
-                    [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5];
+                    [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5]; [enc setBytes:&blk length:4 atIndex:6];
                     [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
                 } else {
                     [enc setComputePipelineState:m->p_attn_gqa];
@@ -266,7 +272,7 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
                 const double err = fabs((double)((float *)out.contents)[i] - ref[i]);
                 if (err > *worst) *worst = err;
                 if (!(err <= 2e-6)) {
-                    snprintf(error, cap, "%s seq_len %u out[%u]: gpu %.9g cpu %.9g", variant ? "attn_gqa_split/merge" : "attn_gqa", seq_len, i, ((float *)out.contents)[i], ref[i]);
+                    snprintf(error, cap, "%s seq_len %u out[%u]: gpu %.9g cpu %.9g", variant == 2 ? "attn_gqa_split_g/merge" : variant ? "attn_gqa_split/merge" : "attn_gqa", seq_len, i, ((float *)out.contents)[i], ref[i]);
                     ok = 0;
                 }
             }
@@ -275,6 +281,84 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
     }
     free(ref); free(sc);
     return ok;
+}
+
+/* dev33 (development): effective bandwidth of the decode GEMV per weight type at the shapes of the two GGUFs.
+ * 16 copies of each matrix (beyond the system cache), 256 dispatches per command buffer, best of 5 after a warm-up. */
+int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t cap) {
+    @autoreleasepool {
+        rl_metal_engine *m = (rl_metal_engine *)calloc(1, sizeof(*m));
+        if (!m) { snprintf(error, cap, "bench allocation failed"); return 0; }
+        int ok = 0;
+        uint8_t grid[RL_IQ2_XXS_GRID_COUNT];
+        m->dev = MTLCreateSystemDefaultDevice();
+        m->queue = m->dev ? [m->dev newCommandQueue] : nil;
+        NSError *le = nil;
+        m->lib = m->dev ? rl_metal_engine_library(m->dev, &le) : nil;
+        if (!m->queue || !m->lib) { snprintf(error, cap, "Metal engine library compile failed"); goto bout; }
+        {
+            struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
+                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q5k, @"rl_rows_q5k"},
+                {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
+                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
+            };
+            for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
+                *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
+                if (!*pipes[i].slot) goto bout;
+            }
+        }
+        if (!rl_native_iq2_xxs_build_grid(grid, error, cap)) goto bout;
+        m->grid = [m->dev newBufferWithBytes:grid length:sizeof(grid) options:MTLResourceStorageModeShared];
+        m->abort_zero = [m->dev newBufferWithLength:16u options:MTLResourceStorageModeShared];
+        memset(m->abort_zero.contents, 0, 16u);
+        m->rows2 = 1;
+        {
+            static const struct { const char *what; uint32_t type, rows, cols; } cases[] = {
+                {"attn_qkv IQ2_XXS", 16u, 8192u, 2048u}, {"attn_qkv IQ3_XXS", 18u, 8192u, 2048u},
+                {"attn_q   IQ2_S  ", 22u, 8192u, 2048u}, {"ssm_out  Q4_K   ", 12u, 2048u, 4096u},
+                {"ssm_out  Q8_0   ", 8u, 2048u, 4096u},  {"attn_out Q6_K   ", 14u, 2048u, 4096u},
+                {"shexp up Q8_0   ", 8u, 512u, 2048u},   {"shexp up IQ4_XS ", 23u, 512u, 2048u},
+                {"shexp dn IQ4_XS ", 23u, 2048u, 512u},  {"shexp dn Q8_0   ", 8u, 2048u, 512u},
+                {"output   Q5_K   ", 13u, 151936u, 2048u},
+            };
+            size_t off = 0;
+            for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+                const uint32_t type = cases[c].type, rows = cases[c].rows, cols = cases[c].cols;
+                const size_t rb = st_row_bytes(type, cols), mb = rb * rows;
+                const uint32_t copies = mb * 16u > (size_t)1u << 31 ? 2u : 16u;
+                id<MTLBuffer> w = [m->dev newBufferWithLength:mb * copies options:MTLResourceStorageModeShared];
+                id<MTLBuffer> x = [m->dev newBufferWithLength:(size_t)cols * 4u options:MTLResourceStorageModeShared];
+                id<MTLBuffer> out = [m->dev newBufferWithLength:(size_t)rows * 4u options:MTLResourceStorageModeShared];
+                if (!w || !x || !out) { snprintf(error, cap, "bench allocation failed"); goto bout; }
+                for (uint32_t r = 0; r < rows * copies; ++r) st_fill_row(type, cols, (uint8_t *)w.contents + (size_t)r * rb);
+                for (uint32_t i = 0; i < cols; ++i) ((float *)x.contents)[i] = st_uniform();
+                double best = 1e30;
+                for (int rep = 0; rep < 6; ++rep) {   /* the first pass only ramps the GPU clock */
+                    id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+                    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                    [enc setBuffer:m->abort_zero offset:0 atIndex:30];
+                    for (uint32_t k = 0; k < 256u; ++k) {
+                        mweight mw = { w, (NSUInteger)(mb * (k % copies)), type, rows, cols };
+                        emit_rows(m, enc, &mw, x, out);
+                    }
+                    [enc endEncoding];
+                    [cb commit]; [cb waitUntilCompleted];
+                    const double ms = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0 / 256.0;
+                    if (rep > 0 && ms < best) best = ms;
+                }
+                off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0, "%s %6u x %5u  %7.1f us  %6.1f GB/s\n",
+                    cases[c].what, rows, cols, best * 1000.0, (double)mb / (best * 1e6));
+                if (off >= report_cap) break;
+            }
+        }
+        ok = 1;
+    bout:
+        m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
+        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q6k = m->p_rows2_iq2xxs = nil;
+        m->grid = nil; m->abort_zero = nil; m->lib = nil; m->queue = nil; m->dev = nil;
+        free(m);
+        return ok;
+    }
 }
 
 int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_t cap) {
@@ -293,7 +377,7 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
                 {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
                 {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
                 {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
-                {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"},
+                {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             };
             for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
                 *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -327,14 +411,14 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
                 "early-out guard       : OK (rl_rows2, rl_copy_f32, rl_route return with the flag set)\n"
                 "rl_copy_f32           : OK\n"
                 "rl_route vs CPU router: %u cases OK (ids, weights, slots, ties, miss -> early-out flag)\n"
-                "decode attention      : %u lengths x 2 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
+                "decode attention      : %u lengths x 3 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
                 shapes, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], route_cases, attn_cases, attn_worst);
         }
         ok = 1;
     out:
         m->p_rows_f32 = m->p_rows_q4k = m->p_rows_q6k = m->p_rows_iq2xxs = nil;
         m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q6k = m->p_rows2_iq2xxs = m->p_route = m->p_copy = nil;
-        m->p_attn_gqa = m->p_attn_split = m->p_attn_merge = nil;
+        m->p_attn_gqa = m->p_attn_split = m->p_attn_merge = m->p_attn_split_g = nil;
         m->grid = m->abort = m->abort_zero = nil; m->lib = nil; m->queue = nil; m->dev = nil;
         free(m);
         return ok;

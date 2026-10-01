@@ -59,8 +59,8 @@ the three binaries is built by `scripts/package_release.sh`.
   sized from the file's expert payload (21,312 MiB for IQ2_XXS, 29,376 MiB for IQ3_XXS;
   `--cache-mib full` in the binaries); tokens are then routed on the GPU in one command
   buffer. Otherwise 4096 MiB.
-- Prompts are ingested by a batched prefill in chunks of 2048 tokens with every expert
-  resident, 512 otherwise (`--batch`).
+- Prompts are ingested by a batched prefill in chunks of 2048 tokens (`--batch`); with a
+  bounded cache a larger chunk means fewer expert reloads (dev34).
 
 **Sampler.** It follows llama.cpp's chain (top-k → top-p → min-p → temperature) with the
 same arithmetic. min-p is off by default here and 0.05 in llama.cpp.
@@ -126,6 +126,8 @@ will be SSD reads instead of page-cache copies.
 - **Model-free tests.** The GGUF readers are fuzzed. The model-free tests run under
   ASan/UBSan (`make sanitize`), and so does a real chat turn. GitHub CI runs them on Linux
   for every push (when the account's GitHub Actions billing allows hosted jobs).
+- **What did not work:** `docs/WHAT_DID_NOT_WORK.md` lists every reverted attempt, trap and
+  unreached target with its measurement.
 - **Details:** `docs/REDLITE_DEV18_ENGINE.md` (the engine); `docs/REDLITE_DEV22_*` to
   `docs/REDLITE_DEV26_*` (0.3.0 performance); `docs/REDLITE_DEV28_*` to `docs/REDLITE_DEV32_*`
   (0.4.0).

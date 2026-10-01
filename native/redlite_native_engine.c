@@ -424,9 +424,13 @@ int rl_engine_parse_cache_mib(const char *text, uint64_t *out) {
 uint32_t rl_engine_prefill_batch(const rl_engine *e) {
     if (!e) return 512u;
     if (e->cfg.prefill_batch) return e->cfg.prefill_batch;
-    /* dev30: with every expert resident there are no loads to bound, and 2048-token chunks give each expert tile more
-     * pairs (1100-token prompt, M4 Max: ~663 tok/s in chunks of 512, ~811 in one chunk); scratch ~0.26 MiB per token */
-    return rl_engine_experts_preloaded(e, NULL) ? 2048u : 512u;
+    /* dev30: with every expert resident, 2048-token chunks give each expert tile more pairs (1100-token prompt, M4 Max:
+     * ~663 tok/s in chunks of 512, ~811 in one chunk). dev34: also with a bounded cache, where every chunk reloads nearly
+     * every expert of every layer: 8192 tokens at 4 GiB load 161 GB of experts in chunks of 512, 49 GB in chunks of 2048
+     * (page-cache copies on a 48 GiB Mac, SSD reads on a 24 GiB one). Cost: ~0.26 MiB of scratch per chunk token
+     * (+571 MiB footprint at 4 GiB with an 8387-token prompt). */
+    (void)e;
+    return 2048u;
 }
 
 int rl_engine_experts_preloaded(const rl_engine *e, double *preload_ms) {

@@ -33,6 +33,9 @@ struct rl_metal_engine {
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
+    id<MTLComputePipelineState> p_attn_split_g;               /* dev35: one threadgroup per KV head and block */
+    int attn_group;                                           /* RL_ENGINE_ATTN_GROUP != 0 (default) */
+    uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK, default 128) */
     id<MTLBuffer> attn_ml, attn_acc;                          /* per (head, 256-position block) partials */
     int attn_split;
     id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;

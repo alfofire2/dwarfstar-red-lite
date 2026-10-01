@@ -181,7 +181,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    const uint row = gid.y; const uint gi = gid.x; const uint groups = ncols / 8u; if (row >= nrows || gi >= groups) return;\n"
 "    const uint bb = rl_iq3_block_bytes(type); const uint b = gi >> 5;\n"
 "    device const uchar *bp = weights + ulong(row) * ulong(ncols / 256u) * bb + ulong(b) * bb;\n"
-"    float4 v0, v1; rl_iq3_group8(type, bp, gi & 31u, v0, v1);\n"
+"    float4 v0, v1; rl_iq3_group8f(type, bp, gi & 31u, v0, v1);\n"
 "    device float4 *o = (device float4 *)(out + ulong(row) * ncols + gi * 8u); o[0] = v0; o[1] = v1;\n"
 "}\n"
 "kernel void rl_rowsb_iq3(device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"

@@ -33,8 +33,8 @@ typedef struct {
     int enable_cpu;        /* keep a CPU oracle backend */
     int enable_gpu;        /* create the Metal backend */
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
-    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 2048 when every expert is preloaded, else 512;
-                             * 1 -> token-by-token); larger chunks amortize the per-layer expert union */
+    uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 2048, dev34; 1 -> token-by-token); larger
+                             * chunks amortize the per-layer expert union and reload fewer experts with a bounded cache */
 } rl_engine_config;
 
 typedef struct {
@@ -128,7 +128,7 @@ int rl_engine_experts_preloaded(const rl_engine *engine, double *preload_ms);
 uint64_t rl_engine_full_residency_mib(const rl_engine *engine);
 /* Parse a --cache-mib value: a number of MiB or "full" (RL_ENGINE_CACHE_FULL). Returns 1 on success. */
 int rl_engine_parse_cache_mib(const char *text, uint64_t *out);
-/* Effective prefill chunk: cfg.prefill_batch, or the default for this engine (dev30: 2048 with full residency, else 512). */
+/* Effective prefill chunk: cfg.prefill_batch, or the default (2048 since dev34; dev30 used it only with full residency). */
 uint32_t rl_engine_prefill_batch(const rl_engine *engine);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
@@ -139,6 +139,8 @@ int rl_engine_embed_token(const rl_engine *engine, uint32_t token, float *out, c
 /* macOS, redlite-engine only (redmetal_engine_selftest.m): model-free check of the dev21-dev26 decode kernels
  * on synthetic weights against the CPU reference. report receives a short summary. */
 int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_t cap);
+/* development: decode GEMV bandwidth per weight type (redlite-engine kernel-bench) */
+int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t cap);
 
 #ifdef __cplusplus
 }

@@ -326,7 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Routed-expert cache in MiB (default: every expert resident and preloaded when RAM >= 40 GiB and the "
              "model's expert payload fits, e.g. 21312 for IQ2_XXS / 29376 for IQ3_XXS; otherwise 4096)",
     )
-    s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 512; 1 = token by token)")
+    s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 2048; 1 = token by token)")
     s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")
     s.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature (default: 0.7; 0 = greedy)")
     s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")
@@ -348,7 +348,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cache-mib", type=int, default=None,
                    help="--native: routed-expert cache in MiB (default: the model's full-residency cache when RAM >= 40 GiB "
                         "and it fits, otherwise 4096)")
-    s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 512)")
+    s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

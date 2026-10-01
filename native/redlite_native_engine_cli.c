@@ -123,6 +123,12 @@ static void print_info(const rl_engine_info *in) {
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
 #ifdef __APPLE__
+    if (argc == 2 && strcmp(argv[1], "kernel-bench") == 0) {
+        char report[4096] = {0}, err[512] = {0};
+        if (!rl_metal_kernel_bench(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel bench failed: %s\n", err); return 1; }
+        printf("%s", report);
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "kernel-selftest") == 0) {
         char report[1024] = {0}, err[512] = {0};
         if (!rl_metal_kernel_selftest(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel self-test FAILED: %s\n", err); return 1; }
@@ -287,9 +293,10 @@ int main(int argc, char **argv) {
             }
             printf("prefill %u tokens in chunks of %u: %.1f ms (%.1f tok/s)\n", n, chunk, rl_engine_now_ms_public() - t0, n * 1000.0 / (rl_engine_now_ms_public() - t0));
             printf("prefill split: dense wall %.1f (rec %.1f attn %.1f) dense GPU %.1f | router select %.1f | experts wall %.1f "
-                   "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u\n",
+                   "[lru %.1f load %.1f commit %.1f gpu %.1f wait %.1f prefetch %.1f] | plans %u | expert loads %llu (%.0f MiB read)\n",
                 st.recurrent_ms + st.attention_ms, st.recurrent_ms, st.attention_ms, st.gpu_ms, st.router_ms, st.routed_ms,
-                st.prep_lru_ms, st.prep_load_ms, st.prep_commit_ms, st.routed_gpu_ms, st.expert_wait_ms, st.prefetch_ms, st.expert_plans);
+                st.prep_lru_ms, st.prep_load_ms, st.prep_commit_ms, st.routed_gpu_ms, st.expert_wait_ms, st.prefetch_ms, st.expert_plans,
+                (unsigned long long)st.expert_loads, (double)st.ssd_bytes / (1024.0 * 1024.0));
             first = n;
         }
         for (uint32_t i = first; i < token_count; ++i) {

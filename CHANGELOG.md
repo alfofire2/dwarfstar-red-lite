@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased (after 0.4.0, branch `dev/iq3-kernels`)
+
+### dev35 — long-context decode: grouped split-K attention (M4 Max 48 GiB)
+
+- One threadgroup per (128-position block, KV head) for the 8 query heads that share it: K/V read
+  once instead of 8 times. Attention at ~8400 positions 253 → 113 ms per 64 tokens; decode at
+  ~8192 positions 57.8 → 66.0 tok/s (IQ2_XXS, full residency, A/B). Parity unchanged.
+  See `docs/REDLITE_DEV35_LONG_DECODE.md`.
+
+### dev34 — bounded-cache prefill: 2048-token chunks (M4 Max 48 GiB)
+
+- With a bounded cache each chunk reloads nearly every expert: 8192 tokens at 4 GiB loaded
+  161 GB of experts in chunks of 512, 49 GB in chunks of 2048. The default chunk is now 2048
+  for every cache (+571 MiB footprint at 4 GiB).
+- IQ2_XXS, 4 GiB cache, cooled A/B: prefill 1100 tokens 540 → 795 tok/s, 8192 tokens
+  640 → 886 tok/s. Not measured on a 24 GiB Mac. See `docs/REDLITE_DEV34_BOUNDED_PREFILL.md`.
+
+### dev33 — faster IQ kernels (M4 Max 48 GiB)
+
+- Sub-block IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS dots for decode, a faster 8-value IQ3 decoder for
+  prefill, vectorized IQ2_XS / IQ1_M decode expert dots; `redlite-engine kernel-bench`.
+- Same-session A/B vs the 0.4.0 binary: IQ3_XXS decode 64.7 → 70.1 tok/s (llama.cpp 68.5),
+  IQ3_XXS prefill 1100 tokens 787 → 837 tok/s (llama.cpp 861), IQ2_XXS decode 65.9 → 68.3.
+- Two attempts reverted (codebooks in threadgroup memory; uchar4 loads in the IQ2_XXS GEMV).
+  See `docs/REDLITE_DEV33_IQ_KERNELS.md`.
+
 ## 0.4.0 — 2026-09-30
 
 The native runtime, faster and with a second, higher-quality GGUF. Work of dev28–dev32
