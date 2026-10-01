@@ -2,6 +2,19 @@
 
 ## Unreleased (after 0.4.0, branches `dev/iq3-kernels` … `dev/iq3m`)
 
+### dev37 — expert slots of each layer's own size (M4 Max 48 GiB)
+
+- The expert pool and LRU get slot size classes: one per distinct layer triplet size, the same
+  slot count per layer (`RL_POOL_CLASSES=0` restores uniform slots). Uniform slots of the largest
+  size wasted a quarter of an IQ2_XXS cache on padding.
+- 4 GiB cache, six prompts: expert misses per token 39.2 → 29.8 with prefetch (−24 %), 60.0 → 45.4
+  without; decode +3 % on this Mac (cooled A/B), output identical. Not measured on 24 GiB.
+- Full residency 21312 → 17316 MiB for IQ2_XXS (footprint 22445 → 18447 MiB, same 72 tok/s),
+  29376 → 28800 MiB for IQ3_XXS; the planner uses the same formula.
+- Chosen from data: `RL_ROUTE_TRACE` routing traces replayed by `scripts/dev/cache_policy_sim.py`;
+  smarter replacement policies gained ≤ 5 % in simulation and were not implemented.
+  See `docs/REDLITE_DEV37_EXPERT_SLOTS.md`.
+
 ### dev36 — the IQ3_M GGUF (M4 Max 48 GiB)
 
 - Q4_K routed experts (IQ3_M's down projections): decoder bit-identical to the dense Q4_K

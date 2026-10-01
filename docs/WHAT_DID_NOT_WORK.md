@@ -26,6 +26,7 @@ them.
 | dev33 | IQ codebooks staged in threadgroup memory, 256-thread GEMV groups (what llama.cpp does) | IQ2_S 35.7 vs 33.2 µs, IQ3_XXS 38.2 vs 37.9 µs | divergent `constant`-memory reads were not the bound once the GPU was warm ([DEV33](REDLITE_DEV33_IQ_KERNELS.md)) |
 | dev33 | `uchar4` codebook loads in the IQ2_XXS dense GEMV | 25.6 / 27.5 vs 27.3 / 25.1 µs | not the bound; the IQ2_XXS GEMV stays at ~169 GB/s ([DEV33](REDLITE_DEV33_IQ_KERNELS.md)) |
 | dev36 | IQ2_XXS dense GEMV with two rows per lane (one activation load serves both rows) | 25.4 vs 25.5 µs (8192 × 2048, warm kernel-bench) | third attempt on this kernel without gain; activation loads are not the bound. The IQ2_XXS dense GEMV stays at ~169 GB/s |
+| dev37 | smarter expert replacement than LRU (simulated on routing traces, 4 GiB): decayed frequency (the Mira-style score), segmented LRU | best 60.9 vs 64.1 misses/token (−5 %); long half-lives and a 95 % protected segment are worse than LRU | decode routing is recency-dominated; the real waste was slot padding, fixed instead (dev37) |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -78,6 +79,18 @@ them.
     slower than IQ3_XXS for no measurable quality gain.
 - **IQ3_XS, IQ4_XS: not run.** Header reads (no download) show IQ3_XS needs no new type and would fit
   at full residency only under the old 75 % rule; IQ4_XS (39168 MiB of experts) does not fit this Mac.
+- **Speculative decoding (dev37): not started.** The IQ2_XXS / IQ3 GGUFs carry no Qwen3-Next
+  multi-token-prediction layers (48 blocks, no `nextn` keys), so the MTP-based methods do not apply.
+  Training-free drafts (prompt lookup, a reduced-expert self-draft) need a cheap multi-token
+  verification, and the batched prefill path is slower than decode at small batches: 8-token chunks
+  137 ms against 8 decode steps 98 ms (full residency, `redlite-engine prefill --batch 8`). Papers on
+  MoE speculation (EcoSpec 2607.12696, MoE-Spec 2602.16052, DraftExpert 2607.24434) also report that
+  verifying several tokens loads the union of their experts, which is the 24 GiB bottleneck.
+- **LensVLM (dev37): not implemented.** `apple/lensvlm-9b` reads text rendered as compressed images
+  (5–15× fewer tokens) and expands relevant pages on demand. It is a different model (Qwen3.5-9B +
+  Qwen3-VL vision encoder, BF16 safetensors); Qwen3-Next-80B is text-only and cannot consume vision
+  tokens, so the idea cannot be applied to this model without a second model family in the runtime.
+- **OLED-MoE (2609.33385): not applicable.** Its inter-iteration expert retention targets diffusion LLMs.
 - **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan
   accepts and add ~0.5 GB of scratch (dev34).
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)

@@ -201,8 +201,11 @@ executables, so ABI-visible changes there affect both layers.
   gate/up IQ3_XXS, down IQ3_S or IQ3_XXS per layer (the expert layout carries `down_type`;
   Metal kernels get a type word, gate/up in bits 0–7, down in 8–15), dense IQ3_XXS / IQ2_S /
   IQ4_XS / Q8_0 / Q6_K, IQ3_S embedding. `redlite_native_iq3.[ch]` decodes them bit-identically
-  to ggml (`scripts/dev/dequant_check.sh`). Full-residency cache = 48 × 512 slots of the largest
-  expert triplet rounded to 4 KiB (`--cache-mib full`: 21312 MiB IQ2_XXS, 29376 MiB IQ3_XXS).
+  to ggml (`scripts/dev/dequant_check.sh`). dev37: the expert pool has one slot size class per distinct
+  4 KiB-aligned layer triplet size, the same slot count per layer (`RL_POOL_CLASSES=0` = old uniform slots);
+  full-residency cache = 512 × the sum of the layers' slot sizes (`--cache-mib full`: 17316 MiB IQ2_XXS,
+  28800 MiB IQ3_XXS; uniform slots needed 21312 / 29376). Expert cache policy studies:
+  `RL_ROUTE_TRACE=file redlite-generate ...` + `scripts/dev/cache_policy_sim.py`.
   `regress_m4.sh MODEL` works on both; dumps of a non-reference file go to `.deps/regress-<name>`.
 - DeltaNet pairs value head `h` with key head `h / (H_v / H_k)` (repeat-interleave,
   as in llama.cpp); `h % H_k` is wrong and was fixed in dev18.
