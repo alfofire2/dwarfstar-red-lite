@@ -636,9 +636,17 @@ static double redmetal_topk_pool_read_ms_total(struct rl_metal_engine *m) {
     return rl_native_metal_read_ms(m->experts);
 }
 
+/* dev38: decode encoders may be concurrent (m->concurrent). Every dispatch is then followed by a buffer barrier, except
+ * inside an em_group of dispatches that neither read nor write each other's outputs (one barrier at the group's end).
+ * Serial encoders (prefill, profile, RL_ENGINE_CONCURRENT=0) are unaffected. */
+static _Thread_local int g_rl_group;
+static inline void rl_after_dispatch(id<MTLComputeCommandEncoder> enc) {
+    if (!g_rl_group && enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+}
+
 void enc_1d(id<MTLComputeCommandEncoder> enc, id<MTLComputePipelineState> p, NSUInteger n, NSUInteger tg_max) {
     const NSUInteger tg = MIN(tg_max, p.maxTotalThreadsPerThreadgroup);
-    [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg ? tg : 1, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg ? tg : 1, 1, 1)]; rl_after_dispatch(enc);
 }
 
 uint32_t lanes_for(uint32_t type, uint32_t ncols) {
@@ -685,7 +693,7 @@ void emit_rows(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, const mweig
     if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:6];
     if (rl_iq3_supported(w->type)) [enc setBytes:&w->type length:sizeof(w->type) atIndex:7];
     const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
-    [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; rl_after_dispatch(enc);
 }
 
 void enc_rows(rl_metal_engine *m, id<MTLCommandBuffer> cb, const mweight *w, id<MTLBuffer> x, id<MTLBuffer> out) {
@@ -702,7 +710,7 @@ void emit_rms(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, id<MTLBuffer
     [enc setBuffer:y offset:0 atIndex:2];
     [enc setBytes:&n length:sizeof(n) atIndex:3];
     [enc setBytes:&eps length:sizeof(eps) atIndex:4];
-    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
 }
 
 void enc_rms(rl_metal_engine *m, id<MTLCommandBuffer> cb, id<MTLBuffer> x, const mweight *w, id<MTLBuffer> y, uint32_t n, float eps) {
@@ -829,6 +837,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         /* dev26 split-K decode attention partials, sized for the whole context; RL_ENGINE_ATTN_SPLIT=0 for A/B runs */
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
+        { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u; }
         if (m->attn_split) {
             const size_t nblocks = ((size_t)in->context + 31u) / 32u;   /* dev35: blocks of down to 32 positions */
@@ -1010,10 +1019,17 @@ typedef struct {
 
 static id<MTLComputeCommandEncoder> em_enc(emitter *em) {
     if (!em->enc) {
-        em->enc = [em->cb computeCommandEncoder];
+        em->enc = em->m->concurrent ? [em->cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent] : [em->cb computeCommandEncoder];
+        g_rl_group = 0;   /* a group never spans encoders (an error return may have left one open) */
         [em->enc setBuffer:em->abort offset:0 atIndex:30];
     }
     return em->enc;
+}
+
+/* dev38: open (1) / close (0) a group of mutually independent dispatches; closing issues the barrier they skipped */
+static void em_group(emitter *em, int open) {
+    g_rl_group = open;
+    if (!open && em->enc && em->enc.dispatchType == MTLDispatchTypeConcurrent) [em->enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
 }
 
 static void em_close(emitter *em) {
@@ -1042,11 +1058,14 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     const uint32_t qk_each = S * groups, head_v = in->head_v;
     const uint32_t kv_ratio = rank / groups;
     const float eps = in->rms_eps;
+    em_group(em, 1);
     emit_rows(m, em_enc(em), &w->qkv, m->normed, m->qkv);
     emit_rows(m, em_enc(em), &w->z, m->normed, m->z);
     emit_rows(m, em_enc(em), &w->ba, m->normed, m->ba);
+    em_group(em, 0);
     em_stage(em, 1);
     id<MTLComputeCommandEncoder> enc = em_enc(em);
+    em_group(em, 1);   /* dn_ba (ba -> beta/gate), dn_conv (qkv, conv_state -> conv_silu) */
     [enc setComputePipelineState:m->p_dn_ba];
     [enc setBuffer:m->ba offset:0 atIndex:0]; [enc setBuffer:w->dt.buf offset:w->dt.off atIndex:1]; [enc setBuffer:w->a.buf offset:w->a.off atIndex:2];
     [enc setBuffer:m->beta offset:0 atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4];
@@ -1057,16 +1076,19 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:w->conv.buf offset:w->conv.off atIndex:2];
     [enc setBuffer:m->conv_silu offset:0 atIndex:3]; [enc setBytes:&channels length:4 atIndex:4]; [enc setBytes:&dconv length:4 atIndex:5];
     enc_1d(enc, m->p_dn_conv, channels, 64u);
+    em_group(em, 0);
+    em_group(em, 1);   /* dn_l2 (conv_silu -> q/k), dn_shift (conv_state, qkv -> next_conv) */
 
     [enc setComputePipelineState:m->p_dn_l2];
     [enc setBuffer:m->conv_silu offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
     [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
-    [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
 
     [enc setComputePipelineState:m->p_dn_shift];
     [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:m->next_conv offset:0 atIndex:2];
     [enc setBytes:&channels length:4 atIndex:3]; [enc setBytes:&dconv length:4 atIndex:4];
     enc_1d(enc, m->p_dn_shift, channels, 64u);
+    em_group(em, 0);
     em_stage(em, 2);
 
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
@@ -1075,14 +1097,14 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
     [enc setBuffer:m->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4]; [enc setBuffer:m->beta offset:0 atIndex:5];
     [enc setBuffer:m->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
     em_stage(em, 3);
 
     enc = em_enc(em);
     [enc setComputePipelineState:m->p_dn_tail];
     [enc setBuffer:m->core offset:0 atIndex:0]; [enc setBuffer:m->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
     [enc setBuffer:m->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
-    [enc dispatchThreadgroups:MTLSizeMake(rank, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)];
+    [enc dispatchThreadgroups:MTLSizeMake(rank, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)]; rl_after_dispatch(enc);
 
     emit_rows(m, enc, &w->ssm_out, m->ng, m->branch);
     em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
@@ -1096,9 +1118,11 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     const uint32_t head_dim = in->head_dim, qheads = in->n_head, kvheads = in->n_head_kv, rope_dims = in->rope_dims;
     const uint32_t seq_len = position + 1u;
     const float eps = in->rms_eps, base = in->rope_freq_base;
+    em_group(em, 1);
     emit_rows(m, em_enc(em), &w->q, m->normed, m->qgate_raw);
     emit_rows(m, em_enc(em), &w->k, m->normed, m->k_raw);
     emit_rows(m, em_enc(em), &w->v, m->normed, m->value);
+    em_group(em, 0);
     em_stage(em, 5);
     id<MTLComputeCommandEncoder> enc = em_enc(em);
     [enc setComputePipelineState:m->p_attn_prep];
@@ -1108,7 +1132,7 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     [enc setBuffer:m->kcache[a] offset:0 atIndex:7]; [enc setBuffer:m->vcache[a] offset:0 atIndex:8];
     [enc setBytes:&head_dim length:4 atIndex:9]; [enc setBytes:&qheads length:4 atIndex:10]; [enc setBytes:&kvheads length:4 atIndex:11];
     [enc setBytes:&position length:4 atIndex:12]; [enc setBytes:&rope_dims length:4 atIndex:13]; [enc setBytes:&base length:4 atIndex:14]; [enc setBytes:&eps length:4 atIndex:15];
-    [enc dispatchThreadgroups:MTLSizeMake(qheads + kvheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
+    [enc dispatchThreadgroups:MTLSizeMake(qheads + kvheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)]; rl_after_dispatch(enc);
     em_stage(em, 6);
 
     enc = em_enc(em);
@@ -1124,18 +1148,18 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
         [enc setBuffer:m->attn_ml offset:0 atIndex:3]; [enc setBuffer:m->attn_acc offset:0 atIndex:4];
         [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
         [enc setBytes:&blk length:4 atIndex:9];
-        [enc dispatchThreadgroups:MTLSizeMake(nblocks, grouped ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(nblocks, grouped ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
         [enc setComputePipelineState:m->p_attn_merge];
         [enc setBuffer:m->attn_ml offset:0 atIndex:0]; [enc setBuffer:m->attn_acc offset:0 atIndex:1];
         [enc setBuffer:m->agate offset:0 atIndex:2]; [enc setBuffer:m->gated offset:0 atIndex:3];
         [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5]; [enc setBytes:&blk length:4 atIndex:6];
-        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_dim, 1, 1)]; rl_after_dispatch(enc);
     } else {
         [enc setComputePipelineState:m->p_attn_gqa];
         [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];
         [enc setBuffer:m->agate offset:0 atIndex:3]; [enc setBuffer:m->gated offset:0 atIndex:4];
         [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
-        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(qheads, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
     }
     em_stage(em, 7);
 
@@ -1154,17 +1178,19 @@ static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
     [enc setBuffer:w->post_norm.buf offset:w->post_norm.off atIndex:2];
     [enc setBuffer:m->resid offset:0 atIndex:3]; [enc setBuffer:m->ffn_in offset:0 atIndex:4];
     [enc setBytes:&hidden length:4 atIndex:5]; [enc setBytes:&eps length:4 atIndex:6];
-    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
     em_stage(em, 9);
+    em_group(em, 1);   /* router, shared scalar, shared gate, shared up: all read ffn_in only */
     emit_rows(m, em_enc(em), &w->router, m->ffn_in, m->router_logits);
     em_stage(em, 10);
     enc = em_enc(em);
     [enc setComputePipelineState:m->p_sh_scalar];
     [enc setBuffer:w->sh_gate_inp.buf offset:w->sh_gate_inp.off atIndex:0]; [enc setBuffer:m->ffn_in offset:0 atIndex:1];
     [enc setBuffer:m->scalar offset:0 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
-    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc dispatchThreads:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
     emit_rows(m, enc, &w->sh_gate, m->ffn_in, m->sh_gate);
     emit_rows(m, enc, &w->sh_up, m->ffn_in, m->sh_up);
+    em_group(em, 0);
     {
         const uint32_t ffn = w->sh_gate.rows;
         [enc setComputePipelineState:m->p_sh_silu];
@@ -1214,7 +1240,7 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
             [enc setBuffer:m->plan_ids offset:ids_off atIndex:4];
             [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
             [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
-            [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+            [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
         }
         rl_native_layer_info li;
         rl_expert_layout lay;

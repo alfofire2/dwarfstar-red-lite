@@ -2,6 +2,16 @@
 
 ## Unreleased (after 0.4.0, branches `dev/iq3-kernels` … `dev/iq3m`)
 
+### dev38 — decode: expert lanes and concurrent encoders (M4 Max 48 GiB)
+
+- Expert down-projection rows use 8 lanes instead of 32 (at most 4 lanes per 256-value block), and
+  decode encoders are concurrent with barriers only between dependent dispatches
+  (`RL_ENGINE_CONCURRENT=0` restores serial encoders).
+- Cooled A/B, full residency: IQ3_XXS 70.4 → 79.1 tok/s (llama.cpp 68.5), IQ2_XXS 75.3 → 82.6 tok/s;
+  4 GiB cache IQ2_XXS 52.5 → 59.8 tok/s. Parity unchanged on both models.
+- `quick_parity.sh` now compares non-reference models with their own llama.cpp dumps.
+  See `docs/REDLITE_DEV38_DECODE_DISPATCH.md`.
+
 ### dev37 — expert slots of each layer's own size (M4 Max 48 GiB)
 
 - The expert pool and LRU get slot size classes: one per distinct layer triplet size, the same
