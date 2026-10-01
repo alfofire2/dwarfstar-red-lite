@@ -30,6 +30,8 @@ them.
 | dev38 | two more concurrent-encoder groups ({ssm_out, conv-state copy}, {layer-output copy, next RMSNorm}) | 83.72 vs 83.77 tok/s | the removed barriers were not on the critical path |
 | dev38 | (bound, not a change) concurrent decode encoder with no barriers at all | 74 → 118 tok/s, wrong output | most dispatches depend on the previous one; the kept version gains 2–6 % |
 | dev39 | expert tail + next RMSNorm in one single-threadgroup kernel (−3 barriers per layer) | 79.1 vs 84.4 tok/s (5 pairs) | the 10-expert weighted sum on one GPU core costs more than the barriers; the parallel tail without the RMSNorm is kept (+1.6 %) |
+| dev40 | prefill expert tiles of 32 (expert, token) pairs instead of 16 (each 32-row weight tile decoded once for twice the pairs), 128 threads with doubled per-thread accumulators | IQ3_XXS 1100 / 8192 tokens 400 / 404 vs 872 / 914 tok/s, bit-identical logits | register spills |
+| dev40 | same with 256 threads (simdgroups 0-3 pairs 0-15, 4-7 pairs 16-31, per-thread work unchanged) | 1100: 886.5 / 866.2 / 878.0 vs 875.4 / 874.8 / 726.1; 8192: 921.6 / 906.8 / 909.2 vs 914.0 / 914.8 / 901.7 (medians 878.0 vs 874.8, 909.2 vs 914.0), bit-identical | re-decoding weights per 16-pair slice is not the prefill bound at these sizes |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -73,7 +75,9 @@ them.
 - **GitHub CI green (dev28): not reached.** GitHub refuses to start hosted jobs on this account
   ("recent account payments have failed or your spending limit needs to be increased"); the
   same steps pass in a Linux container. Needs the account's billing fixed.
-- **IQ3_XXS prefill vs llama.cpp:** 837 vs 861 tok/s at 1100 tokens with full residency (dev33).
+- **IQ3_XXS prefill vs llama.cpp:** 837 vs 861 tok/s at 1100 tokens with full residency (dev33). Re-measured
+  2026-10-01 at 547539f on an idle machine: native 859.4 (3 runs), 871.1 / 876.7 / 872.5 / 875.4 / 874.8 / 872.4
+  (A/B baselines), llama.cpp 878.8 (3 runs) on the same ids: about 0.6 % behind, inside run-to-run spread.
 - **4 GiB-cache prefill on a 24 GiB Mac: not measured.** The dev34 gain (3.3× fewer expert bytes
   loaded) is inferred from load counts, not measured on an M4 Pro.
 - **Dense stage tools on the IQ3_XXS GGUF.** The dev11–dev17 per-stage parity tools only accept
