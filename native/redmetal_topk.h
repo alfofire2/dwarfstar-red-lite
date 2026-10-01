@@ -22,6 +22,9 @@ redmetal_topk_pool_t redmetal_topk_pool_create(
     uint32_t iq1_m_grid_count);
 
 void redmetal_topk_pool_destroy(redmetal_topk_pool_t pool);
+/* dev37: slot size classes (at most RL_TOPK_MAX_CLASSES), before any slot is used; capacity becomes their sum */
+#define RL_TOPK_MAX_CLASSES 8u
+int redmetal_topk_pool_set_classes(redmetal_topk_pool_t pool, uint32_t n, const uint64_t *slot_bytes, const uint32_t *capacity);
 uint32_t redmetal_topk_pool_capacity(redmetal_topk_pool_t pool);
 uint32_t redmetal_topk_pool_slab_count(redmetal_topk_pool_t pool);
 uint64_t redmetal_topk_pool_allocated_bytes(redmetal_topk_pool_t pool);

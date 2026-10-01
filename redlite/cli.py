@@ -324,7 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--cache-mib", type=int, default=None,
         help="Routed-expert cache in MiB (default: every expert resident and preloaded when RAM >= 40 GiB and the "
-             "model's expert payload fits, e.g. 21312 for IQ2_XXS / 29376 for IQ3_XXS; otherwise 4096)",
+             "model's expert payload fits, e.g. 17316 for IQ2_XXS / 28800 for IQ3_XXS; otherwise 4096)",
     )
     s.add_argument("--batch", type=int, default=None, help="Prompt tokens per batched prefill chunk (default: 2048; 1 = token by token)")
     s.add_argument("-n", "--max-tokens", type=int, default=256, help="Maximum tokens per answer (default: 256)")

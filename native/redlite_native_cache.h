@@ -12,6 +12,9 @@ typedef struct {
     uint32_t expert;
 } rl_cache_key;
 
+#define RL_LRU_MAX_CLASSES 8u
+#define RL_LRU_MAX_LAYERS 256u
+
 typedef struct {
     rl_cache_key key;
     uint32_t slot_id;
@@ -31,6 +34,11 @@ typedef struct {
     rl_cache_entry *entries;
     uint32_t *index;        /* open-addressing hash of resident keys -> entry index + 1 (0 = empty) */
     uint32_t index_mask;
+    /* dev37: size classes. Class c owns entries [class_first[c], class_first[c + 1]); a key of layer l lives in class
+     * layer_class[l] (layers >= RL_LRU_MAX_LAYERS: class 0). One class covering every entry after init. */
+    uint32_t n_class;
+    uint32_t class_first[RL_LRU_MAX_CLASSES + 1];
+    uint8_t layer_class[RL_LRU_MAX_LAYERS];
 } rl_native_lru;
 
 typedef struct {
@@ -51,6 +59,11 @@ typedef struct {
 
 int rl_native_lru_init(rl_native_lru *cache, uint32_t capacity);
 void rl_native_lru_free(rl_native_lru *cache);
+
+/* dev37: split the entries into n_class consecutive classes of class_capacity[c] entries (sum == capacity) and map
+ * each of n_layer layers to one; only while nothing is resident. Victims are chosen within the key's class. */
+int rl_native_lru_set_classes(rl_native_lru *cache, uint32_t n_class, const uint32_t *class_capacity,
+                              const uint8_t *layer_class, uint32_t n_layer);
 
 /*
  * Prepare a complete top-k selection without mutating resident metadata.

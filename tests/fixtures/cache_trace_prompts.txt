@@ -1,0 +1,6 @@
+Explain in detail how a transformer language model works, from tokenization to sampling.
+Write a Python implementation of a thread-safe LRU cache with TTL expiry, with unit tests.
+Solve step by step: a train leaves at 9:40 at 72 km/h, another at 10:15 at 96 km/h on the same track. When does the second catch up?
+Scrivi un racconto breve ambientato a Napoli negli anni cinquanta, con dialoghi.
+Tell a long fantasy story about a lighthouse keeper who discovers a door under the sea.
+List 40 practical tips for improving sleep quality, each with a one-sentence explanation.

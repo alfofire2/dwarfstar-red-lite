@@ -155,6 +155,29 @@ static int test_synthetic_gguf(void) {
     return 1;
 }
 
+/* dev37: size classes. Layer 0 -> class 0 (2 entries), layer 1 -> class 1 (3 entries): a class only evicts its own
+ * entries, slot ids stay inside the class range, and a selection larger than its class is refused. */
+static int test_lru_classes(void) {
+    rl_native_lru cache;
+    if (!rl_native_lru_init(&cache, 5u)) return 0;
+    const uint32_t cap[2] = {2u, 3u};
+    const uint8_t layer_class[2] = {0u, 1u};
+    char error[256];
+    int ok = rl_native_lru_set_classes(&cache, 2u, cap, layer_class, 2u);
+    rl_cache_key a[2] = {{0u, 1u}, {0u, 2u}}, b[3] = {{1u, 1u}, {1u, 2u}, {1u, 3u}}, c[1] = {{0u, 3u}}, big[3] = {{0u, 4u}, {0u, 5u}, {0u, 6u}};
+    uint32_t slots[3];
+    ok = ok && rl_native_lru_acquire_many(&cache, a, 2u, slots, error, sizeof(error)) && slots[0] < 2u && slots[1] < 2u;
+    ok = ok && rl_native_lru_acquire_many(&cache, b, 3u, slots, error, sizeof(error)) && slots[0] >= 2u && slots[1] >= 2u && slots[2] >= 2u;
+    /* a new layer-0 expert must evict the oldest layer-0 entry (expert 1), never the newer layer-1 entries */
+    ok = ok && rl_native_lru_acquire_many(&cache, c, 1u, slots, error, sizeof(error)) && slots[0] < 2u;
+    ok = ok && !rl_native_lru_lookup(&cache, a[0], NULL) && rl_native_lru_lookup(&cache, a[1], NULL);
+    for (uint32_t i = 0; i < 3u; ++i) ok = ok && rl_native_lru_lookup(&cache, b[i], NULL);
+    ok = ok && !rl_native_lru_acquire_many(&cache, big, 3u, slots, error, sizeof(error));
+    ok = ok && !rl_native_lru_set_classes(&cache, 2u, cap, layer_class, 2u);   /* refused once entries are resident */
+    rl_native_lru_free(&cache);
+    return ok;
+}
+
 static int test_lru_transaction(void) {
     rl_native_lru cache;
     if (!rl_native_lru_init(&cache, 2u)) return 0;
@@ -225,6 +248,7 @@ static int test_lru_transaction(void) {
 int main(void) {
     if (!test_synthetic_gguf()) return 1;
     if (!test_lru_transaction()) return 1;
+    if (!test_lru_classes()) { fprintf(stderr, "LRU size class test failed\n"); return 1; }
     printf("synthetic GGUF      : OK\n");
     printf("native layer info  : OK\n");
     printf("expert slicing     : OK\n");
