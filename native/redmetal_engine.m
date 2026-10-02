@@ -472,6 +472,88 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    float o = simd_sum(s * q[kh * state_size + i]); if (simd_lane == 0) red[simd_id] = o; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (i == 0u) { float total = 0.0f; for (uint n = 0; n < nsimd; ++n) total += red[n]; out[h * state_size + j] = total * (1.0f / sqrt((float)state_size)); }\n"
 "}\n"
+/* ---- dev45: the DeltaNet kernels for the two verify rows, one dispatch each; every row's arithmetic is the 1-row
+ *      kernel's, row 1 starts from row 0's state, and the state after row 0 is written to the snapshot buffers ---- */
+"kernel void dn_ba_params2(device uint *rl_abort [[buffer(30)]], device const float *ba [[buffer(0)]], device const float *dt [[buffer(1)]], device const float *avec [[buffer(2)]],\n"
+"    device float *beta [[buffer(3)]], device float *gate [[buffer(4)]], constant uint &dt_rank [[buffer(5)]], constant uint &n_group [[buffer(6)]],\n"
+"    device const float *ba1 [[buffer(7)]], device float *beta1 [[buffer(8)]], device float *gate1 [[buffer(9)]], uint g2 [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    if (g2 >= 2u * dt_rank) return; const uint row = g2 / dt_rank; const uint gid = g2 - row * dt_rank;\n"
+"    device const float *b_ = row ? ba1 : ba; device float *be = row ? beta1 : beta; device float *ga = row ? gate1 : gate;\n"
+"    const uint width = dt_rank / n_group; const uint group = gid / width; const uint local = gid - group * width;\n"
+"    const uint stride = 2u * width; const float b = b_[group * stride + local]; const float alpha = b_[group * stride + width + local] + dt[gid];\n"
+"    be[gid] = 1.0f / (1.0f + exp(-b)); const float sp = alpha > 20.0f ? alpha : log(1.0f + exp(alpha)); ga[gid] = sp * avec[gid];\n"
+"}\n"
+"kernel void dn_conv_shift2(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *qkv [[buffer(1)]], device const float *conv_w [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant uint &channels [[buffer(4)]], constant uint &dconv [[buffer(5)]], device const float *qkv1 [[buffer(6)]],\n"
+"    device float *out1 [[buffer(7)]], device float *snap [[buffer(8)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    if (gid >= channels) return; const uint ns = dconv - 1u; const uint sb = gid * ns; const uint kb = gid * dconv;\n"
+"    float s[8]; for (uint j = 0; j < ns; ++j) s[j] = state[sb + j];\n"
+"    float acc = 0.0f; for (uint j = 0; j < ns; ++j) acc = fma(s[j], conv_w[kb + j], acc);\n"
+"    acc = fma(qkv[gid], conv_w[kb + ns], acc); out[gid] = acc / (1.0f + exp(-acc));\n"
+"    for (uint j = 0; j + 1u < ns; ++j) s[j] = s[j + 1u]; s[ns - 1u] = qkv[gid];\n"
+"    for (uint j = 0; j < ns; ++j) snap[sb + j] = s[j];\n"
+"    float acc1 = 0.0f; for (uint j = 0; j < ns; ++j) acc1 = fma(s[j], conv_w[kb + j], acc1);\n"
+"    acc1 = fma(qkv1[gid], conv_w[kb + ns], acc1); out1[gid] = acc1 / (1.0f + exp(-acc1));\n"
+"    for (uint j = 0; j + 1u < ns; ++j) s[j] = s[j + 1u]; s[ns - 1u] = qkv1[gid];\n"
+"    for (uint j = 0; j < ns; ++j) state[sb + j] = s[j];\n"
+"}\n"
+"kernel void dn_qk_l2_2(device uint *rl_abort [[buffer(30)]], device const float *src [[buffer(0)]], device float *q [[buffer(1)]], device float *k [[buffer(2)]],\n"
+"    constant uint &head_dim [[buffer(3)]], constant uint &heads [[buffer(4)]], constant float &eps [[buffer(5)]],\n"
+"    device const float *src1 [[buffer(6)]], device float *q1 [[buffer(7)]], device float *k1 [[buffer(8)]],\n"
+"    uint tg2 [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    threadgroup float red[32]; const uint row = tg2 / (2u * heads); const uint tg = tg2 - row * 2u * heads;\n"
+"    device const float *sr = row ? src1 : src; device float *qq = row ? q1 : q; device float *kk = row ? k1 : k;\n"
+"    const uint which = tg / heads; const uint head = tg - which * heads;\n"
+"    const uint base = which * heads * head_dim + head * head_dim; const float x = i < head_dim ? sr[base + i] : 0.0f;\n"
+"    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint s = 0; s < (head_dim + 31u) / 32u; ++s) total += red[s];\n"
+"    const float scale = 1.0f / max(sqrt(total), eps);\n"
+"    if (i < head_dim) { if (which == 0u) qq[head * head_dim + i] = x * scale; else kk[head * head_dim + i] = x * scale; }\n"
+"}\n"
+"kernel void dn_state2(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    device const float *q1 [[buffer(10)]], device const float *k1 [[buffer(11)]], device const float *v1 [[buffer(12)]], device const float *gate1 [[buffer(13)]],\n"
+"    device const float *beta1 [[buffer(14)]], device float *out1 [[buffer(15)]], device float *snap [[buffer(16)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    threadgroup float red[32]; const uint h = tg / state_size; const uint j = tg - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint nsimd = state_size / 32u; const uint idx = (h * state_size + j) * state_size + i;\n"
+"    float s = state[idx];\n"
+"    for (uint row = 0; row < 2u; ++row) {\n"
+"        device const float *qq = row ? q1 : q; device const float *kk = row ? k1 : k; device const float *vv = row ? v1 : v;\n"
+"        device const float *gg = row ? gate1 : gate; device const float *bb = row ? beta1 : beta; device float *oo = row ? out1 : out;\n"
+"        s = s * exp(gg[h]); const float ki = kk[kh * state_size + i];\n"
+"        float part = simd_sum(s * ki); if (simd_lane == 0) red[simd_id] = part; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        float sum = 0.0f; for (uint n = 0; n < nsimd; ++n) sum += red[n];\n"
+"        const float delta = (vv[h * state_size + j] - sum) * bb[h];\n"
+"        s += ki * delta;\n"
+"        if (row == 0u) snap[idx] = s; else state[idx] = s;\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        float o = simd_sum(s * qq[kh * state_size + i]); if (simd_lane == 0) red[simd_id] = o; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"        if (i == 0u) { float total = 0.0f; for (uint n = 0; n < nsimd; ++n) total += red[n]; oo[h * state_size + j] = total * (1.0f / sqrt((float)state_size)); }\n"
+"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    }\n"
+"}\n"
+"kernel void dn_tail_norm2(device uint *rl_abort [[buffer(30)]], device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
+"    device const float *core1 [[buffer(7)]], device const float *z1 [[buffer(8)]], device float *out1 [[buffer(9)]],\n"
+"    uint h2 [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
+"    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    threadgroup float red[32]; const uint row = h2 / heads; const uint h = h2 - row * heads; if (row >= 2u) return;\n"
+"    device const float *cc = row ? core1 : core; device const float *zz = row ? z1 : z; device float *oo = row ? out1 : out;\n"
+"    const uint base = h * head_dim; const float x = i < head_dim ? cc[base + i] : 0.0f;\n"
+"    float ss = simd_sum(x * x); if (simd_lane == 0) red[simd_id] = ss; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+"    float total = 0.0f; for (uint n = 0; n < (head_dim + 31u) / 32u; ++n) total += red[n];\n"
+"    const float inv = rsqrt(total / float(head_dim) + eps);\n"
+"    if (i < head_dim) { const float g = zz[base + i]; const float silu = g / (1.0f + exp(-g)); oo[base + i] = x * inv * w[i] * silu; }\n"
+"}\n"
 "kernel void dn_tail_norm(device uint *rl_abort [[buffer(30)]], device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
 "    uint h [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -935,6 +1017,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             {&m->p_r2_f32, @"rl_rows2r2_f32"}, {&m->p_r2_q8, @"rl_rowsr2_q8"}, {&m->p_r2_q4k, @"rl_rows2r2_q4k"},
             {&m->p_r2_q5k, @"rl_rowsr2_q5k"}, {&m->p_r2_q6k, @"rl_rows2r2_q6k"}, {&m->p_r2_iq2xxs, @"rl_rows2r2_iq2xxs"},
+            {&m->p_dn_ba2, @"dn_ba_params2"}, {&m->p_dn_convshift2, @"dn_conv_shift2"}, {&m->p_dn_l2_2, @"dn_qk_l2_2"},
+            {&m->p_dn_state2, @"dn_state2"}, {&m->p_dn_tail2, @"dn_tail_norm2"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
             *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -1581,6 +1665,51 @@ static void emit_sh_silu(rl_metal_engine *m, emitter *em, const mlayer *w) {
     [enc setBytes:&ffn length:4 atIndex:3]; enc_1d(enc, m->p_sh_silu, ffn, 64u);
 }
 
+/* the DeltaNet kernels of one layer for both verify rows: 5 dispatches; conv_state/rec_state end after row 1, the
+ * snapshots hold the state after row 0 */
+static void emit_recurrent_mid2(rl_engine *e, emitter *em, const rl_layer_tensors *t, const mlayer *w) {
+    rl_metal_engine *m = em->m;
+    const rl_engine_info *in = &e->info;
+    const uint32_t r = t->recurrent_index;
+    const uint32_t channels = in->channels, dconv = in->d_conv, rank = in->dt_rank, groups = in->n_group, S = in->d_state;
+    const uint32_t qk_each = S * groups, head_v = in->head_v;
+    const uint32_t kv_ratio = rank / groups;
+    const float eps = in->rms_eps;
+    id<MTLComputeCommandEncoder> enc = em_enc(em);
+    em_group(em, 1);   /* ba (both rows) and conv + shift (both rows) are independent */
+    [enc setComputePipelineState:m->p_dn_ba2];
+    [enc setBuffer:m->ba offset:0 atIndex:0]; [enc setBuffer:w->dt.buf offset:w->dt.off atIndex:1]; [enc setBuffer:w->a.buf offset:w->a.off atIndex:2];
+    [enc setBuffer:m->beta offset:0 atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4];
+    [enc setBytes:&rank length:4 atIndex:5]; [enc setBytes:&groups length:4 atIndex:6];
+    [enc setBuffer:ALT(ba) offset:0 atIndex:7]; [enc setBuffer:ALT(beta) offset:0 atIndex:8]; [enc setBuffer:ALT(gate) offset:0 atIndex:9];
+    enc_1d(enc, m->p_dn_ba2, 2u * rank, 64u);
+    [enc setComputePipelineState:m->p_dn_convshift2];
+    [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:w->conv.buf offset:w->conv.off atIndex:2];
+    [enc setBuffer:m->conv_silu offset:0 atIndex:3]; [enc setBytes:&channels length:4 atIndex:4]; [enc setBytes:&dconv length:4 atIndex:5];
+    [enc setBuffer:ALT(qkv) offset:0 atIndex:6]; [enc setBuffer:ALT(conv_silu) offset:0 atIndex:7]; [enc setBuffer:m->snap_conv[r] offset:0 atIndex:8];
+    enc_1d(enc, m->p_dn_convshift2, channels, 64u);
+    em_group(em, 0);
+    [enc setComputePipelineState:m->p_dn_l2_2];
+    [enc setBuffer:m->conv_silu offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
+    [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
+    [enc setBuffer:ALT(conv_silu) offset:0 atIndex:6]; [enc setBuffer:ALT(q) offset:0 atIndex:7]; [enc setBuffer:ALT(k) offset:0 atIndex:8];
+    [enc dispatchThreadgroups:MTLSizeMake(4u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
+    const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
+    [enc setComputePipelineState:m->p_dn_state2];
+    [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
+    [enc setBuffer:m->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4]; [enc setBuffer:m->beta offset:0 atIndex:5];
+    [enc setBuffer:m->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
+    [enc setBuffer:ALT(q) offset:0 atIndex:10]; [enc setBuffer:ALT(k) offset:0 atIndex:11]; [enc setBuffer:ALT(conv_silu) offset:v_offset atIndex:12];
+    [enc setBuffer:ALT(gate) offset:0 atIndex:13]; [enc setBuffer:ALT(beta) offset:0 atIndex:14]; [enc setBuffer:ALT(core) offset:0 atIndex:15];
+    [enc setBuffer:m->snap_rec[r] offset:0 atIndex:16];
+    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
+    [enc setComputePipelineState:m->p_dn_tail2];
+    [enc setBuffer:m->core offset:0 atIndex:0]; [enc setBuffer:m->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
+    [enc setBuffer:m->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
+    [enc setBuffer:ALT(core) offset:0 atIndex:7]; [enc setBuffer:ALT(z) offset:0 atIndex:8]; [enc setBuffer:ALT(ng) offset:0 atIndex:9];
+    [enc dispatchThreadgroups:MTLSizeMake(2u * rank, 1, 1) threadsPerThreadgroup:MTLSizeMake(head_v, 1, 1)]; rl_after_dispatch(enc);
+}
+
 static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint32_t position, char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
@@ -1590,8 +1719,10 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
     for (uint32_t l = 0; l < in->n_layer; ++l) {
         const rl_layer_tensors *t = &e->layers[l];
         const mlayer *w = &m->layers[l];
+        em_group(em, 1);   /* the two rows' independent kernels share one barrier */
         emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
         emit_rms(m, em_enc(em), ALT(x), &w->attn_norm, ALT(normed), hidden, eps);
+        em_group(em, 0);
         if (t->kind == RL_LAYER_MAP_RECURRENT) {
             const uint32_t r = t->recurrent_index;
             em_group(em, 1);
@@ -1599,16 +1730,20 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
             emit_rows_r2(m, em_enc(em), &w->z, m->normed, ALT(normed), m->z, ALT(z));
             emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
             em_group(em, 0);
-            emit_recurrent_mid(e, em, t, w);
-            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-            em_group(em, 1);   /* snapshot of the state after row 0 (measured free: it overlaps the next kernels) */
-            em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
-            em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
-            em_group(em, 0);
-            swap_rows(m);
-            emit_recurrent_mid(e, em, t, w);
-            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-            swap_rows(m);
+            if (e->info.d_conv <= 9u && m->p_dn_state2) {
+                emit_recurrent_mid2(e, em, t, w);
+            } else {
+                emit_recurrent_mid(e, em, t, w);
+                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+                em_group(em, 1);   /* snapshot of the state after row 0 */
+                em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
+                em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
+                em_group(em, 0);
+                swap_rows(m);
+                emit_recurrent_mid(e, em, t, w);
+                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+                swap_rows(m);
+            }
             emit_rows_r2(m, em_enc(em), &w->ssm_out, m->ng, ALT(ng), m->branch, ALT(branch));
         } else {
             em_group(em, 1);
@@ -1622,8 +1757,10 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
             swap_rows(m);
             emit_rows_r2(m, em_enc(em), &w->o, m->gated, ALT(gated), m->branch, ALT(branch));
         }
+        em_group(em, 1);
         emit_resid_rms(m, em, w, hidden, eps);
         swap_rows(m); emit_resid_rms(m, em, w, hidden, eps); swap_rows(m);
+        em_group(em, 0);
         em_group(em, 1);   /* router, shared scalar, shared gate, shared up: all read ffn_in only */
         emit_rows_r2(m, em_enc(em), &w->router, m->ffn_in, ALT(ffn_in), m->router_logits, ALT(router_logits));
         emit_sh_scalar(m, em, w, hidden);
@@ -1631,8 +1768,10 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
         emit_rows_r2(m, em_enc(em), &w->sh_gate, m->ffn_in, ALT(ffn_in), m->sh_gate, ALT(sh_gate));
         emit_rows_r2(m, em_enc(em), &w->sh_up, m->ffn_in, ALT(ffn_in), m->sh_up, ALT(sh_up));
         em_group(em, 0);
+        em_group(em, 1);
         emit_sh_silu(m, em, w);
         swap_rows(m); emit_sh_silu(m, em, w); swap_rows(m);
+        em_group(em, 0);
         emit_rows_r2(m, em_enc(em), &w->sh_down, m->sh_act, ALT(sh_act), m->sh_out, ALT(sh_out));
         if (!emit_layer_experts(e, em, l, resident, error, cap)) return 0;
         swap_rows(m);
@@ -1640,8 +1779,10 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
         swap_rows(m);
         if (!ok) return 0;
     }
+    em_group(em, 1);
     emit_rms(m, em_enc(em), m->x, &m->output_norm, m->final_norm, hidden, eps);
     emit_rms(m, em_enc(em), ALT(x), &m->output_norm, ALT(final_norm), hidden, eps);
+    em_group(em, 0);
     emit_rows_r2(m, em_enc(em), &m->output, m->final_norm, ALT(final_norm), m->logits, ALT(logits));
     return 1;
 }
