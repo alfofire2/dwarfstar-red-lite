@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="401" viewBox="0 0 810 401">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="401"/>
+<text class="t" x="10" y="24">MTP speculative decoding, M4 Max 48 GiB, IQ2_XXS, every expert resident</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">plain</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">--mtp</text>
+<text class="l" x="222" y="98" text-anchor="end">transformer explanation</text>
+<rect x="230" y="76" width="365.6" height="15" rx="2" fill="#d64545"/><text class="v" x="600.6" y="88">80.77</text>
+<rect x="230" y="94" width="426.6" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="661.6" y="106">94.26</text>
+<text class="l" x="222" y="144" text-anchor="end">Python LRU cache</text>
+<rect x="230" y="122" width="367.5" height="15" rx="2" fill="#d64545"/><text class="v" x="602.5" y="134">81.2</text>
+<rect x="230" y="140" width="462.8" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="697.8" y="152">102.25</text>
+<text class="l" x="222" y="190" text-anchor="end">train arithmetic</text>
+<rect x="230" y="168" width="361.6" height="15" rx="2" fill="#d64545"/><text class="v" x="596.6" y="180">79.88</text>
+<rect x="230" y="186" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="198">103.84</text>
+<text class="l" x="222" y="236" text-anchor="end">Italian short story</text>
+<rect x="230" y="214" width="364.1" height="15" rx="2" fill="#d64545"/><text class="v" x="599.1" y="226">80.45</text>
+<rect x="230" y="232" width="395.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="630.0" y="244">87.28</text>
+<text class="l" x="222" y="282" text-anchor="end">fantasy story</text>
+<rect x="230" y="260" width="364.8" height="15" rx="2" fill="#d64545"/><text class="v" x="599.8" y="272">80.6</text>
+<rect x="230" y="278" width="401.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="636.2" y="290">88.64</text>
+<text class="l" x="222" y="328" text-anchor="end">40 sleep tips</text>
+<rect x="230" y="306" width="364.9" height="15" rx="2" fill="#d64545"/><text class="v" x="599.9" y="318">80.61</text>
+<rect x="230" y="324" width="452.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="687.0" y="336">99.87</text>
+<text class="n" x="10" y="391">tok/s. 256 greedy tokens per prompt, alternated runs with 40 s cooling; output identical token for token.</text>
+</svg>

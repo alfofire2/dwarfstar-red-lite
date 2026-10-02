@@ -101,8 +101,9 @@ them.
 - **IQ3_XXS prefill vs llama.cpp:** 837 vs 861 tok/s at 1100 tokens with full residency (dev33). Re-measured
   2026-10-01 at 547539f on an idle machine: native 859.4 (3 runs), 871.1 / 876.7 / 872.5 / 875.4 / 874.8 / 872.4
   (A/B baselines), llama.cpp 878.8 (3 runs) on the same ids: about 0.6 % behind, inside run-to-run spread.
-- **4 GiB-cache prefill on a 24 GiB Mac: not measured.** The dev34 gain (3.3× fewer expert bytes
-  loaded) is inferred from load counts, not measured on an M4 Pro.
+- **4 GiB-cache prefill on a 24 GiB Mac: measured in dev47.** 280.8 tok/s (1100 tokens) and 349.8 tok/s
+  (8192 tokens) on the M4 Pro 24 GiB. The dev34 gain alone (3.3× fewer expert bytes loaded) was not isolated
+  there.
 - **Dense stage tools on the IQ3_XXS GGUF.** The dev11–dev17 per-stage parity tools only accept
   the IQ2_XXS dense layout; `regress_m4.sh` reports 13 SKIPs on the IQ3_XXS file.
 - **IQ3_M on this Mac (dev36): runs, but is not worth it.** The file is supported since dev36
@@ -117,7 +118,8 @@ them.
     slower than IQ3_XXS for no measurable quality gain.
 - **IQ3_XS, IQ4_XS: not run.** Header reads (no download) show IQ3_XS needs no new type and would fit
   at full residency only under the old 75 % rule; IQ4_XS (39168 MiB of experts) does not fit this Mac.
-- **Speculative decoding (dev37): not started.** The IQ2_XXS / IQ3 GGUFs carry no Qwen3-Next
+- **Speculative decoding (dev37): not started then, done in dev45** with the MTP block from a separate file
+  ([DEV45](REDLITE_DEV45_MTP.md)). The 2026-09 reasoning, still valid for 24 GiB Macs: the IQ2_XXS / IQ3 GGUFs carry no Qwen3-Next
   multi-token-prediction layers (48 blocks, no `nextn` keys), so the MTP-based methods do not apply.
   Training-free drafts (prompt lookup, a reduced-expert self-draft) need a cheap multi-token
   verification, and the batched prefill path is slower than decode at small batches: 8-token chunks

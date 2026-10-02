@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="206" viewBox="0 0 810 206">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="206"/>
+<text class="t" x="10" y="24">Decode speed, M4 Pro 24 GiB, IQ2_XXS</text>
+<text class="l" x="222" y="71" text-anchor="end">native dev18 (Sep 2026)</text>
+<rect x="230" y="58" width="358.6" height="15" rx="2" fill="#d64545"/><text class="v" x="593.6" y="70">27.77</text>
+<text class="l" x="222" y="99" text-anchor="end">native 0.4.1 + dev47 (Oct 2026)</text>
+<rect x="230" y="86" width="426.1" height="15" rx="2" fill="#d64545"/><text class="v" x="661.1" y="98">33</text>
+<text class="l" x="222" y="127" text-anchor="end">llama.cpp launcher 0.2</text>
+<rect x="230" y="114" width="470.0" height="15" rx="2" fill="#8c959f"/><text class="v" x="705.0" y="126">36.4-38.0</text>
+<text class="n" x="10" y="181">tok/s. Native: 4 GiB expert cache (about 5 GiB in use). llama.cpp launcher: whole 18 GiB model resident, 2K/4K context, range</text>
+<text class="n" x="10" y="196">of the sweep.</text>
+</svg>

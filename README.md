@@ -29,7 +29,7 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 | Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
 | Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
 | Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
-| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0, 0.4.1; both GGUFs); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
+| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0, 0.4.1, dev42–dev47; both GGUFs); M4 Pro 24 GiB (dev18 build, and the dev47 build of 2026-10-02) | M4 Pro 24 GiB |
 
 ## Native runtime: quick start
 
@@ -44,6 +44,16 @@ M=models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
 .deps/redmetal/redlite-engine info $M          # layout, and the cache that holds every expert of this file
 ```
 
+**Faster answers with MTP (48 GiB Macs).** `./bin/redlite download mtp --dir models` fetches the 2.26 GiB
+multi-token-prediction head. When it sits in `models/` and every expert is resident, `redlite chat` and
+`redlite serve --native` decode speculatively: one extra token is drafted and checked per step, and the
+answer is **exactly** the one plain decoding gives, with any sampler. Typical gain: +8 % (creative prose) to
++30 % (code, arithmetic). `--no-mtp` turns it off.
+
+**Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
+prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored
+session is bit-identical to a cold one.
+
 On a Mac with 40 GiB or more, put Bartowski's `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf`
 in `models/` too: `redlite chat` then picks it (see *Chat defaults*). A release tarball of
 the three binaries is built by `scripts/package_release.sh`.
@@ -57,7 +67,7 @@ the three binaries is built by `scripts/package_release.sh`.
 - Answer length: 256 tokens.
 - Temperature: 0.7 (`--temperature 0` is greedy and deterministic).
 - Expert cache: with 40 GiB or more, every expert of the file resident and preloaded,
-  sized from the file's expert payload (21,312 MiB for IQ2_XXS, 29,376 MiB for IQ3_XXS;
+  sized from the file's expert payload (17,316 MiB for IQ2_XXS, 28,800 MiB for IQ3_XXS since dev37;
   `--cache-mib full` in the binaries); tokens are then routed on the GPU in one command
   buffer. Otherwise 4096 MiB.
 - Prompts are ingested by a batched prefill in chunks of 2048 tokens (`--batch`); with a
@@ -72,6 +82,20 @@ engine state and only ingests the new tokens (second-turn first token 3.8 s → 
 an 1185-token conversation); any other request resets. `stop` sequences are supported.
 
 ## Measured performance
+
+<p align="center">
+  <img src="docs/img/decode_m4max.svg" alt="Decode speed on the M4 Max by release, with the llama.cpp reference">
+  <img src="docs/img/prefill_m4max.svg" alt="Prompt ingestion of 8192 tokens on the M4 Max by release">
+  <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB">
+</p>
+
+In short:
+- **48 GiB, every expert resident:** decode is 12 % faster than the pinned llama.cpp (81.2 vs 72.5 tok/s),
+  97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4× slower than llama.cpp (0.3.0) to on par.
+- **24 GiB:** the native runtime needs about 5 GiB where the llama.cpp launcher keeps the whole 18 GiB model
+  resident. It decodes 33 tok/s, still below the launcher's 36–38, and ingests prompts at 280–350 tok/s.
+- Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from
+  `benchmarks/charts.json` by `scripts/dev/make_charts.py`.
 
 **Method.** Greedy decode of 256 tokens after a short chat prompt; prefill of the first
 N ids of `tests/fixtures/long_context_prompt.txt`; `scripts/dev/bench_m4.sh --reps 3
@@ -121,9 +145,10 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
 `benchmarks/m4pro-24gb-native-dev18.json`, `benchmarks/m4pro-24gb-sweep-2026-09-02.json`
 (the launcher's 4K/8K rows there are context sizes, not decode positions).
 
-**Neither 0.3.0 nor 0.4.x has been measured on a 24 GiB M4 Pro or a 16 GiB M4 Air.** The
-4 GiB configuration is the one intended for 24 GiB machines; there, some expert misses
-will be SSD reads instead of page-cache copies.
+**M4 Pro 24 GiB, dev47 build** (commit 91481ea, 2026-10-02, AC power, IQ2_XXS, 4 GiB cache;
+`scripts/dev/small_mac_session.sh`): decode 33.00 tok/s, prefill 280.8 tok/s (1100 tokens) and 349.8 tok/s
+(8192 tokens); native outputs bit-identical to the M4 Max's. Record: `benchmarks/m4pro-24gb-2026-10-02.json`,
+`docs/REDLITE_DEV47_LONG_CONTEXT.md`. Nothing has been measured on a 16 GiB Mac.
 
 ## Correctness
 

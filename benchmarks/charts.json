@@ -1,0 +1,98 @@
+{
+  "_readme": "Data of the charts in docs/img/, drawn by scripts/dev/make_charts.py. Every value is copied from the measured record named in its chart's sources; add a row when a milestone measures something new, then run the script. Bars: label, values (one per series), optional text shown instead of the first value, optional muted (grey: a comparison, not Red Lite).",
+  "charts": [
+    {
+      "id": "decode_m4max",
+      "title": "Decode speed, M4 Max 48 GiB, IQ2_XXS, every expert resident",
+      "unit": "tok/s",
+      "note": "bench_m4.sh: 256 greedy tokens, median of 3 cooled runs. MTP: median of six prompts, 256 tokens each, output identical.",
+      "series": ["Red Lite"],
+      "reference": {"label": "llama.cpp (pinned)", "value": 72.46},
+      "bars": [
+        {"label": "0.3.0", "values": [71.5]},
+        {"label": "0.4.0", "values": [71.15]},
+        {"label": "0.4.1", "values": [81.15]},
+        {"label": "dev45 + MTP (6-prompt median)", "values": [97.07]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json", "benchmarks/m4max-48gb-dev45-mtp.json"]
+    },
+    {
+      "id": "prefill_m4max",
+      "title": "Prompt ingestion, 8192 tokens, M4 Max 48 GiB, IQ2_XXS, 4 GiB expert cache",
+      "unit": "tok/s",
+      "note": "bench_m4.sh prefill8192, median of 3 cooled runs; llama.cpp holds every weight resident.",
+      "series": ["Red Lite"],
+      "reference": {"label": "llama.cpp (pinned)", "value": 893.71},
+      "bars": [
+        {"label": "0.3.0", "values": [212.6]},
+        {"label": "0.4.0", "values": [645.6]},
+        {"label": "0.4.1", "values": [898.9]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json"]
+    },
+    {
+      "id": "mtp",
+      "title": "MTP speculative decoding, M4 Max 48 GiB, IQ2_XXS, every expert resident",
+      "unit": "tok/s",
+      "note": "256 greedy tokens per prompt, alternated runs with 40 s cooling; output identical token for token.",
+      "series": ["plain", "--mtp"],
+      "bars": [
+        {"label": "transformer explanation", "values": [80.77, 94.26]},
+        {"label": "Python LRU cache", "values": [81.20, 102.25]},
+        {"label": "train arithmetic", "values": [79.88, 103.84]},
+        {"label": "Italian short story", "values": [80.45, 87.28]},
+        {"label": "fantasy story", "values": [80.60, 88.64]},
+        {"label": "40 sleep tips", "values": [80.61, 99.87]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-dev45-mtp.json"]
+    },
+    {
+      "id": "decode_m4pro",
+      "title": "Decode speed, M4 Pro 24 GiB, IQ2_XXS",
+      "unit": "tok/s",
+      "note": "Native: 4 GiB expert cache (about 5 GiB in use). llama.cpp launcher: whole 18 GiB model resident, 2K/4K context, range of the sweep.",
+      "series": ["decode"],
+      "bars": [
+        {"label": "native dev18 (Sep 2026)", "values": [27.77]},
+        {"label": "native 0.4.1 + dev47 (Oct 2026)", "values": [33.0]},
+        {"label": "llama.cpp launcher 0.2", "values": [36.4], "text": "36.4-38.0", "muted": true}
+      ],
+      "sources": ["benchmarks/m4pro-24gb-native-dev18.json", "benchmarks/m4pro-24gb-2026-10-02.json", "benchmarks/m4pro-24gb-sweep-2026-09-02.json"]
+    },
+    {
+      "id": "cache_ab_m4pro",
+      "title": "Expert cache options on a 24 GiB Mac (M4 Pro, 4 GiB cache, IQ2_XXS)",
+      "unit": "tok/s",
+      "note": "small_mac_ab.sh: six prompts x 256 tokens, 60 s cooling, median decode. Cache bias changes the output (opt-in).",
+      "series": ["decode"],
+      "bars": [
+        {"label": "no prefetch", "values": [29.22]},
+        {"label": "uniform slots (0.4.0)", "values": [32.18]},
+        {"label": "F_NOCACHE reads", "values": [32.60]},
+        {"label": "default (slot classes)", "values": [32.68]},
+        {"label": "cache bias 0.5 (opt-in)", "values": [34.31]}
+      ],
+      "sources": ["benchmarks/m4pro-24gb-2026-10-02.json"]
+    },
+    {
+      "id": "token_time",
+      "title": "Where one decode token's GPU time goes (M4 Max, IQ2_XXS, dev38)",
+      "unit": "ms",
+      "note": "RL_ENGINE_PROFILE=1, every expert resident, each stage timed on its own (sum 12.0 ms). A real token takes 12.1 ms wall, 11.7 ms of GPU.",
+      "series": ["ms per token"],
+      "bars": [
+        {"label": "routed experts", "values": [4.071]},
+        {"label": "DeltaNet projections", "values": [1.748]},
+        {"label": "shared expert", "values": [1.071]},
+        {"label": "DeltaNet tail", "values": [0.890]},
+        {"label": "DeltaNet state", "values": [0.583]},
+        {"label": "output head", "values": [0.567]},
+        {"label": "attention", "values": [0.551]},
+        {"label": "router", "values": [0.512]},
+        {"label": "attention projections", "values": [0.488]},
+        {"label": "norms, residuals, small steps", "values": [1.496]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-dev38-decode.json"]
+    }
+  ]
+}
