@@ -75,7 +75,7 @@ DeltaNet kernels, 16.2 ms with the merged experts (one plain step: about 12 ms).
 
 ## Validation
 
-GATES_LINE
+`rm -rf .deps/redmetal`, `make redmetal`, `make native`, `make sanitize`: 0 warnings; `make test` and ruff green; `scripts/regress_m4.sh`: IQ2_XXS **51/51**, IQ3_XXS **38 passed, 0 failed, 13 skipped**, both including the new `generate.mtp_greedy` (48 greedy tokens with `--mtp` identical to plain decode); `quick_parity.sh --long --batch 2048` on both models: PASS. Speculation is never used by default, so the other checks run the unchanged decode path.
 
 ## Scope boundary
 
