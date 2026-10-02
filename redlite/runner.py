@@ -82,6 +82,7 @@ def run_native_chat(
     batch: int | None = None,
     json_stats: bool = False,
     min_p: float | None = None,
+    mtp: str | None = None,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -107,6 +108,8 @@ def run_native_chat(
         cmd.append("--json")
     if min_p is not None:
         cmd.extend(["--min-p", str(min_p)])
+    if mtp:
+        cmd.extend(["--mtp", mtp])
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0
@@ -121,6 +124,7 @@ def run_native_server(
     cache_mib: int,
     batch: int | None = None,
     dry_run: bool = False,
+    mtp: str | None = None,
 ) -> int:
     cmd = [
         str(native_server()), model,
@@ -131,6 +135,8 @@ def run_native_server(
     ]
     if batch is not None:
         cmd.extend(["--batch", str(batch)])
+    if mtp:
+        cmd.extend(["--mtp", mtp])
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

@@ -174,6 +174,15 @@ def cmd_run(args) -> int:
     return run_completion(args.model, plan, args.prompt, args.tokens, args.extra, args.dry_run, args.single_turn)
 
 
+def _mtp_for(model, cache_mib, args) -> str | None:
+    """dev45: pass the MTP head when it applies (full residency, Instruct file, head present); --no-mtp disables"""
+    from .planner import native_mtp_file
+    head = native_mtp_file(model, cache_mib, disabled=getattr(args, "no_mtp", False))
+    if head:
+        print(f"[redlite] MTP speculative decoding with {head.name} (same output as plain decoding; --no-mtp disables)")
+    return str(head) if head else None
+
+
 def cmd_chat(args) -> int:
     hw = detect(Path(args.model).parent if args.model else NATIVE_MODELS_DIR)
     _require_apple(hw)
@@ -199,6 +208,7 @@ def cmd_chat(args) -> int:
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
             batch=args.batch, json_stats=args.json, min_p=args.min_p,
+            mtp=_mtp_for(model, cache_mib, args),
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -230,7 +240,7 @@ def _serve_native(args) -> int:
     try:
         return run_native_server(
             str(model), args.host, args.port, args.context or 4096, cache_mib,
-            batch=args.batch, dry_run=args.dry_run,
+            batch=args.batch, dry_run=args.dry_run, mtp=_mtp_for(model, cache_mib, args),
         )
     except FileNotFoundError:
         _die("Native Red Lite server not built. Run: make native")
@@ -332,6 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--top-k", type=int, default=40, help="Top-k sampling candidates (default: 40; 0 = off)")
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
     s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
+    s.add_argument("--no-mtp", action="store_true", help="Do not use the MTP head for speculative decoding even when it applies")
     s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
     s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
     s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")
@@ -349,6 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="--native: routed-expert cache in MiB (default: the model's full-residency cache when RAM >= 40 GiB "
                         "and it fits, otherwise 4096)")
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
+    s.add_argument("--no-mtp", action="store_true", help="--native: do not use the MTP head for speculative decoding")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

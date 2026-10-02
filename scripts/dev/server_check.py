@@ -70,9 +70,12 @@ def stream_chat(port: int, body: dict) -> tuple[str, dict, float]:
     return content, usage, ttft
 
 
+SERVER_EXTRA: list = []   # dev45: --mtp FILE appends ["--mtp", FILE] to every server started here
+
+
 def start_server(bin_dir: Path, model: str, cache_mib: str, *extra: str):
     srv = subprocess.Popen(
-        [str(bin_dir / "redlite-server"), model, "--port", "0", "--cache-mib", cache_mib, *extra],
+        [str(bin_dir / "redlite-server"), model, "--port", "0", "--cache-mib", cache_mib, *SERVER_EXTRA, *extra],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     line = srv.stdout.readline()
@@ -149,8 +152,11 @@ def main() -> int:
     ap.add_argument("--cache-mib", default="2048")
     ap.add_argument("--max-tokens", type=int, default=32)
     ap.add_argument("--state-restart", action="store_true", help="only the dev43 --state-dir restart check")
+    ap.add_argument("--mtp", help="dev45: run every server with --mtp FILE (needs --cache-mib full); outputs must not change")
     args = ap.parse_args()
     bin_dir = Path(args.bin)
+    if args.mtp:
+        SERVER_EXTRA.extend(["--mtp", args.mtp])
     if args.state_restart:
         ok = state_restart(bin_dir, args.model, args.cache_mib, args.max_tokens)
         print(f"SERVER STATE CHECK: {'YES' if ok else 'NO'}")
@@ -165,7 +171,7 @@ def main() -> int:
     print(f"reference ({len(expected)} chars): {expected!r}")
 
     srv = subprocess.Popen(
-        [str(bin_dir / "redlite-server"), args.model, "--port", "0", "--cache-mib", args.cache_mib],
+        [str(bin_dir / "redlite-server"), args.model, "--port", "0", "--cache-mib", args.cache_mib, *SERVER_EXTRA],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     ok = False

@@ -54,6 +54,8 @@ typedef struct {
     uint32_t *history;     /* token ids the engine state holds, in order (context entries) */
     uint32_t history_len;
     rl_statecache states;  /* dev43 --state-dir: disk checkpoints when the in-memory state does not apply */
+    int speculate;         /* dev45 --mtp with every expert resident: MTP drafts + 2-row verify */
+    float *logits1;
 } engine_ctx;
 
 typedef struct {               /* wraps the server sink to time the first token */
@@ -124,7 +126,47 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     ttft_sink ts = {emit, sink, -1.0};
     uint32_t generated = 0, gpu_routed = 0;
     const double t_gen = now_ms();
-    while (ok) {
+    /* dev45: speculative decoding. The pending token u is emitted but not in the state yet (as in the plain loop);
+     * a cycle drafts d, verifies u and d, and puts u (and d when accepted) into the state and the history. */
+    uint32_t spec_cycles = 0, spec_accepted = 0;
+#define SRV_EMIT(tok, fin) do { \
+        if (rl_tokenizer_is_eog(c->tokenizer, (tok))) { fin = 1; break; } \
+        char piece_[512]; const int32_t n_ = rl_tokenizer_decode(c->tokenizer, (tok), piece_, sizeof(piece_)); \
+        if (n_ < 0) { snprintf(error, cap, "token decode failed"); ok = 0; fin = 1; break; } \
+        generated++; \
+        if (!ttft_emit(&ts, piece_, (size_t)n_)) { fin = 1; break; } \
+        if (generated >= req->max_tokens) { result->finish_length = 1; fin = 1; break; } \
+    } while (0)
+    if (ok && c->speculate && c->backend == RL_BACKEND_GPU) {
+        int fin = 0;
+        uint32_t u = rl_sampler_sample(&sampler, c->logits), mtp_pos = 0;
+        SRV_EMIT(u, fin);
+        if (!fin) {   /* one plain step so the hidden state the MTP block reads belongs to u's position */
+            if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) ok = 0;
+            else { c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin); }
+        }
+        while (ok && !fin) {
+            if (rl_engine_position(c->engine, c->backend) + 2u > c->info->context) {   /* no room for two rows: plain step */
+                if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) { ok = 0; break; }
+                c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin);
+                continue;
+            }
+            uint32_t d = 0;
+            if (!rl_engine_mtp_draft(c->engine, u, mtp_pos++, &d, NULL, error, cap) ||
+                !rl_engine_verify2(c->engine, u, d, c->logits, c->logits1, error, cap)) { ok = 0; break; }
+            spec_cycles++;
+            const uint32_t v = rl_sampler_sample(&sampler, c->logits);
+            const int accepted = v == d;
+            if (!rl_engine_verify_commit(c->engine, accepted, error, cap)) { ok = 0; break; }
+            c->history[c->history_len++] = u;
+            if (accepted) { c->history[c->history_len++] = d; spec_accepted++; }
+            SRV_EMIT(v, fin);
+            if (fin) break;
+            if (accepted) { u = rl_sampler_sample(&sampler, c->logits1); SRV_EMIT(u, fin); }
+            else u = v;
+        }
+    }
+    while (ok && !(c->speculate && c->backend == RL_BACKEND_GPU)) {
         const uint32_t next = rl_sampler_sample(&sampler, c->logits);
         if (rl_tokenizer_is_eog(c->tokenizer, next)) break;
         char piece[512];
@@ -146,6 +188,8 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             (uint32_t)needed - reused, reused, prefill_ms, prefill_ms > 0 ? (needed - reused) * 1000.0 / prefill_ms : 0.0,
             ts.first_ms >= 0.0 ? ts.first_ms - t_request : 0.0,
             generated, gen_ms, generated > 1u ? (generated - 1u) * 1000.0 / gen_ms : 0.0, gpu_routed);
+        if (spec_cycles) fprintf(stderr, "[redlite-server] MTP speculation: %u cycles, %u drafts accepted (%.3f)\n",
+                                 spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
     }
     return ok;
 }
@@ -170,6 +214,8 @@ static void usage(FILE *out) {
         "  --state-dir DIR     dev43: store chunk-aligned prompt-prefix checkpoints in DIR and restore the longest\n"
         "                      match when the in-memory state does not apply (first request, restart)\n"
         "  --state-max-mib N   size limit of --state-dir in MiB, least recently used first (default 8192)\n"
+        "  --mtp FILE          dev45: speculative decoding with a Qwen3-Next MTP block GGUF (needs --cache-mib full;\n"
+        "                      output is exactly that of plain decoding)\n"
         "  --cpu               use the CPU oracle backend (slow; the only backend off macOS)\n\n"
         "Endpoints: POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health\n");
 }
@@ -225,6 +271,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--top-p") == 0) { if (!parse_f32(v, &scfg.default_top_p) || scfg.default_top_p <= 0.0f) return 2; }
         else if (strcmp(argv[i - 1], "--queue") == 0) { if (!parse_u32(v, &scfg.queue_max)) return 2; }
         else if (strcmp(argv[i - 1], "--state-dir") == 0) state_dir = v;
+        else if (strcmp(argv[i - 1], "--mtp") == 0) cfg.mtp_path = v;
         else if (strcmp(argv[i - 1], "--state-max-mib") == 0) { if (!parse_u32(v, &state_max_mib)) return 2; }
         else if (strcmp(argv[i - 1], "--min-p") == 0) { if (!parse_f32(v, &scfg.default_min_p) || scfg.default_min_p < 0.0f || scfg.default_min_p > 1.0f) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i - 1]); usage(stderr); return 2; }
@@ -273,6 +320,13 @@ int main(int argc, char **argv) {
     ctx.history = (uint32_t *)malloc(((size_t)ctx.info->context + 1u) * sizeof(uint32_t));
     ctx.reuse = reuse;
     ctx.states.dir = state_dir;
+    {
+        double pre_ms = 0.0;
+        ctx.speculate = !use_cpu && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms);
+        ctx.logits1 = ctx.speculate ? (float *)malloc((size_t)ctx.info->vocab * sizeof(float)) : NULL;
+        if (cfg.mtp_path && !ctx.speculate) fprintf(stderr, "[redlite-server] --mtp ignored: it needs --cache-mib full (every expert resident)\n");
+        if (ctx.speculate && !ctx.logits1) { fprintf(stderr, "logits allocation failed\n"); return 1; }
+    }
     ctx.states.max_bytes = (uint64_t)state_max_mib * 1024u * 1024u;
     int rc = 1;
     if (!ctx.logits || !ctx.history) {
