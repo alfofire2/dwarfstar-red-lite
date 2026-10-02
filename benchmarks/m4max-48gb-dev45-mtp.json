@@ -1,0 +1,19 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev45 / dev45b",
+  "commits": {"six_prompts": "628f172", "iq3_two_vector": "8ee3a51", "interactive": "3e187e6"},
+  "mtp_file": "a4lg/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-GGUF, Q8_0 (2.26 GiB)",
+  "command": "redlite-generate MODEL --prompt <tests/fixtures/cache_trace_prompts.txt line> --max-tokens 256 --cache-mib full --temperature 0 [--mtp FILE] --json; plain and --mtp alternated, 40 s cooling",
+  "output": "identical token for token in every pair",
+  "IQ2_XXS_decode_tok_s": {
+    "transformer explanation": {"plain": 80.77, "mtp": 94.26, "acceptance": 0.716},
+    "Python LRU cache": {"plain": 81.20, "mtp": 102.25, "acceptance": 0.841},
+    "train arithmetic": {"plain": 79.88, "mtp": 103.84, "acceptance": 0.841},
+    "Italian short story": {"plain": 80.45, "mtp": 87.28, "acceptance": 0.578},
+    "fantasy story": {"plain": 80.60, "mtp": 88.64, "acceptance": 0.618},
+    "40 sleep tips": {"plain": 80.61, "mtp": 99.87, "acceptance": 0.814},
+    "median": {"plain": 80.605, "mtp": 97.065}
+  },
+  "IQ3_XXS_code_prompt_tok_s": {"dev45": {"plain": 75.20, "mtp": 92.29}, "dev45b_two_vector_iq3": {"plain": 79.84, "mtp": 100.55, "verify_ms": 16.39}},
+  "interactive_two_turns_IQ2_XXS": {"turn1": {"plain": 88.7, "mtp": 108.6}, "turn2": {"plain": 83.1, "mtp": 103.2}, "acceptance": [0.975, 0.963]}
+}

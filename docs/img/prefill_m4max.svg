@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="191" viewBox="0 0 810 191">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="191"/>
+<text class="t" x="10" y="24">Prompt ingestion, 8192 tokens, M4 Max 48 GiB, IQ2_XXS, 4 GiB expert cache</text>
+<text class="l" x="222" y="71" text-anchor="end">0.3.0</text>
+<rect x="230" y="58" width="111.2" height="15" rx="2" fill="#d64545"/><text class="v" x="346.2" y="70">212.6</text>
+<text class="l" x="222" y="99" text-anchor="end">0.4.0</text>
+<rect x="230" y="86" width="337.6" height="15" rx="2" fill="#d64545"/><text class="v" x="572.6" y="98">645.6</text>
+<text class="l" x="222" y="127" text-anchor="end">0.4.1</text>
+<rect x="230" y="114" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="126">898.9</text>
+<line class="g" x1="697.3" y1="52" x2="697.3" y2="142" stroke-width="2" stroke-dasharray="5 4"/><text class="n" x="697.3" y="156" text-anchor="middle">llama.cpp (pinned): 893.71</text>
+<text class="n" x="10" y="181">tok/s. bench_m4.sh prefill8192, median of 3 cooled runs; llama.cpp holds every weight resident.</text>
+</svg>

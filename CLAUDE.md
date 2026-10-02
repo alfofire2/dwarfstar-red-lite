@@ -251,6 +251,10 @@ executables, so ABI-visible changes there affect both layers.
   unreached target also goes into `docs/WHAT_DID_NOT_WORK.md` with its measurement.
 - A top-k router ID divergence between CPU and Metal is always a hard failure; small
   float drift is compared cumulatively across the stack, not per substage.
+- User-facing results live in `docs/FINDINGS.md` and the README's "Measured performance", with SVG charts
+  in `docs/img/` drawn by `scripts/dev/make_charts.py` from `benchmarks/charts.json` (each chart names its
+  source records). When a milestone measures something a chart or those pages show, add the row, rerun the
+  script and update the text in the same PR; `tests/test_charts.py` fails on a stale chart.
 - Benchmarks and field observations are recorded as JSON in `benchmarks/` and
   `configs/mac-m4pro-24gb-observed.json`; keep GiB (binary) in Red Lite output even
   though model hosts quote decimal GB.

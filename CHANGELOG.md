@@ -2,6 +2,15 @@
 
 ## Unreleased (after 0.4.1)
 
+### docs — findings page and charts
+
+- `docs/FINDINGS.md`: what we learned, for users, with six SVG charts (decode and prefill by release vs llama.cpp,
+  MTP per prompt, M4 Pro 24 GiB decode and cache options, a decode token's time by stage).
+- Charts drawn by `scripts/dev/make_charts.py` (stdlib only) from `benchmarks/charts.json`; `tests/test_charts.py`
+  fails on a stale chart or a missing source record. New record `benchmarks/m4max-48gb-dev45-mtp.json`.
+- README: charts, MTP and `--state-dir` in the quick start, M4 Pro 24 GiB dev47 results, full-residency sizes
+  since dev37 (17,316 / 28,800 MiB).
+
 ### dev47 — M4 Pro 24 GiB field session, long context, build fix (both machines)
 
 - **M4 Pro 24 GiB** (first native measurement since dev18), IQ2_XXS, 4 GiB cache:
