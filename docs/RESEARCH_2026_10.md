@@ -104,6 +104,76 @@ Read at HEAD `0aaea5a` (2026-09-20).
    - A/B the expert I/O (pread threads vs the current loads, page cache vs pool, prefetch on/off).
    - Then the opt-in cache-aware routing with a perplexity gate.
 
+## 6. antirez on DwarfStar (video, 2026-10-02)
+
+Source: "IL VERO FUTURO DELL'AI? LLM LOCALI, STATI UNITI e CINA con Salvatore Sanfilippo" (TechDale, 2026-10-02,
+1:28:35, https://youtu.be/d0p_AviYH7M); the technical part is minutes 17-63. Everything below is **what was said**,
+read from YouTube's automatic Italian subtitles. Nothing here was measured by Red Lite, and numbers heard through
+the auto-transcript may be wrong.
+
+**How ds4 is built and checked**
+- **Quality reference: the producer's own API.** antirez buys tokens from the model maker (DeepSeek), asks about
+  1000 questions, and checks that ds4's answers stay close to the API's, "word for word" (min 24-25). Red Lite's
+  reference is the pinned llama.cpp, which shares the same quantized file. A check against the maker's API would
+  measure what llama.cpp cannot: the quantization's distance from the real model.
+- **Few model families, on purpose.** Other engines chase every new model and leave the old ones broken or slow.
+  ds4 supports three families, which lets it regroup the multiplications to saturate the GPU (min 21, 25).
+- **Small codebase as a feature.** A few hundred thousand lines or less, so a user's coding agent can read it and
+  change it for their own need (min 26). Red Lite's narrow scope serves the same goal.
+- **The engine author should own the quantization.** Who quantizes, who writes the engine and who writes the
+  agents are different people who do not talk to each other (min 20). ds4 controls all three.
+- Old NVIDIA cards (A100, L40S) that vLLM/SGLang no longer support (min 26-27); distributed inference over an RDMA
+  cable between two M5 Max laptops (min 47). Neither applies to Red Lite.
+
+**Steering (min 27-33)**
+- **Single-direction vector steering**, from the public "single direction" refusal paper. ds4 loads a vector
+  (antirez released one for DeepSeek V4 Flash), and `/steer` changes its strength during an interactive chat.
+- **Steer only the start of the answer.** Apply the vector at the start and then remove it. The model is
+  autoregressive: once it has started answering it keeps going. A permanently "abliterated" file is made
+  "dumber" by the fixed strength (his claim).
+- **Prefilled conversation:** a hand-written text file of user/assistant turns that the model reads as its own
+  past, with no steering.
+- His stance: the technique is public and easy to add elsewhere; most engines leave it out for political
+  reasons; he calls it experimental.
+
+**Speeds quoted and his usability thresholds (min 52-62)**
+
+| | quoted |
+|---|---|
+| decode | 20 tok/s "usable", 10 boring, 60/100/200 good |
+| reading (prefill) | 500-600 tok/s starts being "interesting", 1000-2000 "very usable" |
+| DGX Station (~120 k EUR), DeepSeek V4 Flash | prefill 23,000 tok/s, decode 250 tok/s (one session) |
+| DGX Spark, DeepSeek V4 Flash | prefill ~1000 tok/s, decode ~20 tok/s (heard as "vendi" = venti) |
+| M5 Max 128 GB | fully resident model ~40 tok/s; DeepSeek 4.1 (about twice V4, "engram" embeddings) streamed from SSD ~20 tok/s; Kimi K3 streamed ~3 tok/s |
+| M3 Max | about half the inference speed of an M5 Max |
+
+- **Prefill matters most for agents.** A coding agent mostly *reads*: tool outputs, files, grep results (min 51).
+- **SSD streaming is for the occasional bigger model.** Buy the memory the everyday model needs fully resident
+  (min 59-60).
+- **Serving many users** does not divide the single-session speed: concurrent sessions share the loaded parts of
+  the model (min 53).
+- **Lower power on laptops.** Running a MacBook at lower power keeps it cooler and makes it last. macOS only
+  offers automatic / low / high (min 55).
+- ds4 has users in production: companies with sensitive data doing coding and security work with ds4 +
+  DeepSeek (min 41). ds4 can also drive a logged-in Chrome for web searches (min 44).
+
+**What it means for Red Lite (assessment, not measured)**
+1. **24 GiB prompt ingestion is below his "interesting" line.** The M4 Pro reads 280-350 tok/s with a 4 GiB
+   cache (dev47); the M4 Max reads ~900 at full residency. Agents mostly read, so 24 GiB prefill is the most
+   useful next target.
+2. **A quality check against Qwen's own API** (DashScope or another host of Qwen3-Next-80B-A3B-Instruct):
+   - a fixed question set, greedy, with top logprobs where available;
+   - measures how far IQ2_XXS and IQ3_XXS are from the full-precision model;
+   - complements the llama.cpp oracle;
+   - needs an API key and a small token budget.
+3. **Optional steering.** A vector added to the residual stream at chosen layers, with strength changeable in
+   chat and an "only the first N tokens" mode. Separately, a `--history FILE` of prefilled turns. Cheap in the
+   engine; whether to ship it is the project owner's call.
+4. **Low-power mode on the M4 Pro.** Measure tok/s and power with low-power mode on; a cheap experiment for
+   laptops.
+5. **Batching concurrent server requests** so they share expert loads; the server is FIFO, one request at a
+   time.
+
 ## Sources
 
 DwarfStar: https://github.com/antirez/ds4 (docs/QWEN38_FLASH_NEXT.md, docs/SPECULATIVE_DECODING.md,
