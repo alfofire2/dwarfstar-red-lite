@@ -831,8 +831,9 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
         m->conv_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         m->rec_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
-        m->kcache = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_attention ? in->n_attention : 1u, sizeof(id));
-        m->vcache = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_attention ? in->n_attention : 1u, sizeof(id));
+        /* + 1: dev45 MTP block KV rows at index n_attention (m->n_attention stays the trunk's count) */
+        m->kcache = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_attention + 1u, sizeof(id));
+        m->vcache = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_attention + 1u, sizeof(id));
         if (!m->conv_state || !m->rec_state || !m->kcache || !m->vcache) { set_error(error, cap, "state table allocation failed"); rl_metal_engine_destroy(m); return NULL; }
         m->n_recurrent = in->n_recurrent; m->n_attention = in->n_attention;
         for (uint32_t r = 0; r < in->n_recurrent; ++r) {
@@ -893,6 +894,51 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         if (@available(macOS 15.0, *)) {
             id<MTLResidencySet> rs = (__bridge id<MTLResidencySet>)redmetal_topk_pool_slab_residency_set(rl_native_metal_pool_handle(m->experts));
             if (rs) [m->queue addResidencySet:rs];
+        }
+        /* dev45: MTP block: dense weights wrapped from its file, all 512 experts resident in a pool of their own */
+        if (e->mtp_enabled) {
+            const rl_layer_tensors *t = &e->mtp;
+            mlayer *w = &m->mtp_w;
+            struct { mweight *dst; const rl_gguf_tensor *src; } pairs[] = {
+                {&w->attn_norm, t->attn_norm}, {&w->post_norm, t->post_norm}, {&w->q, t->q}, {&w->k, t->k}, {&w->v, t->v},
+                {&w->q_norm, t->q_norm}, {&w->k_norm, t->k_norm}, {&w->o, t->o}, {&w->router, t->router},
+                {&w->sh_gate_inp, t->sh_gate_inp}, {&w->sh_gate, t->sh_gate}, {&w->sh_up, t->sh_up}, {&w->sh_down, t->sh_down},
+                {&m->mtp_eh_proj, e->mtp_eh_proj}, {&m->mtp_enorm, e->mtp_enorm}, {&m->mtp_hnorm, e->mtp_hnorm},
+                {&m->mtp_head_norm, e->mtp_head_norm}, {&m->mtp_head, e->mtp_head},
+            };
+            for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); ++i) {
+                if (!wrap_tensor(m, &e->mtp_gguf, pairs[i].src, pairs[i].dst, error, cap)) { rl_metal_engine_destroy(m); return NULL; }
+                if (pairs[i].src->n_dims == 2u && !rows_pipe(m, pairs[i].src->ggml_type)) {
+                    snprintf(error, cap, "MTP tensor %s has no Metal row kernel", pairs[i].src->name); rl_metal_engine_destroy(m); return NULL;
+                }
+            }
+            const size_t kvb = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
+            m->kcache[in->n_attention] = new_buf(m, kvb);
+            m->vcache[in->n_attention] = new_buf(m, kvb);
+            m->mtp_emb = new_buf(m, hb); m->mtp_ea = new_buf(m, hb); m->mtp_eb = new_buf(m, hb); m->mtp_cat = new_buf(m, 2u * hb);
+            m->mtp_slots = new_buf(m, 512u * sizeof(uint64_t)); m->mtp_weights = new_buf(m, 512u * sizeof(float));
+            m->mtp_ids = new_buf(m, 64u * sizeof(uint32_t)); m->mtp_miss = new_buf(m, 16u);
+            const uint64_t slot = (e->mtp_expert_map.max_expert_triplet_bytes + 4095u) & ~(uint64_t)4095u;
+            m->mtp_experts = rl_native_metal_create(e->mtp_gguf.path, &e->mtp_expert_map, slot * in->n_expert + slot, 64u, error, cap);
+            char perr[256] = "";
+            uint32_t *all_ids = (uint32_t *)malloc((size_t)in->n_expert * sizeof(uint32_t));
+            float *zero_w = (float *)calloc(in->n_expert, sizeof(float));
+            int ok = m->kcache[in->n_attention] && m->vcache[in->n_attention] && m->mtp_emb && m->mtp_ea && m->mtp_eb && m->mtp_cat &&
+                     m->mtp_slots && m->mtp_weights && m->mtp_ids && m->mtp_miss && m->mtp_experts && all_ids && zero_w &&
+                     rl_native_metal_residency_enable(m->mtp_experts, e->mtp_layer + 1u, in->n_expert, perr, sizeof(perr));
+            if (ok) {
+                for (uint32_t x = 0; x < in->n_expert; ++x) all_ids[x] = x;
+                rl_native_topk_plan plan; memset(&plan, 0, sizeof(plan));
+                ok = rl_native_metal_prepare_topk(m->mtp_experts, &e->mtp_expert_map, e->mtp_layer, all_ids, zero_w, in->n_expert, &plan, perr, sizeof(perr)) &&
+                     rl_native_metal_release_topk(m->mtp_experts, &plan, NULL, perr, sizeof(perr));
+            }
+            free(all_ids); free(zero_w);
+            if (!ok) { snprintf(error, cap, "MTP block setup failed: %s", perr[0] ? perr : (error && error[0] ? error : "allocation")); rl_metal_engine_destroy(m); return NULL; }
+            if (@available(macOS 15.0, *)) {
+                id<MTLResidencySet> rs = (__bridge id<MTLResidencySet>)redmetal_topk_pool_slab_residency_set(rl_native_metal_pool_handle(m->mtp_experts));
+                if (rs) [m->queue addResidencySet:rs];
+            }
+            m->mtp = 1;
         }
         /* dev30: the dense weights are no-copy windows of the mmap; without a residency set every command buffer
          * re-establishes their residency (~3.8 ms per batched-prefill layer measured on the M4 Max) */
@@ -977,6 +1023,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     if (!m) return;
     rl_metal_engine_profile_report(m);
     if (m->experts) rl_native_metal_destroy(m->experts);
+    if (m->mtp_experts) rl_native_metal_destroy(m->mtp_experts);
     if (m->pf) rl_metal_prefill_destroy(m->pf);
     if (m->engine_rs) {
         if (@available(macOS 15.0, *)) { [m->queue removeResidencySet:(id<MTLResidencySet>)m->engine_rs]; [(id<MTLResidencySet>)m->engine_rs removeAllAllocations]; }
@@ -1005,7 +1052,7 @@ int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap) {
         memset(m->conv_state[r].contents, 0, m->conv_state[r].length);
         memset(m->rec_state[r].contents, 0, m->rec_state[r].length);
     }
-    for (uint32_t a = 0; a < m->n_attention; ++a) {
+    for (uint32_t a = 0; a < m->n_attention + (m->mtp ? 1u : 0u); ++a) {
         memset(m->kcache[a].contents, 0, m->kcache[a].length);
         memset(m->vcache[a].contents, 0, m->vcache[a].length);
     }
@@ -1296,6 +1343,65 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
     }
     emit_rms(m, em_enc(em), m->x, &m->output_norm, m->final_norm, hidden, eps);
     if (want_logits) emit_rows(m, em_enc(em), &m->output, m->final_norm, m->logits);
+    return 1;
+}
+
+/* dev45: one MTP block pass. Input: the trunk's hidden state of the last step (m->x before its final norm, or
+ * m->final_norm with RL_MTP_H=post) and the next token's embedding; output: argmax of the MTP head. */
+int rl_metal_engine_mtp_draft(rl_engine *e, rl_metal_engine *m, const float *embedding, uint32_t position, uint32_t *draft,
+                              float *logits, char *error, size_t cap) {
+    if (!m || !m->mtp) { set_error(error, cap, "MTP block not loaded"); return 0; }
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
+    const float eps = in->rms_eps, no_bias = 0.0f;
+    memcpy(m->mtp_emb.contents, embedding, (size_t)hidden * sizeof(float));
+    memset(m->abort.contents, 0, 16u);
+    const char *hsel = getenv("RL_MTP_H");
+    id<MTLBuffer> hsrc = hsel && strcmp(hsel, "pre") == 0 ? m->x : m->final_norm;   /* post-norm: 0.742 vs 0.672 acceptance (dev45) */
+    emitter em = {m, [m->queue commandBuffer], nil, m->abort};
+    emit_rms(m, em_enc(&em), m->mtp_emb, &m->mtp_enorm, m->mtp_ea, hidden, eps);
+    emit_rms(m, em_enc(&em), hsrc, &m->mtp_hnorm, m->mtp_eb, hidden, eps);
+    em_copy(&em, m->mtp_ea, 0, m->mtp_cat, 0, hidden);
+    em_copy(&em, m->mtp_eb, 0, m->mtp_cat, (NSUInteger)hidden * sizeof(float), hidden);
+    emit_rows(m, em_enc(&em), &m->mtp_eh_proj, m->mtp_cat, m->x);
+    emit_rms(m, em_enc(&em), m->x, &m->mtp_w.attn_norm, m->normed, hidden, eps);
+    emit_attention(e, &em, &e->mtp, &m->mtp_w, position);
+    emit_ffn_pre(e, &em, &m->mtp_w);
+    {
+        id<MTLComputeCommandEncoder> enc = em_enc(&em);
+        id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->mtp_experts);
+        [enc setComputePipelineState:m->p_route];
+        [enc setBuffer:m->router_logits offset:0 atIndex:0];
+        [enc setBuffer:resident offset:(NSUInteger)e->mtp_layer * experts * sizeof(uint64_t) atIndex:1];
+        [enc setBuffer:m->mtp_slots offset:0 atIndex:2]; [enc setBuffer:m->mtp_weights offset:0 atIndex:3];
+        [enc setBuffer:m->mtp_ids offset:0 atIndex:4]; [enc setBuffer:m->mtp_miss offset:0 atIndex:5];
+        [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7]; [enc setBytes:&no_bias length:4 atIndex:8];
+        [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
+    }
+    rl_native_layer_info li;
+    rl_expert_layout lay;
+    if (!rl_native_get_layer_info(&e->mtp_expert_map, e->mtp_layer, &li, error, cap) ||
+        !rl_native_expert_layout(&e->mtp_expert_map, e->mtp_layer, 0u, &lay, error, cap)) { em_close(&em); return 0; }
+    if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->mtp_experts), (__bridge void *)em_enc(&em),
+            (__bridge void *)m->mtp_slots, 0u, (__bridge void *)m->mtp_weights, 0u, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
+            li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes, (__bridge void *)m->ffn_in, 0u, (__bridge void *)m->routed, 0u)) {
+        em_close(&em); snprintf(error, cap, "MTP expert encode failed: %s", redmetal_topk_last_error()); return 0;
+    }
+    emit_scale_add(e, &em);
+    emit_rms(m, em_enc(&em), m->x, &m->mtp_head_norm, m->final_norm, hidden, eps);
+    emit_rows(m, em_enc(&em), &m->mtp_head, m->final_norm, m->logits);
+    em_close(&em);
+    [em.cb commit];
+    [em.cb waitUntilCompleted];
+    if (em.cb.status != MTLCommandBufferStatusCompleted || em.cb.error) {
+        snprintf(error, cap, "MTP command buffer failed: %s", em.cb.error.localizedDescription.UTF8String ?: "unknown"); return 0;
+    }
+    if (((const uint32_t *)m->mtp_miss.contents)[0]) { set_error(error, cap, "MTP expert not resident"); return 0; }
+    const float *lg = (const float *)m->logits.contents;
+    uint32_t best = 0;
+    for (uint32_t v = 1; v < in->vocab; ++v) if (lg[v] > lg[best]) best = v;
+    *draft = best;
+    if (logits) memcpy(logits, lg, (size_t)in->vocab * sizeof(float));
     return 1;
 }
 

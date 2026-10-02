@@ -28,7 +28,7 @@ static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1]
 /* ksigns_iq2xs[i] of ggml-common.h: the 7 stored sign bits plus an odd-parity eighth bit */
 static uint8_t ksign(uint32_t s7) { return (uint8_t)(s7 | ((uint32_t)(__builtin_popcount(s7) & 1) << 7)); }
 
-int rl_iq3_group8_supported(uint32_t t) { return rl_iq3_supported(t) || t == 12u; }
+int rl_iq3_group8_supported(uint32_t t) { return rl_iq3_supported(t) || t == 12u || t == 8u; }
 
 int rl_iq3_supported(uint32_t t) { return t == RL_GGML_IQ3_XXS || t == RL_GGML_IQ3_S || t == RL_GGML_IQ2_S || t == RL_GGML_IQ4_XS; }
 
@@ -39,6 +39,7 @@ uint32_t rl_iq3_block_bytes(uint32_t t) {
         case RL_GGML_IQ2_S: return 82u;     /* d, qs[64] (32 indices + 32 signs), qh[8], scales[8] */
         case RL_GGML_IQ4_XS: return 136u;   /* d, scales_h, scales_l[4], qs[128] */
         case 12u: return 144u;              /* Q4_K (dev36: routed-expert decoder only, see rl_iq3_group8_supported) */
+        case 8u: return 272u;               /* Q8_0 as eight 34-byte blocks per 256 values (dev45: MTP head experts) */
         default: return 0u;
     }
 }
@@ -52,6 +53,12 @@ size_t rl_iq3_row_bytes(uint32_t t, uint32_t ncols) {
 void rl_iq3_group8(uint32_t t, const uint8_t *bp, uint32_t g, float out[8]) {
     const float d = f16_to_f32(rd16(bp));
     const uint32_t ib32 = g / 4u, l = g % 4u;
+    if (t == 8u) {   /* Q8_0: group g is values 8*(g%4).. of 32-value block g/4 (d, int8 qs[32]) */
+        const uint8_t *bb = bp + 34u * ib32;
+        const float dq = f16_to_f32(rd16(bb));
+        for (uint32_t j = 0; j < 8u; ++j) out[j] = dq * (float)(int8_t)bb[2u + 8u * l + j];
+        return;
+    }
     if (t == 12u) {   /* Q4_K, as ggml dequantize_row_q4_K: sub-block ib32 has scale/min pair ib32 */
         const uint8_t *sc = bp + 4u;
         uint8_t s6, m6;
@@ -175,6 +182,10 @@ char *rl_iq3_metal_source(void) {
         "static inline float rl3_sgn(uint s, uint j) { return (s & (1u << j)) ? -1.0f : 1.0f; }\n"
         "static inline void rl_iq3_group8(uint t, device const uchar *bp, uint g, thread float4 &v0, thread float4 &v1) {\n"
         "    const float d = float(as_type<half>(rl3_rd16(bp))); const uint ib32 = g >> 2; const uint l = g & 3u; float v[8];\n"
+        "    if (t == 8u) {\n"
+        "        device const uchar *bb = bp + 34u * ib32; const float dq = float(as_type<half>(rl3_rd16(bb))); device const char *q = (device const char *)(bb + 2u + 8u * l);\n"
+        "        v0 = dq * float4(q[0], q[1], q[2], q[3]); v1 = dq * float4(q[4], q[5], q[6], q[7]); return;\n"
+        "    }\n"
         "    if (t == 18u) {\n"
         "        device const uchar *qs = bp + 2u + 8u * ib32; const uint aux32 = rl3_rd32(bp + 66u + 4u * ib32);\n"
         "        const float db = d * (0.5f + float(aux32 >> 28)) * 0.5f;\n"
@@ -241,6 +252,11 @@ char *rl_iq3_metal_source(void) {
         "static inline float rl_iq3_dot32(uint t, device const uchar *bp, uint sb, device const float *x) {\n"
         "    const float d = float(as_type<half>(rl3_rd16(bp))); float acc = 0.0f;\n"
         "    device const float4 *x4 = (device const float4 *)x;\n"
+        "    if (t == 8u) {\n"
+        "        device const uchar *bb = bp + 34u * sb; device const char *q = (device const char *)(bb + 2u);\n"
+        "        for (uint i = 0; i < 8u; ++i) acc += dot(x4[i], float4(q[4u*i], q[4u*i+1u], q[4u*i+2u], q[4u*i+3u]));\n"
+        "        return float(as_type<half>(rl3_rd16(bb))) * acc;\n"
+        "    }\n"
         "    if (t == 18u) {\n"
         "        device const ushort *q16 = (device const ushort *)(bp + 2u + 8u * sb); device const ushort *a16 = (device const ushort *)(bp + 66u + 4u * sb);\n"
         "        const uint aux32 = uint(a16[0]) | (uint(a16[1]) << 16);\n"
@@ -298,7 +314,7 @@ char *rl_iq3_metal_source(void) {
         "        return d * float(ls - 32) * acc;\n"
         "    }\n"
         "}\n"
-        "static inline uint rl_iq3_block_bytes(uint t) { return t == 18u ? 98u : t == 21u ? 110u : t == 22u ? 82u : t == 12u ? 144u : 136u; }\n");
+        "static inline uint rl_iq3_block_bytes(uint t) { return t == 18u ? 98u : t == 21u ? 110u : t == 22u ? 82u : t == 12u ? 144u : t == 8u ? 272u : 136u; }\n");
     if (!ok) { free(buf); return NULL; }
     return buf;
 }

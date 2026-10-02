@@ -29,7 +29,13 @@ struct rl_metal_engine {
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_moe_tail;                    /* dev39: fused end of a GPU-routed layer */
+    id<MTLComputePipelineState> p_moe_tail;
+    /* dev45: MTP block (kcache/vcache[n_attention] hold its KV rows) */
+    int mtp;
+    mlayer mtp_w;
+    mweight mtp_eh_proj, mtp_enorm, mtp_hnorm, mtp_head_norm, mtp_head;
+    id<MTLBuffer> mtp_emb, mtp_ea, mtp_eb, mtp_cat, mtp_slots, mtp_weights, mtp_ids, mtp_miss;
+    rl_native_metal_runtime *mtp_experts;                    /* dev39: fused end of a GPU-routed layer */
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;

@@ -93,6 +93,41 @@ static void usage(FILE *out) {
         "  --state-max-mib N   size limit of --state-dir, least recently used files deleted first (default 8192)\n");
 }
 
+/* dev45: greedy token-by-token run with the MTP block after every step; reports how often its draft equals the
+ * token the trunk then produces (the acceptance a 1-token speculation would get). RL_MTP_POS = MTP position offset. */
+static int mtp_measure(rl_engine *e, const uint32_t *ids, uint32_t prompt_len, uint32_t max_tokens, uint32_t vocab) {
+    char error[512];
+    float *logits = (float *)malloc((size_t)vocab * sizeof(float));
+    if (!logits) return 1;
+    const uint32_t off = getenv("RL_MTP_POS") ? (uint32_t)atoi(getenv("RL_MTP_POS")) : 1u;
+    uint32_t tok = ids[0], pending = UINT32_MAX, drafted = 0, accepted = 0, generated = 0;
+    double mtp_ms = 0.0, step_ms = 0.0;
+    for (uint32_t p = 0;; ++p) {
+        const double t0 = now_ms();
+        if (!rl_engine_step(e, RL_BACKEND_GPU, tok, logits, NULL, error, sizeof(error))) { fprintf(stderr, "step failed: %s\n", error); return 1; }
+        step_ms += now_ms() - t0;
+        uint32_t next;
+        if (p + 1u < prompt_len) next = ids[p + 1u];
+        else {
+            next = 0;
+            for (uint32_t v = 1; v < vocab; ++v) if (logits[v] > logits[next]) next = v;
+            if (pending != UINT32_MAX) { drafted++; if (pending == next) accepted++; }
+            if (++generated >= max_tokens || next == 151645u) break;
+        }
+        const double t1 = now_ms();
+        if (!rl_engine_mtp_draft(e, next, p + off, &pending, NULL, error, sizeof(error))) { fprintf(stderr, "MTP failed: %s\n", error); return 1; }
+        if (p + 1u < prompt_len && p + 2u >= prompt_len) { /* draft for the first generated token after next */ }
+        else if (p + 1u < prompt_len) pending = UINT32_MAX;   /* inside the prompt the next-next token is known: no score */
+        mtp_ms += now_ms() - t1;
+        tok = next;
+    }
+    printf("MTP acceptance: %u / %u drafts = %.3f (position offset %u, %u generated, step %.2f ms, mtp %.2f ms per token)\n",
+           accepted, drafted, drafted ? (double)accepted / drafted : 0.0, off, generated,
+           step_ms / (double)(prompt_len + generated), mtp_ms / (double)(prompt_len + generated));
+    free(logits);
+    return 0;
+}
+
 static int parse_u32(const char *s, uint32_t *out) {
     if (!s || !*s) return 0;
     errno = 0;
@@ -288,6 +323,7 @@ int main(int argc, char **argv) {
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) { usage(argc < 2 ? stderr : stdout); return argc < 2 ? 2 : 0; }
     const char *model = argv[1];
     const char *prompt = NULL, *system_prompt = NULL, *tokens_out = NULL, *state_dir = NULL;
+    int mtp_measure_mode = 0;
     uint32_t state_max_mib = 8192u;
     int raw = 0, stream = 1, stats = 0, interactive = 0, json = 0;
     uint32_t max_tokens = 256u;
@@ -301,11 +337,13 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--no-stream") == 0) { stream = 0; continue; }
         if (strcmp(argv[i], "--stats") == 0) { stats = 1; continue; }
         if (strcmp(argv[i], "--json") == 0) { json = 1; continue; }
+        if (strcmp(argv[i], "--mtp-measure") == 0) { mtp_measure_mode = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--prompt") == 0) prompt = argv[++i];
         else if (strcmp(argv[i], "--system") == 0) system_prompt = argv[++i];
         else if (strcmp(argv[i], "--tokens-out") == 0) tokens_out = argv[++i];
         else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
+        else if (strcmp(argv[i], "--mtp") == 0) cfg.mtp_path = argv[++i];
         else if (strcmp(argv[i], "--state-max-mib") == 0) { if (!parse_u32(argv[++i], &state_max_mib)) return 2; }
         else if (strcmp(argv[i], "--max-tokens") == 0) { if (!parse_u32(argv[++i], &max_tokens)) return 2; }
         else if (strcmp(argv[i], "--temperature") == 0) { if (!parse_f32(argv[++i], &sp.temperature)) return 2; }
@@ -381,6 +419,7 @@ int main(int argc, char **argv) {
     /* prefill: batched Metal ingestion of the prompt (chunks of --batch), LM head on the last token */
     rl_engine_step_stats st;
     const double t_prefill = now_ms();
+    if (mtp_measure_mode) return mtp_measure(e, ids, prompt_len, max_tokens, in->vocab);
     uint32_t state_loaded = 0, state_saved = 0;
     const rl_statecache scache = {state_dir, (uint64_t)state_max_mib * 1024u * 1024u};
     if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len, logits, &st, &state_loaded, &state_saved, error, sizeof(error))) {
