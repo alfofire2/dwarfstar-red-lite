@@ -38,7 +38,7 @@ struct rl_metal_engine {
     rl_native_metal_runtime *mtp_experts;
     /* dev45: 2-row verify: two-vector GEMV kernels, row-1 copies of the per-token buffers (swapped into the fields
      * above while row 1 is encoded), DeltaNet state snapshots after row 0 */
-    id<MTLComputePipelineState> p_r2_f32, p_r2_q8, p_r2_q4k, p_r2_q5k, p_r2_q6k, p_r2_iq2xxs;
+    id<MTLComputePipelineState> p_r2_f32, p_r2_q8, p_r2_q4k, p_r2_q5k, p_r2_q6k, p_r2_iq2xxs, p_r2_iq3;
     id<MTLComputePipelineState> p_dn_ba2, p_dn_convshift2, p_dn_l2_2, p_dn_state2, p_dn_tail2;
     id<MTLComputePipelineState> p_route2, p_moe_tail2;
     id<MTLBuffer> verify_miss;

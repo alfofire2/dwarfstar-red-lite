@@ -414,6 +414,19 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    for (uint off = lanes >> 1; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
 "    if (active && lane == 0u) out[row] = acc;\n"
 "}\n"
+"kernel void rl_rows_iq3_r2(device uint *rl_abort [[buffer(30)]], device const uchar *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
+"    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]], constant uint &type [[buffer(7)]],\n"
+"    device const float *x1 [[buffer(8)]], device float *out1 [[buffer(9)]],\n"
+"    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint row = tid / lanes; const uint lane = uint(simd_lane) % lanes; const bool active = row < nrows;\n"
+"    const uint bb = rl_iq3_block_bytes(type); const uint blocks = ncols / 256u; const uint items = blocks * 8u; const ulong row_bytes = ulong(blocks) * bb; float acc = 0.0f, acc1 = 0.0f;\n"
+"    if (active) { device const uchar *rp = weights + ulong(row) * row_bytes;\n"
+"        for (uint i = lane; i < items; i += lanes) { const uint b = i >> 3; const uint s = i & 7u; device const uchar *bp = rp + ulong(b) * bb;\n"
+"            const float2 d2 = rl_iq3_dot32_2(type, bp, s, x + b * 256u + s * 32u, x1 + b * 256u + s * 32u); acc += d2.x; acc1 += d2.y; } }\n"
+"    for (uint off = lanes >> 1; off > 0u; off >>= 1) { acc += simd_shuffle_xor(acc, ushort(off)); acc1 += simd_shuffle_xor(acc1, ushort(off)); }\n"
+"    if (active && lane == 0u) { out[row] = acc; out1[row] = acc1; }\n"
+"}\n"
 "kernel void rl_rows2r2_f32(device uint *rl_abort [[buffer(30)]], device const float *weights [[buffer(0)]], constant uint &ncols [[buffer(1)]], device const float *x [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant uint &nrows [[buffer(4)]], constant uint &lanes [[buffer(5)]], device const float *x1 [[buffer(8)]], device float *out1 [[buffer(9)]],\n"
 "    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
@@ -975,7 +988,8 @@ static void emit_rows_r2(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, c
     uint32_t lanes = 0;
     id<MTLComputePipelineState> p = nil;
     if (rows2_pipe(m, w->type, w->cols, &lanes)) {
-        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs : nil;
+        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs :
+            rl_iq3_supported(w->type) ? m->p_r2_iq3 : nil;
     } else if (w->type == 8u || w->type == 13u) {
         p = w->type == 8u ? m->p_r2_q8 : m->p_r2_q5k;
         lanes = lanes_for(w->type, w->cols);
@@ -988,6 +1002,7 @@ static void emit_rows_r2(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, c
     [enc setBytes:&w->rows length:sizeof(w->rows) atIndex:4];
     [enc setBytes:&lanes length:sizeof(lanes) atIndex:5];
     if (w->type == 16u) [enc setBuffer:m->grid offset:0 atIndex:6];
+    if (rl_iq3_supported(w->type)) [enc setBytes:&w->type length:sizeof(w->type) atIndex:7];
     [enc setBuffer:x1 offset:0 atIndex:8]; [enc setBuffer:out1 offset:0 atIndex:9];
     const NSUInteger threads = (((NSUInteger)w->rows * lanes) + 31u) & ~(NSUInteger)31u;
     [enc dispatchThreads:MTLSizeMake(threads, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; rl_after_dispatch(enc);
@@ -1072,7 +1087,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"},
             {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             {&m->p_r2_f32, @"rl_rows2r2_f32"}, {&m->p_r2_q8, @"rl_rowsr2_q8"}, {&m->p_r2_q4k, @"rl_rows2r2_q4k"},
-            {&m->p_r2_q5k, @"rl_rowsr2_q5k"}, {&m->p_r2_q6k, @"rl_rows2r2_q6k"}, {&m->p_r2_iq2xxs, @"rl_rows2r2_iq2xxs"},
+            {&m->p_r2_q5k, @"rl_rowsr2_q5k"}, {&m->p_r2_q6k, @"rl_rows2r2_q6k"}, {&m->p_r2_iq2xxs, @"rl_rows2r2_iq2xxs"}, {&m->p_r2_iq3, @"rl_rows_iq3_r2"},
             {&m->p_dn_ba2, @"dn_ba_params2"}, {&m->p_dn_convshift2, @"dn_conv_shift2"}, {&m->p_dn_l2_2, @"dn_qk_l2_2"},
             {&m->p_dn_state2, @"dn_state2"}, {&m->p_dn_tail2, @"dn_tail_norm2"},
             {&m->p_route2, @"rl_route2"}, {&m->p_moe_tail2, @"rl_moe_tail2"},
