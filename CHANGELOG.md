@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (after 0.4.1)
+
+### dev43 — session state checkpoints on disk (M4 Max 48 GiB)
+
+- `--state-dir DIR` for `redlite-generate` and `redlite-server` stores the session state (DeltaNet states,
+  attention K/V, last logits) at multiples of the prefill chunk and restores the longest matching prefix:
+  a 4209-token prompt 4602 → 387 ms prefill; server TTFT after a restart 4928 → 556 ms; greedy identical.
+- Fixes a dev37 regression: with a 2 GiB cache, long prompts failed in the prefill prefetch (size classes
+  are now used only when every class holds two layers' experts). See `docs/REDLITE_DEV43_STATE_CACHE.md`.
+
 ## 0.4.1 — 2026-10-01
 
 Faster decode and a better use of a bounded expert cache, on the same two GGUFs. Work of dev33–dev39

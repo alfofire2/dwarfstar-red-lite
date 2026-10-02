@@ -37,6 +37,7 @@ Developed on the `dev/0.4` branch; M4 Max 48 GiB only.
 | [REDLITE_DEV37_EXPERT_SLOTS.md](REDLITE_DEV37_EXPERT_SLOTS.md) | dev37: expert slots of each layer's own size (4 GiB cache −24 % misses; full residency −3.9 GiB) |
 | [REDLITE_DEV38_DECODE_DISPATCH.md](REDLITE_DEV38_DECODE_DISPATCH.md) | dev38: expert down lanes and concurrent decode encoders (IQ3_XXS 70.4 → 79.1 tok/s) |
 | [REDLITE_DEV39_EXPERT_TAIL.md](REDLITE_DEV39_EXPERT_TAIL.md) | dev39: fused expert tail in GPU-routed decode (+1.6 %) |
+| [REDLITE_DEV43_STATE_CACHE.md](REDLITE_DEV43_STATE_CACHE.md) | dev43: session state checkpoints on disk (`--state-dir`), dev37 2 GiB prefill fix |
 
 ## Native runtime milestones (v0.3, released as 0.3.0)
 
