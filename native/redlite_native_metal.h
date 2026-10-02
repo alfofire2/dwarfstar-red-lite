@@ -149,6 +149,8 @@ uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime);
 /* dev43: slots a layer's experts can use (its size class; the whole pool without classes) and the class index */
 uint32_t rl_native_metal_layer_capacity(const rl_native_metal_runtime *runtime, uint32_t layer);
 uint32_t rl_native_metal_layer_class(const rl_native_metal_runtime *runtime, uint32_t layer);
+/* dev46: 1 when (layer, expert) holds a slot of the cache */
+int rl_native_metal_is_cached(const rl_native_metal_runtime *runtime, uint32_t layer, uint32_t expert);
 int rl_native_metal_release_topk(
     rl_native_metal_runtime *runtime,
     rl_native_topk_plan *plan,

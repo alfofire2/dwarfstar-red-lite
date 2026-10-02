@@ -92,6 +92,7 @@ static void usage(FILE *out) {
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
+        "  redlite-engine perplexity MODEL --tokens IDS [--context 512] [--cache-mib N]   (dev46: engine PPL, second half of each chunk)\n"
         "  redlite-engine tokenize MODEL --file CORPUS [--no-special]   (one input per line, \\n \\t \\\\ escapes; one id list per line)\n"
         "  redlite-engine parity MODEL --tokens a,b,c [--context N] [--cache-mib N] [--threads N] [--layers] [--repeat N]\n"
         "      --repeat N: replay the sequence N times with a reset in between (a warm cache exercises the dev21 GPU-routed decode)\n"
@@ -271,6 +272,43 @@ int main(int argc, char **argv) {
     }
 
     if (!token_count) { fprintf(stderr, "--tokens is required\n"); return 2; }
+
+    if (strcmp(cmd, "perplexity") == 0) {
+        /* dev46: perplexity of the engine itself (token by token on the Metal step path, so runtime options such as
+         * RL_ROUTE_CACHE_BIAS apply): chunks of --context ids, each from a reset state, scoring the second half */
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        const uint32_t ctx = cfg.context ? cfg.context : 512u;
+        cfg.context = ctx;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const rl_engine_info *in = rl_engine_info_get(e);
+        float *logits = (float *)malloc((size_t)in->vocab * sizeof(float));
+        double nll = 0.0; uint64_t scored = 0, hits = 0, misses = 0;
+        const uint32_t chunks = token_count / ctx;
+        if (!logits || !chunks) { fprintf(stderr, "need at least --context ids\n"); rl_engine_close(e); return 2; }
+        for (uint32_t c = 0; c < chunks; ++c) {
+            const uint32_t *t = tokens + (size_t)c * ctx;
+            if (!rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error))) { fprintf(stderr, "%s\n", error); return 1; }
+            for (uint32_t i = 0; i + 1u < ctx; ++i) {
+                rl_engine_step_stats st;
+                if (!rl_engine_step(e, RL_BACKEND_GPU, t[i], logits, &st, error, sizeof(error))) { fprintf(stderr, "step failed: %s\n", error); return 1; }
+                hits = st.cache_hits; misses = st.cache_misses;
+                if (i + 1u < ctx / 2u) continue;
+                double mx = logits[0];
+                for (uint32_t v = 1; v < in->vocab; ++v) if (logits[v] > mx) mx = logits[v];
+                double se = 0.0;
+                for (uint32_t v = 0; v < in->vocab; ++v) se += exp((double)logits[v] - mx);
+                nll += mx + log(se) - (double)logits[t[i + 1u]];
+                scored++;
+            }
+        }
+        printf("perplexity: %u chunks x %u ids, %llu scored, cache hits %llu misses %llu\n", chunks, ctx,
+               (unsigned long long)scored, (unsigned long long)hits, (unsigned long long)misses);
+        printf("PPL = %.4f\n", exp(nll / (double)scored));
+        free(logits);
+        rl_engine_close(e);
+        return 0;
+    }
 
     if (strcmp(cmd, "logits") == 0) {
         const int gpu = strcmp(backend_name, "gpu") == 0;

@@ -599,6 +599,11 @@ void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime) { return run
 
 uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime) { return runtime ? runtime->lru.capacity : 0u; }
 
+int rl_native_metal_is_cached(const rl_native_metal_runtime *runtime, uint32_t layer, uint32_t expert) {
+    const rl_cache_key key = {layer, expert};
+    return runtime ? rl_native_lru_lookup(&runtime->lru, key, NULL) : 0;
+}
+
 uint32_t rl_native_metal_layer_class(const rl_native_metal_runtime *runtime, uint32_t layer) {
     return runtime && layer < RL_LRU_MAX_LAYERS ? runtime->lru.layer_class[layer] : 0u;
 }
