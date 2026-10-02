@@ -741,10 +741,12 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "kernel void rl_route(device uint *rl_abort [[buffer(30)]], device const float *logits [[buffer(0)]], device const ulong *resident [[buffer(1)]],\n"
 "    device ulong *plan_slots [[buffer(2)]], device float *plan_weights [[buffer(3)]], device uint *plan_ids [[buffer(4)]],\n"
 "    device uint *plan_miss [[buffer(5)]], constant uint &n_expert [[buffer(6)]], constant uint &top_k [[buffer(7)]],\n"
+"    constant float &cache_bias [[buffer(8)]],\n"
 "    uint tid [[thread_position_in_threadgroup]], ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
 "    if (rl_abort[0] != 0u) return;\n"
 "    threadgroup float lg[512]; threadgroup float red_v[16]; threadgroup uint red_i[16]; threadgroup uint chosen[64];\n"
-"    for (uint i = tid; i < n_expert; i += 256u) lg[i] = logits[i];\n"
+"    /* dev46: cached experts rank cache_bias higher (0 = off); the weights below use the unbiased logits */\n"
+"    for (uint i = tid; i < n_expert; i += 256u) lg[i] = logits[i] + (resident[i] != 0ul ? cache_bias : 0.0f);\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    float gmax = -INFINITY; for (uint i = tid; i < n_expert; i += 256u) gmax = max(gmax, lg[i]);\n"
 "    gmax = simd_max(gmax); if (simd_lane == 0) red_v[simd_id] = gmax; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -1139,6 +1141,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
+        { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u; }
         if (m->attn_split) {
@@ -1608,7 +1611,7 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
         [enc setBuffer:m->plan_weights offset:weights_off atIndex:3];
         [enc setBuffer:m->plan_ids offset:ids_off atIndex:4];
         [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
-        [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
+        [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7]; [enc setBytes:&m->route_bias length:4 atIndex:8];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
     }
     rl_native_layer_info li;
@@ -2166,7 +2169,20 @@ int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, 
                 if (!rl_native_metal_release_topk(m->experts, &plan, NULL, error, cap)) goto done;
             }
 
-            if (!rl_native_router_select_softmax_topk((const float *)m->router_logits.contents, experts, topk, ids, weights, probs, error, cap)) goto done;
+            if (m->route_bias > 0.0f) {   /* dev46: select on biased logits, weigh with the unbiased ones */
+                const float *z = (const float *)m->router_logits.contents;
+                for (uint32_t x = 0; x < experts; ++x) probs[x] = z[x] + (rl_native_metal_is_cached(m->experts, l, x) ? m->route_bias : 0.0f);
+                float *zb = (float *)malloc((size_t)experts * sizeof(float));
+                if (!zb) { set_error(error, cap, "router bias allocation failed"); goto done; }
+                memcpy(zb, probs, (size_t)experts * sizeof(float));
+                const int sel = rl_native_router_select_softmax_topk(zb, experts, topk, ids, weights, probs, error, cap);
+                free(zb);
+                if (!sel) goto done;
+                double sum = 0.0; float zmax = z[ids[0]];
+                for (uint32_t k = 1; k < topk; ++k) if (z[ids[k]] > zmax) zmax = z[ids[k]];
+                for (uint32_t k = 0; k < topk; ++k) { weights[k] = expf(z[ids[k]] - zmax); sum += weights[k]; }
+                for (uint32_t k = 0; k < topk; ++k) weights[k] = (float)(weights[k] / sum);
+            } else if (!rl_native_router_select_softmax_topk((const float *)m->router_logits.contents, experts, topk, ids, weights, probs, error, cap)) goto done;
             memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids, (size_t)topk * sizeof(uint32_t));
             const double l2 = rl_engine_now_ms();
             stats->router_ms += l2 - l1;

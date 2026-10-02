@@ -6,6 +6,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#ifndef F_NOCACHE
+#define F_NOCACHE 48   /* <sys/fcntl.h> hides it under _POSIX_C_SOURCE */
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -781,6 +784,7 @@ static NSString * const kTopKSource = @
         _fd = -1;
         return nil;
     }
+    { const char *nc = getenv("RL_POOL_NOCACHE"); if (nc && atoi(nc) != 0) fcntl(_fd, F_NOCACHE, 1); }   /* dev46: expert reads bypass the page cache (A/B on 24 GiB Macs) */
     _fileSize = (uint64_t)st.st_size;
     _slotInflight = calloc(_capacity, sizeof(uint32_t));
     _slotGeneration = calloc(_capacity, sizeof(uint32_t));

@@ -2,6 +2,20 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev46 — expert-cache options for 24 GiB Macs (M4 Max 48 GiB)
+
+- Opt-in: `RL_ROUTE_CACHE_BIAS=λ` (cache-aware routing: at λ = 0.5, 4 GiB cache misses 29.5 → 22.9 per token
+  with engine perplexity 17.586 → 17.583), `RL_POOL_NOCACHE=1` (`F_NOCACHE` expert reads).
+- `redlite-engine perplexity` (perplexity of the engine with its runtime options) and
+  `scripts/dev/small_mac_ab.sh` for the 24 GiB A/B. No speed claim yet. See `docs/REDLITE_DEV46_SMALL_MAC_OPTIONS.md`.
+
+### dev42 — Qwen3-Coder-Next (M4 Max 48 GiB)
+
+- `Qwen/Qwen3-Coder-Next` runs unchanged (same architecture, rope base 5e6 read from the GGUF): Bartowski
+  IQ2_XXS 50/50 and IQ3_XXS 37/0/13 in `regress_m4.sh` against the pinned llama.cpp, dequantization
+  bit-identical. `redlite download coder` / `coder-48gb` (and the missing `48gb` = IQ3_XXS Instruct).
+  See `docs/REDLITE_DEV42_CODER_NEXT.md`.
+
 ### dev43 — session state checkpoints on disk (M4 Max 48 GiB)
 
 - `--state-dir DIR` for `redlite-generate` and `redlite-server` stores the session state (DeltaNet states,
