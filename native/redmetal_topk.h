@@ -148,6 +148,12 @@ int redmetal_topk_pool_encode_device(
 /* dev39: with mtl_output_buffer NULL the weighted sum is not encoded; the per-expert down outputs stay in
  * redmetal_topk_pool_tmp_buffer() as tmp[e * hidden_size + r] for the caller to combine. */
 void *redmetal_topk_pool_tmp_buffer(redmetal_topk_pool_t pool);
+/* dev45: as encode_device_into, but the experts from index x_split on read the second input vector (2-row verify) */
+int redmetal_topk_pool_encode_device_into2(
+        redmetal_topk_pool_t handle, void *mtl_compute_encoder, void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint64_t gate_bytes, uint64_t up_bytes, void *mtl_input_buffer, uint64_t input_offset, void *mtl_output_buffer,
+        uint64_t output_offset, void *mtl_input1_buffer, uint64_t input1_offset, uint32_t x_split);
 int redmetal_topk_pool_encode_device_into(
     redmetal_topk_pool_t pool,
     void *mtl_compute_encoder,

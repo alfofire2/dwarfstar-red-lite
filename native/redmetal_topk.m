@@ -113,6 +113,9 @@ static NSString * const kTopKSource = @
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "constant bool redmetal_guard [[function_constant(0)]];   /* dev23: early-out variant (flag at index 30) */\n"
+/* dev45: two activation vectors (2-row MTP verify): experts from x_split on read x1 */
+"constant bool redmetal_two_x_in [[function_constant(1)]];\n"
+"constant bool redmetal_two_x = is_function_constant_defined(redmetal_two_x_in) && redmetal_two_x_in;\n"
 "\n"
 "struct redmetal_topk_slots { device const uchar *slot[512]; };\n"
 "#define RM_S 4u   /* pairs per slice: one decoded weight serves RM_S tokens */\n"
@@ -205,10 +208,13 @@ static NSString * const kTopKSource = @
 "    constant uint &type [[buffer(8)]],\n"
 "    constant uint &lanes_per_row [[buffer(9)]],\n"
 "    device const uint *rl_abort [[buffer(30), function_constant(redmetal_guard)]],\n"
+"    device const float *x1 [[buffer(11), function_constant(redmetal_two_x)]],\n"
+"    constant uint &x_split [[buffer(12), function_constant(redmetal_two_x)]],\n"
 "    uint2 tid [[thread_position_in_grid]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
 "    if (redmetal_guard) { if (rl_abort[0] != 0u) return; }\n"
 "    const uint expert = tid.y;\n"
+"    device const float *xin = x; if (redmetal_two_x) { if (expert >= x_split) xin = x1; }\n"
 "    const uint row = tid.x / lanes_per_row;\n"
 "    const uint lane = uint(simd_lane) % lanes_per_row;\n"
 "    const bool active = expert < top_k && row < rows;\n"
@@ -223,8 +229,8 @@ static NSString * const kTopKSource = @
 "        device const uchar *grow = slot + ulong(row) * row_bytes;\n"
 "        device const uchar *urow = slot + up_offset + ulong(row) * row_bytes;\n"
 "        for (uint b = lane_block; b < blocks; b += block_lanes) {\n"
-"            g += redmetal_topk_block(gt, grow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
-"            u += redmetal_topk_block(gt, urow + ulong(b) * block_bytes, x + b * 256u, grid, part, nparts);\n"
+"            g += redmetal_topk_block(gt, grow + ulong(b) * block_bytes, xin + b * 256u, grid, part, nparts);\n"
+"            u += redmetal_topk_block(gt, urow + ulong(b) * block_bytes, xin + b * 256u, grid, part, nparts);\n"
 "        }\n"
 "    }\n"
 "    for (uint off = lanes_per_row >> 1; off > 0u; off >>= 1) { g += simd_shuffle_xor(g, ushort(off)); u += simd_shuffle_xor(u, ushort(off)); }\n"
@@ -569,6 +575,7 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _downPipeline;
     id<MTLComputePipelineState> _sumPipeline;
     id<MTLComputePipelineState> _gateupGPipeline, _downGPipeline, _sumGPipeline;   /* dev23 early-out variants */
+    id<MTLComputePipelineState> _gateupG2Pipeline;   /* dev45: guarded, two input vectors */
     id<MTLComputePipelineState> _gateupBPipeline;
     id<MTLComputePipelineState> _downBPipeline;
     id<MTLComputePipelineState> _sumBPipeline;
@@ -724,6 +731,15 @@ static NSString * const kTopKSource = @
         return nil;
     }
     _gateupGPipeline = [_device newComputePipelineStateWithFunction:gateupG error:&pipelineError];
+    {
+        MTLFunctionConstantValues *two = [MTLFunctionConstantValues new];
+        bool on = true;
+        [two setConstantValue:&on type:MTLDataTypeBool atIndex:0];
+        [two setConstantValue:&on type:MTLDataTypeBool atIndex:1];
+        NSError *e2 = nil;
+        id<MTLFunction> g2 = [library newFunctionWithName:@"redmetal_topk_gateup_lanes" constantValues:two error:&e2];
+        _gateupG2Pipeline = g2 ? [_device newComputePipelineStateWithFunction:g2 error:&e2] : nil;
+    }
     _downGPipeline = [_device newComputePipelineStateWithFunction:downG error:&pipelineError];
     _sumGPipeline = [_device newComputePipelineStateWithFunction:sumG error:&pipelineError];
     if (!_gateupGPipeline || !_downGPipeline || !_sumGPipeline) {
@@ -1692,7 +1708,7 @@ int redmetal_topk_pool_encode_device(
     }
 }
 
-int redmetal_topk_pool_encode_device_into(
+static int encode_device_into_impl(
         redmetal_topk_pool_t handle,
         void *mtl_compute_encoder,
         void *slot_table_buffer, uint64_t slot_table_offset,
@@ -1706,10 +1722,14 @@ int redmetal_topk_pool_encode_device_into(
         void *mtl_input_buffer,
         uint64_t input_offset,
         void *mtl_output_buffer,
-        uint64_t output_offset) {
+        uint64_t output_offset,
+        void *mtl_input1_buffer,
+        uint64_t input1_offset,
+        uint32_t x_split) {
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
         if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer) return 0;
+        if (mtl_input1_buffer && !p->_gateupG2Pipeline) { topk_set_error("two-input top-k pipeline unavailable"); return 0; }
         if (!top_k || top_k > REDMETAL_TOPK_MAX || !tw_ok(ggml_type) || hidden_size % QK_IQ || ffn_size % QK_IQ) {
             topk_set_error("invalid device-driven top-k request"); return 0;
         }
@@ -1727,7 +1747,11 @@ int redmetal_topk_pool_encode_device_into(
 
         id<MTLComputeCommandEncoder> enc = (__bridge id<MTLComputeCommandEncoder>)mtl_compute_encoder;
         redmetal_topk_pool_use_all_slabs(handle, (__bridge void *)enc);
-        [enc setComputePipelineState:p->_gateupGPipeline];
+        [enc setComputePipelineState:mtl_input1_buffer ? p->_gateupG2Pipeline : p->_gateupGPipeline];
+        if (mtl_input1_buffer) {
+            [enc setBuffer:(__bridge id<MTLBuffer>)mtl_input1_buffer offset:(NSUInteger)input1_offset atIndex:11];
+            [enc setBytes:&x_split length:sizeof(x_split) atIndex:12];
+        }
         [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
         [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
         [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
@@ -1764,6 +1788,45 @@ int redmetal_topk_pool_encode_device_into(
         [enc dispatchThreads:MTLSizeMake(hidden_size, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
         return 1;
     }
+}
+
+int redmetal_topk_pool_encode_device_into(
+        redmetal_topk_pool_t handle,
+        void *mtl_compute_encoder,
+        void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset,
+        uint32_t top_k,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint64_t gate_bytes,
+        uint64_t up_bytes,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset) {
+    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, NULL, 0u, 0u);
+}
+
+int redmetal_topk_pool_encode_device_into2(
+        redmetal_topk_pool_t handle,
+        void *mtl_compute_encoder,
+        void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset,
+        uint32_t top_k,
+        uint32_t ggml_type,
+        uint32_t hidden_size,
+        uint32_t ffn_size,
+        uint64_t gate_bytes,
+        uint64_t up_bytes,
+        void *mtl_input_buffer,
+        uint64_t input_offset,
+        void *mtl_output_buffer,
+        uint64_t output_offset,
+        void *mtl_input1_buffer,
+        uint64_t input1_offset,
+        uint32_t x_split) {
+    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, mtl_input1_buffer, input1_offset, x_split);
 }
 
 int redmetal_topk_pool_encode(
