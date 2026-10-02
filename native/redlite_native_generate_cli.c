@@ -262,7 +262,65 @@ static int interactive_chat(
         uint32_t generated = 0, spec_turn = 0;
         int stopped_on_eog = 0, interrupted = 0;
         const double generation_start = now_ms();
-        while (generated < max_tokens) {
+        /* dev45: speculative turn. Invariant at every break: each emitted token is in the state, the closing
+         * token (end of answer) is not (as in the plain loop below). u = emitted token not yet in the state. */
+        double spec_pre_ms = 0.0;
+        const int speculate = rl_engine_mtp_enabled(engine) && rl_engine_experts_preloaded(engine, &spec_pre_ms);
+        uint32_t spec_cycles = 0, spec_accepted = 0;
+#define IA_PIECE(tok) do { \
+        char piece_[512]; const int32_t b_ = rl_tokenizer_decode(tokenizer, (tok), piece_, sizeof(piece_)); \
+        if (b_ < 0 || answer_len + (size_t)b_ > (size_t)max_tokens * 512u) { snprintf(error, error_cap, "token decode failed"); \
+            free(ids); free(logits); free(logits1); free(answer); free(line); return 0; } \
+        memcpy(answer + answer_len, piece_, (size_t)b_); answer_len += (size_t)b_; generated++; \
+        if (stream && b_) { fwrite(piece_, 1, (size_t)b_, stdout); fflush(stdout); } \
+    } while (0)
+#define IA_STEP(tok) do { if (!rl_engine_step(engine, RL_BACKEND_GPU, (tok), logits, &step, error, error_cap)) { \
+        free(ids); free(logits); free(logits1); free(answer); free(line); return 0; } } while (0)
+        float *logits1 = speculate ? (float *)malloc((size_t)info->vocab * sizeof(float)) : NULL;
+        if (speculate && logits1) {
+            uint32_t u = rl_sampler_sample(sampler, logits), mtp_pos = 0;
+            int have_hidden = 0;
+            for (;;) {
+                if (rl_tokenizer_is_eog(tokenizer, u)) { close_token = u; stopped_on_eog = 1; break; }
+                IA_PIECE(u);
+                if (g_interrupt || generated == max_tokens) {
+                    IA_STEP(u);
+                    close_token = (uint32_t)im_end;
+                    interrupted = g_interrupt ? 1 : 0;
+                    break;
+                }
+                if (!have_hidden || rl_engine_position(engine, RL_BACKEND_GPU) + 2u > info->context) {
+                    IA_STEP(u);   /* plain step: sets the hidden state the MTP block reads, or no room for two rows */
+                    have_hidden = 1;
+                    u = rl_sampler_sample(sampler, logits);
+                    continue;
+                }
+                uint32_t d = 0;
+                if (!rl_engine_mtp_draft(engine, u, mtp_pos++, &d, NULL, error, error_cap) ||
+                    !rl_engine_verify2(engine, u, d, logits, logits1, error, error_cap)) {
+                    free(ids); free(logits); free(logits1); free(answer); free(line); return 0;
+                }
+                spec_cycles++;
+                const uint32_t v = rl_sampler_sample(sampler, logits);
+                /* an end-of-answer token never enters the state: reject the draft row in that case */
+                const int accepted = v == d && !rl_tokenizer_is_eog(tokenizer, v);
+                if (!rl_engine_verify_commit(engine, accepted, error, error_cap)) {
+                    free(ids); free(logits); free(logits1); free(answer); free(line); return 0;
+                }
+                if (!accepted) { u = v; continue; }
+                spec_accepted++;
+                IA_PIECE(v);   /* v (= d) is in the state */
+                if (g_interrupt || generated == max_tokens) { close_token = (uint32_t)im_end; interrupted = g_interrupt ? 1 : 0; break; }
+                u = rl_sampler_sample(sampler, logits1);
+            }
+            spec_turn = spec_cycles;
+            if (show_stats && spec_cycles) fprintf(stderr, "[MTP speculation: %u cycles, %u drafts accepted (%.3f)]\n",
+                                                    spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
+        }
+        free(logits1);
+#undef IA_PIECE
+#undef IA_STEP
+        while (!speculate && generated < max_tokens) {
             if (g_interrupt) {
                 /* every emitted token is already in the state: close the answer like a length stop */
                 close_token = (uint32_t)im_end;

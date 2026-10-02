@@ -273,3 +273,26 @@ def select_native_model(models_dir: str | Path, ram_bytes: int) -> Path | None:
                 return p
     ref = d / NATIVE_REFERENCE_MODEL
     return ref if ref.is_file() else present[-1]
+
+
+NATIVE_MTP_FILE = "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf"
+
+
+def native_mtp_file(model_path: str | Path, cache_mib: int | str, disabled: bool = False) -> Path | None:
+    """dev45: the MTP head to pass as --mtp, or None.
+
+    Used only for the Qwen3-Next-80B-A3B-Instruct files it was trained with, when the head file sits next to the
+    model and the cache holds every expert (the 2-row verify needs full residency). Its output equals plain
+    decoding, so there is no quality trade-off to opt into.
+    """
+    if disabled:
+        return None
+    model = Path(model_path)
+    head = model.parent / NATIVE_MTP_FILE
+    if "Qwen3-Next-80B-A3B-Instruct" not in model.name or not head.is_file():
+        return None
+    res = native_residency(model)
+    if res is None:
+        return None
+    full = str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib)
+    return head if full else None

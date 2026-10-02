@@ -66,6 +66,26 @@ acceptance 0.868, identical.
 Cost per cycle (code prompt): MTP draft 1.44 ms; 2-row verify 19.4 ms in the first version, 17.6 ms with the
 DeltaNet kernels, 16.2 ms with the merged experts (one plain step: about 12 ms).
 
+## dev45b — usable everywhere, faster on IQ3_XXS
+
+- `redlite-server --mtp FILE`: the server decodes speculatively. Stream and blocking answers are identical to
+  plain `redlite-generate`, and a second turn reusing the state (warm) equals a cold server, with `--mtp` on
+  both (`scripts/dev/server_check.py MODEL --cache-mib full --mtp FILE`, SERVER CHECK: YES; acceptance
+  0.929 / 0.538 in its turns).
+- Interactive `redlite-generate -i --mtp`. Every emitted token is in the state at the end of a turn, and the
+  end-of-answer token never is (a draft row whose sampled token is an end-of-answer token is rejected). Two
+  turns are identical to plain decode, with the same positions (180 and 359): 88.7 → 108.6 and
+  83.1 → 103.2 tok/s, acceptance 0.975 / 0.963 on code.
+- `redlite chat` and `redlite serve --native` pass `--mtp` automatically when
+  `models/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf` is present, the model is a Qwen3-Next-80B-A3B-Instruct
+  file and the cache holds every expert (`native_mtp_file`). `--no-mtp` turns it off. There is nothing to opt
+  into: the output does not change.
+- IQ3-family two-vector kernel (`rl_iq3_dot32_2`, generated from `rl_iq3_dot32` by duplicating each
+  accumulation and return; `rl_rows_iq3_r2`). IQ3_XXS code prompt: 79.84 → 100.55 tok/s (+25.9 %; +22.7 %
+  with the fallback), verify 18.2 → 16.4 ms, identical.
+- Not kept: drafting with the trunk's Q5_K head instead of the MTP file's Q8_0 head (the same matrix in the
+  checkpoint). Draft 1.56 → 1.51 ms, decode +0.3-0.8 % (noise), acceptance 0.716 → 0.705 on one prompt.
+
 ## Tried and kept or not
 
 - Calling the 1-vector dot twice and relying on the compiler to share the decode: 1.74× one vector (not

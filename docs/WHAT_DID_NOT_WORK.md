@@ -33,6 +33,8 @@ them.
 | dev40 | prefill expert tiles of 32 (expert, token) pairs instead of 16 (each 32-row weight tile decoded once for twice the pairs), 128 threads with doubled per-thread accumulators | IQ3_XXS 1100 / 8192 tokens 400 / 404 vs 872 / 914 tok/s, bit-identical logits | register spills |
 | dev40 | same with 256 threads (simdgroups 0-3 pairs 0-15, 4-7 pairs 16-31, per-thread work unchanged) | 1100: 886.5 / 866.2 / 878.0 vs 875.4 / 874.8 / 726.1; 8192: 921.6 / 906.8 / 909.2 vs 914.0 / 914.8 / 901.7 (medians 878.0 vs 874.8, 909.2 vs 914.0), bit-identical | re-decoding weights per 16-pair slice is not the prefill bound at these sizes |
 | dev41 | decode expert kernels (gate/up, down) in threadgroups of 64 / 128 / 256 threads instead of 32 | 80.97 / 80.80-81.30 / 80.74-80.93 vs 81.30 / 81.51 tok/s (IQ2_XXS, full residency, two passes) | scheduling of the 5120-20480 one-row groups is not the bound |
+| dev45 | relying on the compiler to share the weight decode between two dot calls (2-row verify) | 1.74x one vector instead of ~1.06x | not shared; explicit two-vector functions are used |
+| dev45b | MTP draft through the trunk's Q5_K head instead of the MTP file's Q8_0 head | draft 1.56 → 1.51 ms, decode +0.3-0.8 % | inside noise; the head is not the draft's bound |
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
@@ -72,6 +74,12 @@ them.
   was not rebuilt, and the first 0.4.1 table was measured on the experimental build (IQ2_XXS prefill 854.3 / 858.3
   tok/s instead of 0.4.0's 891.9 / 926.9). The table was re-measured after `rm -rf .deps/redmetal` and a clean build.
   Rule: rebuild from a clean tree before any benchmark that goes into a record.
+- **Battery power (dev47).** On battery at 6 % the same binary decoded at 32 tok/s instead of ~81 and a
+  33.5K-token prompt took 17 minutes; every measurement of that window was discarded. `pmset -g batt` before
+  benchmarks.
+- **The token-by-token llama.cpp oracle at long positions (dev47).** `redlite-ref-llama logits` dumps every
+  position one decode at a time: 16K positions took about 2 hours, 32K would take about 5 and 60K 9. The
+  32K / 60K comparisons were not run.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 
