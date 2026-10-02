@@ -36,6 +36,7 @@ struct rl_metal_engine {
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
     id<MTLComputePipelineState> p_attn_split_g;               /* dev35: one threadgroup per KV head and block */
     int attn_group;                                           /* RL_ENGINE_ATTN_GROUP != 0 (default) */
+    float route_bias;                                         /* dev46: RL_ROUTE_CACHE_BIAS (default 0: off) */
     int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
     uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK, default 128) */

@@ -172,7 +172,8 @@ static int st_route(rl_metal_engine *m, uint32_t *cases, char *error, size_t cap
         [enc setBuffer:logits offset:0 atIndex:0]; [enc setBuffer:resident offset:0 atIndex:1];
         [enc setBuffer:slots offset:0 atIndex:2]; [enc setBuffer:weights offset:0 atIndex:3];
         [enc setBuffer:ids offset:0 atIndex:4]; [enc setBuffer:miss offset:0 atIndex:5];
-        [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7];
+        const float no_bias = 0.0f;
+        [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7]; [enc setBytes:&no_bias length:4 atIndex:8];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
     };
     float probs[512];
