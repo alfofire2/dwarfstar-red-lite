@@ -81,6 +81,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap);
 void rl_metal_engine_destroy(rl_metal_engine *m);
 int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap);
 int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
+int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap);
+int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted, char *error, size_t cap);   /* dev45 */
 int rl_metal_engine_mtp_draft(rl_engine *e, rl_metal_engine *m, const float *embedding, uint32_t mtp_position, uint32_t *draft,
                               float *logits, char *error, size_t cap);   /* dev45 */
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,

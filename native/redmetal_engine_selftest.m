@@ -348,6 +348,33 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                 }
                 off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0, "%s %6u x %5u  %7.1f us  %6.1f GB/s\n",
                     cases[c].what, rows, cols, best * 1000.0, (double)mb / (best * 1e6));
+                if (type == 16u) {   /* dev45: the same matrix over two activation vectors (MTP verify rows) */
+                    id<MTLComputePipelineState> p2 = make_pipe(m->dev, m->lib, @"rl_rows2r2_iq2xxs", error, cap);
+                    id<MTLBuffer> x1 = [m->dev newBufferWithLength:(size_t)cols * 4u options:MTLResourceStorageModeShared];
+                    id<MTLBuffer> out1 = [m->dev newBufferWithLength:(size_t)rows * 4u options:MTLResourceStorageModeShared];
+                    if (!p2 || !x1 || !out1) goto bout;
+                    for (uint32_t i = 0; i < cols; ++i) ((float *)x1.contents)[i] = st_uniform();
+                    uint32_t lanes = 1u; while (lanes < (cols / 256u) * 8u && lanes < 32u) lanes <<= 1;
+                    double b2 = 1e30;
+                    for (int rep = 0; rep < 6; ++rep) {
+                        id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+                        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                        [enc setBuffer:m->abort_zero offset:0 atIndex:30];
+                        [enc setComputePipelineState:p2];
+                        for (uint32_t k = 0; k < 256u; ++k) {
+                            [enc setBuffer:w offset:(NSUInteger)(mb * (k % copies)) atIndex:0]; [enc setBytes:&cols length:4 atIndex:1];
+                            [enc setBuffer:x offset:0 atIndex:2]; [enc setBuffer:out offset:0 atIndex:3]; [enc setBytes:&rows length:4 atIndex:4];
+                            [enc setBytes:&lanes length:4 atIndex:5]; [enc setBuffer:m->grid offset:0 atIndex:6];
+                            [enc setBuffer:x1 offset:0 atIndex:8]; [enc setBuffer:out1 offset:0 atIndex:9];
+                            [enc dispatchThreads:MTLSizeMake((((NSUInteger)rows * lanes) + 31u) & ~(NSUInteger)31u, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+                        }
+                        [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
+                        const double ms = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0 / 256.0;
+                        if (rep > 0 && ms < b2) b2 = ms;
+                    }
+                    off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0, "%s two x vectors   %7.1f us (%.2fx one vector)\n",
+                        cases[c].what, b2 * 1000.0, b2 / best);
+                }
                 if (off >= report_cap) break;
             }
         }

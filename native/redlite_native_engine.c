@@ -360,6 +360,24 @@ static int open_mtp(rl_engine *e, const char *path, char *error, size_t cap) {
 
 int rl_engine_mtp_enabled(const rl_engine *e) { return e && e->mtp_enabled; }
 
+int rl_engine_verify2(rl_engine *e, uint32_t t0, uint32_t d, float *logits0, float *logits1, char *error, size_t cap) {
+    if (!e || !e->gpu_enabled || t0 >= e->info.vocab || d >= e->info.vocab) { set_error(error, cap, "invalid verify arguments"); return 0; }
+#ifdef __APPLE__
+    return rl_metal_engine_verify2(e, e->metal, t0, d, logits0, logits1, error, cap);
+#else
+    set_error(error, cap, "verify needs Metal"); return 0;
+#endif
+}
+
+int rl_engine_verify_commit(rl_engine *e, int accepted, char *error, size_t cap) {
+    if (!e || !e->gpu_enabled) { set_error(error, cap, "invalid verify commit"); return 0; }
+#ifdef __APPLE__
+    return rl_metal_engine_verify_commit(e, e->metal, accepted, error, cap);
+#else
+    (void)accepted; set_error(error, cap, "verify needs Metal"); return 0;
+#endif
+}
+
 int rl_engine_mtp_draft(rl_engine *e, uint32_t next_token, uint32_t mtp_position, uint32_t *draft, float *logits, char *error, size_t cap) {
     if (!e || !e->mtp_enabled || !e->gpu_enabled || !draft) { set_error(error, cap, "MTP block not loaded"); return 0; }
     if (next_token >= e->info.vocab || mtp_position >= e->info.context) { set_error(error, cap, "MTP token or position out of range"); return 0; }
