@@ -10,7 +10,7 @@ if [[ ! -f "$BIN/libllama.dylib" ]]; then
   echo "pinned llama.cpp build not found at $BIN (run: redlite bootstrap, or set REDLITE_LLAMA_DIR)" >&2
   exit 2
 fi
-xcrun --sdk macosx clang++ -std=c++17 -O2 \
+xcrun --sdk "${REDLITE_SDK:-macosx}" clang++ -std=c++17 -O2 \
   -I"$LLAMA/include" -I"$LLAMA/ggml/include" \
   "$ROOT/scripts/dev/ref_llama/redlite_ref_llama.cpp" \
   -L"$BIN" -lllama -lggml -lggml-base \

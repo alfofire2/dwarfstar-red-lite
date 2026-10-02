@@ -13,7 +13,7 @@ COMMON=(
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  xcrun --sdk macosx clang \
+  xcrun --sdk "${REDLITE_SDK:-macosx}" clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand \
     -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \

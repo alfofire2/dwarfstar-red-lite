@@ -32,10 +32,10 @@ ENGINE=(
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  xcrun --sdk macosx clang -O2 "${FLAGS[@]}" -mcpu="${REDLITE_MCPU:-native}" \
+  xcrun --sdk "${REDLITE_SDK:-macosx}" clang -O2 "${FLAGS[@]}" -mcpu="${REDLITE_MCPU:-native}" \
     "$N/redlite_native_server.c" "$N/redlite_native_server_fake.c" \
     -lm -lpthread -o "$OUT/redlite-server-fake"
-  xcrun --sdk macosx clang \
+  xcrun --sdk "${REDLITE_SDK:-macosx}" clang \
     -O3 "${FLAGS[@]}" -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc \
     "$N/redlite_native_server_cli.c" "$N/redlite_native_server.c" \

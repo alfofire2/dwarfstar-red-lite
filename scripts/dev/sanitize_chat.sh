@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$(uname -s)" == "Darwin" ]] || { echo "sanitize_chat: macOS only (Metal)"; exit 0; }
 mkdir -p "$OUT"
-xcrun --sdk macosx clang -O1 -g -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
+xcrun --sdk "${REDLITE_SDK:-macosx}" clang -O1 -g -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
   -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
   -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -fno-omit-frame-pointer \
   -fobjc-arc -I"$N" \

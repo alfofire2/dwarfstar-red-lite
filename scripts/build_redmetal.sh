@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.deps/redmetal"
 mkdir -p "$OUT"
 
-xcrun --sdk macosx clang \
+xcrun --sdk "${REDLITE_SDK:-macosx}" clang \
   -O2 \
   -fobjc-arc \
   -dynamiclib \

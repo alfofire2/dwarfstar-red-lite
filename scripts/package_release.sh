@@ -62,7 +62,7 @@ git -C "$ROOT" diff --quiet 2>/dev/null || COMMIT="$COMMIT+dirty"
   echo "minos    $MACOSX_DEPLOYMENT_TARGET"
   echo "machine  $(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)"
   echo "macos    $(sw_vers -productVersion 2>/dev/null || echo unknown)"
-  echo "clang    $(xcrun --sdk macosx clang --version | head -1)"
+  echo "clang    $(xcrun --sdk "${REDLITE_SDK:-macosx}" clang --version | head -1)"
 } >"$STAGE/BUILDINFO"
 cat >"$STAGE/INSTALL.md" <<EOF
 # Red Lite $VERSION native runtime (macOS arm64)
