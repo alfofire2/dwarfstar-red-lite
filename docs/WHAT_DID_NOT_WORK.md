@@ -90,6 +90,9 @@ them.
   8387-token prefill, so the published 1.3–1.45× would give about 2 %.
 - **Float16 KV cache (dev47): not built.** The prefill attention `attn_fa_b` loads K/V straight into
   `simdgroup_float8x8` tiles; half storage needs a staged rewrite of that kernel.
+- **The Qwen API as a greedy reference (dev48).** `temperature: 0` alone gave a different text in one run of
+  three; `top_k: 1` is needed. Its logprobs are misaligned: the chosen token was missing from its own top 5 at
+  23 of 30 positions. Only text is compared.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

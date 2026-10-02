@@ -135,6 +135,13 @@ On the M4 Max, with every expert resident:
   1200-token long context. `scripts/regress_m4.sh` runs 51 such checks.
 - **Router mismatches are hard failures.** If the selected experts differ between the CPU and Metal, the change
   is reverted. Small floating-point drift is compared across the whole stack, not stage by stage.
+- **Against the model maker's own API (dev48).** 235 prompts, compared word for word with Alibaba Cloud's Qwen3-Next.
+  IQ3_XXS is about twice as close as IQ2_XXS: 10 vs 2 identical answers; the median share of words matching from
+  the start is 15.6 % vs 7.8 %. Greedy answers diverge early once one word differs, so the comparison between
+  files says more than the absolute numbers. If you have the memory, IQ3_XXS is the more faithful file.
+
+  <p align="center"><img src="img/api_agreement.svg" alt="Agreement with the Qwen API"></p>
+
 - **The 24 GiB Mac.** llama.cpp itself runs out of GPU memory there with the whole model resident. Instead, the
   M4 Pro's own outputs were compared with the M4 Max's (which match llama.cpp), and they are bit-identical:
   logits, the long-context dump, greedy tokens and tokenizer.

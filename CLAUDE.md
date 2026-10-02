@@ -75,6 +75,7 @@ RL_ROUTE_CACHE_BIAS=0.5 RL_POOL_NOCACHE=1 ...   # dev46 opt-in: cache-aware rout
 .deps/redmetal/redlite-engine perplexity MODEL --tokens IDS --context 512   # dev46: perplexity of the engine itself (runtime options apply)
 .deps/redmetal/redlite-generate MODEL --mtp models/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf --cache-mib full --prompt "..."   # dev45: MTP speculation (exact; regress generate.mtp_greedy)
 .deps/redmetal/redlite-generate MODEL --mtp FILE --mtp-measure --prompt "..."   # dev45: draft acceptance only (RL_MTP_H=pre, RL_MTP_POS, RL_MTP_PROMPT=0)
+python3 scripts/dev/api_compare.py compare MODEL --cache-mib full   # dev48: greedy answers vs Qwen's own API (stored reference; `fetch` needs ~/.config/redlite/dashscope_key)
 scripts/dev/small_mac_ab.sh MODEL [default uniform bias05 nocache noprefetch]   # dev46: 4 GiB cache A/B for 24 GiB Macs
 .deps/redmetal/redlite-engine kernel-selftest   # model-free Metal check of the decode kernels (GEMV, guard, copy, rl_route, attention) vs the CPU reference
 scripts/dev/long_positions.sh MODEL [--no-bench | --bench-only]   # parity vs llama.cpp and throughput at 4096/8192 positions
