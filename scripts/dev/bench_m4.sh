@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Development benchmark for the native runtime on the local Mac (not part of regress_m4.sh).
 #
-#   scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill|prefill8192|prefill22|llama] [--json FILE] [--cool SECONDS]
+#   scripts/dev/bench_m4.sh MODEL [--reps N] [--only decode22|decode4|prefill|prefill8192|prefill4|prefill22|llama] [--json FILE] [--cool SECONDS]
 #                           [--cache-mib N]
 #
 # decode22 : redlite-generate greedy, 256 tokens, --cache-mib 22528 (full residency, GPU-routed)
@@ -11,6 +11,7 @@
 #            ingested by the batched prefill in chunks of 512 (the default), --cache-mib 4096
 #            (one untimed warm-up run first, as for decode4, so the page cache state does not decide the number)
 # prefill8192 : same, 8192 ids (the fixture ids repeated, as in long_positions.sh)
+# prefill4  : 1100 and 8192 ids, --cache-mib 4096 with the engine's default chunk (2048 since dev34)
 # prefill22 : 1100 and 8192 ids with the full-residency cache (--cache-mib, default 22528) and the engine's
 #            default chunk (2048 with every expert preloaded, dev30): the configuration of a >= 40 GiB Mac
 # llama    : the pinned llama.cpp (redlite-ref-llama bench, its default context parameters, fully
@@ -104,6 +105,7 @@ echo "commit $(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --qui
 [[ -z "$ONLY" || "$ONLY" == decode4 ]] && decode 4096 decode4
 [[ -z "$ONLY" || "$ONLY" == prefill ]] && prefill 1100 prefill1100
 [[ "$ONLY" == prefill8192 ]] && prefill 8192 prefill8192
+[[ "$ONLY" == prefill4 ]] && { prefill 1100 prefill1100_4 4096 ""; prefill 8192 prefill8192_4 4096 ""; }
 [[ "$ONLY" == prefill22 ]] && { prefill 1100 prefill1100_full "$FULL" ""; prefill 8192 prefill8192_full "$FULL" ""; }
 [[ "$ONLY" == llama ]] && llama
 if [[ -n "$JSON" ]]; then

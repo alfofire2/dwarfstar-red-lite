@@ -28,7 +28,7 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 | Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
 | Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
 | Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
-| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0; both GGUFs); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
+| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0, 0.4.1; both GGUFs); M4 Pro 24 GiB (dev18 build) | M4 Pro 24 GiB |
 
 ## Native runtime: quick start
 
@@ -76,8 +76,22 @@ an 1185-token conversation); any other request resets. `stop` sequences are supp
 N ids of `tests/fixtures/long_context_prompt.txt`; `scripts/dev/bench_m4.sh --reps 3
 --cool 90`, median of three cooled runs; the pinned llama.cpp measured on the same ids
 (`--only llama`, fully resident, its default batch sizes). Records:
-`benchmarks/m4max-48gb-0.4.0.json` (0.4.0) and the older files listed below. Nothing is
-extrapolated from one machine to another.
+`benchmarks/m4max-48gb-0.4.1.json` (0.4.1), `benchmarks/m4max-48gb-0.4.0.json` (0.4.0) and the
+older files listed below. Nothing is extrapolated from one machine to another.
+
+**0.4.1, M4 Max 48 GiB** (commit 9bb6e41 sources, clean build, 2026-10-01; prefill with the engine's
+default 2048-token chunks at both cache sizes):
+
+| GGUF | Expert cache | Decode | Prefill 1100 tokens | Prefill 8192 tokens |
+|---|---|---:|---:|---:|
+| IQ2_XXS | full (17,316 MiB) | **81.15 tok/s** | 900.4 tok/s | 921.5 tok/s |
+| IQ2_XXS | 4 GiB | 52.89 tok/s | 808.9 tok/s | 898.9 tok/s |
+| IQ3_XXS | full (28,800 MiB) | **76.88 tok/s** | 876.7 tok/s | 917.5 tok/s |
+| IQ3_XXS | 4 GiB | 49.59 tok/s | 763.0 tok/s | 889.2 tok/s |
+
+The pinned llama.cpp on the same ids (0.4.0 measurement, unchanged pin): IQ2_XXS 72.46 / 858.3 /
+893.7, IQ3_XXS 68.54 / 861.3 / 900.7 tok/s (decode / prefill 1100 / 8192); IQ3_XXS prefill 1100
+re-measured 2026-10-01: 878.8.
 
 **0.4.0, M4 Max 48 GiB:**
 
@@ -106,7 +120,7 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
 `benchmarks/m4pro-24gb-native-dev18.json`, `benchmarks/m4pro-24gb-sweep-2026-09-02.json`
 (the launcher's 4K/8K rows there are context sizes, not decode positions).
 
-**Neither 0.3.0 nor 0.4.0 has been measured on a 24 GiB M4 Pro or a 16 GiB M4 Air.** The
+**Neither 0.3.0 nor 0.4.x has been measured on a 24 GiB M4 Pro or a 16 GiB M4 Air.** The
 4 GiB configuration is the one intended for 24 GiB machines; there, some expert misses
 will be SSD reads instead of page-cache copies.
 

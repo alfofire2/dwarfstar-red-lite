@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased (after 0.4.0, branches `dev/iq3-kernels` … `dev/iq3m`)
+## 0.4.1 — 2026-10-01
+
+Faster decode and a better use of a bounded expert cache, on the same two GGUFs. Work of dev33–dev39
+below, all on the M4 Max 48 GiB (nothing measured on the M4 Pro 24 GiB or an M4 Air).
+
+| GGUF, cache | Decode 0.4.0 → 0.4.1 | Prefill 1100 0.4.0 → 0.4.1 | Prefill 8192 0.4.0 → 0.4.1 |
+|---|---|---|---|
+| IQ2_XXS, full | 71.15 → **81.15** | 891.9 → 900.4 | 926.9 → 921.5 |
+| IQ2_XXS, 4 GiB | 47.77 → **52.89** | 545.8 → **808.9** | 645.6 → **898.9** |
+| IQ3_XXS, full | 63.39 → **76.88** | 786.0 → **876.7** | 860.3 → **917.5** |
+| IQ3_XXS, 4 GiB | 43.8 → **49.59** | 428.4 → **763.0** | 588.3 → **889.2** |
+
+`bench_m4.sh --reps 3 --cool 90` (median of three cooled runs; the new `--only prefill4` measures the
+4 GiB cache with the default 2048-token chunk, 0.4.0's 4 GiB rows used 512). Record:
+`benchmarks/m4max-48gb-0.4.1.json`.
+
+- **Decode:** sub-block IQ dots (dev33), grouped split-K attention at long context (dev35), expert
+  down-projection lanes and concurrent encoders (dev38), fused expert tail (dev39). IQ3_XXS decode is
+  now above the pinned llama.cpp (76.88 vs 68.54).
+- **Memory:** expert slots of each layer's own size (dev37): full residency 21,312 → 17,316 MiB
+  (IQ2_XXS) and 29,376 → 28,800 MiB (IQ3_XXS); a 4 GiB cache holds 23 % more experts (−24 % misses
+  per token).
+- **Bounded-cache prefill:** 2048-token chunks at every cache size (dev34).
+- **IQ3_M** (dev36): supported (Q4_K experts) and validated against llama.cpp with bounded caches; not
+  chosen automatically on 48 GiB. The planner's full-residency limit is 70 % of RAM.
+- **Records:** `docs/WHAT_DID_NOT_WORK.md` lists every reverted attempt, trap and unreached target.
+- **Validation:** `scripts/regress_m4.sh` IQ2_XXS 49/49, IQ3_XXS 36 passed / 0 failed / 13 skipped
+  (dev39 gates; 0.4.1 changes no native source after them), `make sanitize` 0 warnings.
+
 
 ### dev39 — fused expert tail (M4 Max 48 GiB)
 
