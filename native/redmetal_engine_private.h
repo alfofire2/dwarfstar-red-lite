@@ -30,6 +30,22 @@ struct rl_metal_engine {
     id<MTLLibrary> lib;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
     id<MTLComputePipelineState> p_moe_tail;                    /* dev39: fused end of a GPU-routed layer */
+    /* dev45: MTP block (kcache/vcache[n_attention] hold its KV rows) */
+    int mtp;
+    mlayer mtp_w;
+    mweight mtp_eh_proj, mtp_enorm, mtp_hnorm, mtp_head_norm, mtp_head;
+    id<MTLBuffer> mtp_emb, mtp_ea, mtp_eb, mtp_cat, mtp_slots, mtp_weights, mtp_ids, mtp_miss;
+    rl_native_metal_runtime *mtp_experts;
+    /* dev45: 2-row verify: two-vector GEMV kernels, row-1 copies of the per-token buffers (swapped into the fields
+     * above while row 1 is encoded), DeltaNet state snapshots after row 0 */
+    id<MTLComputePipelineState> p_r2_f32, p_r2_q8, p_r2_q4k, p_r2_q5k, p_r2_q6k, p_r2_iq2xxs;
+    id<MTLComputePipelineState> p_dn_ba2, p_dn_convshift2, p_dn_l2_2, p_dn_state2, p_dn_tail2;
+    id<MTLComputePipelineState> p_route2, p_moe_tail2;
+    id<MTLBuffer> verify_miss;
+    id<MTLBuffer> alt[40];
+    __unsafe_unretained id<MTLBuffer> *snap_conv, *snap_rec;
+    int verify_ready;                  /* buffers allocated */
+    int verify_pending;                /* a verify ran: rl_metal_engine_verify_commit must follow */
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;

@@ -36,6 +36,7 @@ typedef struct {
     int cpu_threads;       /* worker threads for the CPU oracle (0 -> hardware count) */
     uint32_t prefill_batch; /* tokens per batched Metal prefill chunk (0 -> 2048, dev34; 1 -> token-by-token); larger
                              * chunks amortize the per-layer expert union and reload fewer experts with a bounded cache */
+    const char *mtp_path;   /* dev45: a GGUF holding the Qwen3-Next MTP block (blk.N with nextn.* tensors), NULL = none */
 } rl_engine_config;
 
 typedef struct {
@@ -142,6 +143,24 @@ int rl_engine_state_write(rl_engine *engine, rl_engine_backend backend, FILE *f,
 int rl_engine_state_read(rl_engine *engine, rl_engine_backend backend, FILE *f, uint32_t position, char *error, size_t error_cap);
 /* identity of the open model for state files: GGUF byte size and hyper-parameters */
 uint64_t rl_engine_model_tag(const rl_engine *engine);
+
+/*
+ * dev45: the MTP (multi-token prediction) block of a Qwen3-Next checkpoint, loaded from cfg.mtp_path.
+ * rl_engine_mtp_draft runs it once on the GPU backend: input = the trunk's last hidden state (after the step just
+ * made) and the embedding of next_token; it appends one row to the MTP block's own KV cache at mtp_position and
+ * returns the argmax of its logits, the draft for the token after next_token. logits may be NULL.
+ */
+int rl_engine_mtp_enabled(const rl_engine *engine);
+/*
+ * dev45: speculative verify on the GPU backend (every expert resident): runs t0 at the current position and the
+ * draft d at the next one in one pass and returns both rows' logits; rl_engine_verify_commit then keeps both
+ * (accepted, position + 2) or only t0 (position + 1, DeltaNet state restored). Accept when the token sampled from
+ * logits0 equals d: the result is then exactly what two ordinary steps give.
+ */
+int rl_engine_verify2(rl_engine *engine, uint32_t t0, uint32_t d, float *logits0, float *logits1, char *error, size_t error_cap);
+int rl_engine_verify_commit(rl_engine *engine, int accepted, char *error, size_t error_cap);
+int rl_engine_mtp_draft(rl_engine *engine, uint32_t next_token, uint32_t mtp_position, uint32_t *draft, float *logits,
+                        char *error, size_t error_cap);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
 

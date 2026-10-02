@@ -146,6 +146,19 @@ if grep -q "multi-turn reuse: identical greedy answer" "$LOG/server.stream_greed
 # dev43: --state-dir checkpoints survive a server restart and give the same greedy answer
 expect_line server.state_restart "SERVER STATE CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --state-restart
 expect_line generate.json '"batch":2048,"state_loaded":0,"state_saved":0,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
+# dev45: MTP speculative decoding (full residency, needs the MTP head GGUF): greedy output identical to plain decode
+MTP_FILE="${REDLITE_MTP:-$ROOT/models/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf}"
+if [[ -f "$MTP_FILE" && "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
+  "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 48 --cache-mib full --temperature 0 --no-stream --tokens-out "$LOG/mtp.plain.txt" >"$LOG/mtp.plain.log" 2>&1
+  "$BIN/redlite-generate" "$MODEL" --mtp "$MTP_FILE" --prompt "$PROMPT" --max-tokens 48 --cache-mib full --temperature 0 --no-stream --stats --tokens-out "$LOG/mtp.spec.txt" >"$LOG/mtp.spec.log" 2>&1
+  if [[ -s "$LOG/mtp.plain.txt" ]] && cmp -s "$LOG/mtp.plain.txt" "$LOG/mtp.spec.txt" && grep -q "drafts accepted" "$LOG/mtp.spec.log"; then
+    echo "PASS  generate.mtp_greedy ($(grep -o '[0-9]* drafts accepted ([0-9.]*)' "$LOG/mtp.spec.log"))"; PASS=$((PASS + 1))
+  else
+    echo "FAIL  generate.mtp_greedy (see $LOG/mtp.spec.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.mtp_greedy)
+  fi
+else
+  echo "SKIP  generate.mtp_greedy (no MTP head file or < 40 GiB)"; SKIP=$((SKIP + 1))
+fi
 # Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
 "$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
   --cache-mib 2048 --json >"$LOG/generate.sigint.log" 2>&1 &

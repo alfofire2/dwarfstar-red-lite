@@ -36,7 +36,7 @@ void rl_native_metal_prepare_profile(const rl_native_metal_runtime *runtime, dou
 }
 
 /* dev31: routed quant types with Metal expert kernels */
-static int routed_type_ok(uint32_t t) { return t == 17u || t == 29u || t == 18u || t == 21u || t == 12u; }   /* dev36: Q4_K (IQ3_M down) */
+static int routed_type_ok(uint32_t t) { return t == 17u || t == 29u || t == 18u || t == 21u || t == 12u || t == 8u; }   /* dev45: Q8_0 (MTP head) */   /* dev36: Q4_K (IQ3_M down) */
 
 static void set_error(char *error, size_t cap, const char *message) {
     if (error && cap) snprintf(error, cap, "%s", message ? message : "unknown native Metal error");

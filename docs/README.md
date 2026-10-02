@@ -39,6 +39,7 @@ Developed on the `dev/0.4` branch; M4 Max 48 GiB only.
 | [REDLITE_DEV39_EXPERT_TAIL.md](REDLITE_DEV39_EXPERT_TAIL.md) | dev39: fused expert tail in GPU-routed decode (+1.6 %) |
 | [REDLITE_DEV42_CODER_NEXT.md](REDLITE_DEV42_CODER_NEXT.md) | dev42: Qwen3-Coder-Next (same engine, validated against llama.cpp) |
 | [REDLITE_DEV43_STATE_CACHE.md](REDLITE_DEV43_STATE_CACHE.md) | dev43: session state checkpoints on disk (`--state-dir`), dev37 2 GiB prefill fix |
+| [REDLITE_DEV45_MTP.md](REDLITE_DEV45_MTP.md) | dev45: speculative decoding with the Qwen3-Next MTP block (+8-30 % decode, identical output) |
 | [REDLITE_DEV46_SMALL_MAC_OPTIONS.md](REDLITE_DEV46_SMALL_MAC_OPTIONS.md) | dev46: cache-aware routing bias, F_NOCACHE, engine perplexity, 24 GiB A/B script |
 
 ## Native runtime milestones (v0.3, released as 0.3.0)

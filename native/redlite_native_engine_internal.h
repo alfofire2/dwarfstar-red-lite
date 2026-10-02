@@ -64,6 +64,13 @@ struct rl_engine {
     rl_backend_state gpu;
     rl_metal_engine *metal;
     int cpu_threads;
+    /* dev45: MTP block */
+    int mtp_enabled;
+    rl_gguf_model mtp_gguf;
+    rl_layer_tensors mtp;                 /* attention + MoE of the MTP block (attention_index = info.n_attention) */
+    const rl_gguf_tensor *mtp_eh_proj, *mtp_enorm, *mtp_hnorm, *mtp_head_norm, *mtp_head, *mtp_embd;
+    rl_expert_map mtp_expert_map;
+    uint32_t mtp_layer;                   /* block index in the MTP file (== trunk n_layer) */
 };
 
 /* CPU oracle (redlite_native_engine_cpu.c) */
@@ -74,6 +81,10 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap);
 void rl_metal_engine_destroy(rl_metal_engine *m);
 int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap);
 int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
+int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap);
+int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted, char *error, size_t cap);   /* dev45 */
+int rl_metal_engine_mtp_draft(rl_engine *e, rl_metal_engine *m, const float *embedding, uint32_t mtp_position, uint32_t *draft,
+                              float *logits, char *error, size_t cap);   /* dev45 */
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
                             rl_engine_step_stats *stats, char *error, size_t cap);
 int rl_metal_engine_preloaded(const rl_metal_engine *m, double *preload_ms);

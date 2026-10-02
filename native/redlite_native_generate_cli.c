@@ -93,6 +93,47 @@ static void usage(FILE *out) {
         "  --state-max-mib N   size limit of --state-dir, least recently used files deleted first (default 8192)\n");
 }
 
+/* dev45: greedy token-by-token run with the MTP block after every step; reports how often its draft equals the
+ * token the trunk then produces (the acceptance a 1-token speculation would get). RL_MTP_POS = MTP position offset. */
+static int mtp_measure(rl_engine *e, const uint32_t *ids, uint32_t prompt_len, uint32_t max_tokens, uint32_t vocab) {
+    char error[512];
+    float *logits = (float *)malloc((size_t)vocab * sizeof(float));
+    if (!logits) return 1;
+    const uint32_t off = getenv("RL_MTP_POS") ? (uint32_t)atoi(getenv("RL_MTP_POS")) : 1u;
+    uint32_t tok = ids[0], pending = UINT32_MAX, drafted = 0, accepted = 0, generated = 0;
+    double mtp_ms = 0.0, step_ms = 0.0;
+    for (uint32_t p = 0;; ++p) {
+        const double t0 = now_ms();
+        if (!rl_engine_step(e, RL_BACKEND_GPU, tok, logits, NULL, error, sizeof(error))) { fprintf(stderr, "step failed: %s\n", error); return 1; }
+        step_ms += now_ms() - t0;
+        uint32_t next;
+        if (p + 1u < prompt_len) next = ids[p + 1u];
+        else {
+            next = 0;
+            for (uint32_t v = 1; v < vocab; ++v) if (logits[v] > logits[next]) next = v;
+            if (pending != UINT32_MAX) { drafted++; if (pending == next) accepted++; }
+            if (++generated >= max_tokens || next == 151645u) break;
+        }
+        const double t1 = now_ms();
+        /* RL_MTP_PROMPT=0: the MTP block skips the prompt (only its last position) and indexes its own positions
+         * compactly (0, 1, 2, ... per MTP pass), as a decode loop that never ran it over the prompt would */
+        static uint32_t mtp_count = 0;
+        const int skip_prompt = getenv("RL_MTP_PROMPT") && atoi(getenv("RL_MTP_PROMPT")) == 0;
+        if (skip_prompt && p + 2u < prompt_len) { tok = next; continue; }
+        const uint32_t mpos = skip_prompt ? mtp_count++ : p + off;
+        if (!rl_engine_mtp_draft(e, next, mpos, &pending, NULL, error, sizeof(error))) { fprintf(stderr, "MTP failed: %s\n", error); return 1; }
+        if (p + 1u < prompt_len && p + 2u >= prompt_len) { /* draft for the first generated token after next */ }
+        else if (p + 1u < prompt_len) pending = UINT32_MAX;   /* inside the prompt the next-next token is known: no score */
+        mtp_ms += now_ms() - t1;
+        tok = next;
+    }
+    printf("MTP acceptance: %u / %u drafts = %.3f (position offset %u, %u generated, step %.2f ms, mtp %.2f ms per token)\n",
+           accepted, drafted, drafted ? (double)accepted / drafted : 0.0, off, generated,
+           step_ms / (double)(prompt_len + generated), mtp_ms / (double)(prompt_len + generated));
+    free(logits);
+    return 0;
+}
+
 static int parse_u32(const char *s, uint32_t *out) {
     if (!s || !*s) return 0;
     errno = 0;
@@ -288,6 +329,7 @@ int main(int argc, char **argv) {
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) { usage(argc < 2 ? stderr : stdout); return argc < 2 ? 2 : 0; }
     const char *model = argv[1];
     const char *prompt = NULL, *system_prompt = NULL, *tokens_out = NULL, *state_dir = NULL;
+    int mtp_measure_mode = 0;
     uint32_t state_max_mib = 8192u;
     int raw = 0, stream = 1, stats = 0, interactive = 0, json = 0;
     uint32_t max_tokens = 256u;
@@ -301,11 +343,13 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--no-stream") == 0) { stream = 0; continue; }
         if (strcmp(argv[i], "--stats") == 0) { stats = 1; continue; }
         if (strcmp(argv[i], "--json") == 0) { json = 1; continue; }
+        if (strcmp(argv[i], "--mtp-measure") == 0) { mtp_measure_mode = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--prompt") == 0) prompt = argv[++i];
         else if (strcmp(argv[i], "--system") == 0) system_prompt = argv[++i];
         else if (strcmp(argv[i], "--tokens-out") == 0) tokens_out = argv[++i];
         else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
+        else if (strcmp(argv[i], "--mtp") == 0) cfg.mtp_path = argv[++i];
         else if (strcmp(argv[i], "--state-max-mib") == 0) { if (!parse_u32(argv[++i], &state_max_mib)) return 2; }
         else if (strcmp(argv[i], "--max-tokens") == 0) { if (!parse_u32(argv[++i], &max_tokens)) return 2; }
         else if (strcmp(argv[i], "--temperature") == 0) { if (!parse_f32(argv[++i], &sp.temperature)) return 2; }
@@ -381,6 +425,7 @@ int main(int argc, char **argv) {
     /* prefill: batched Metal ingestion of the prompt (chunks of --batch), LM head on the last token */
     rl_engine_step_stats st;
     const double t_prefill = now_ms();
+    if (mtp_measure_mode) return mtp_measure(e, ids, prompt_len, max_tokens, in->vocab);
     uint32_t state_loaded = 0, state_saved = 0;
     const rl_statecache scache = {state_dir, (uint64_t)state_max_mib * 1024u * 1024u};
     if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len, logits, &st, &state_loaded, &state_saved, error, sizeof(error))) {
@@ -403,7 +448,65 @@ int main(int argc, char **argv) {
     /* dev37: RL_ROUTE_TRACE=file appends each decoded token's router ids (n_layer x top_k uint16, layer-major) for
      * offline expert cache policy studies (scripts/dev/cache_policy_sim.py) */
     FILE *route_trace = getenv("RL_ROUTE_TRACE") ? fopen(getenv("RL_ROUTE_TRACE"), "ab") : NULL;
-    while (generated < max_tokens) {
+    /* dev45: speculative decoding with the MTP block (full residency): each cycle drafts d after the pending token u,
+     * verifies u and d in one 2-row pass, keeps d when the token sampled from u's logits equals it (then also samples
+     * the token after d from the second row), else keeps the sampled token and restores the DeltaNet state. */
+    uint32_t spec_cycles = 0, spec_accepted = 0;
+    double spec_mtp_ms = 0.0, spec_verify_ms = 0.0;
+    double pre_ms_unused = 0.0;
+    const int speculate = cfg.mtp_path && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms_unused) &&
+                          !(getenv("RL_MTP_SPECULATE") && atoi(getenv("RL_MTP_SPECULATE")) == 0);
+#define GEN_EMIT(tok) do { \
+        const uint32_t tk_ = (tok); ids[prompt_len + generated] = tk_; generated++; \
+        if (rl_tokenizer_is_eog(tk, tk_)) { stopped_on_eog = 1; break; } \
+        char piece_[512]; const int32_t n_ = rl_tokenizer_decode(tk, tk_, piece_, sizeof(piece_)); \
+        if (n_ > 0 && text_len + (size_t)n_ <= (size_t)max_tokens * 512u) { \
+            memcpy(text + text_len, piece_, (size_t)n_); text_len += (size_t)n_; \
+            if (stream) { fwrite(piece_, 1, (size_t)n_, stdout); fflush(stdout); } } \
+    } while (0)
+    if (speculate) {
+        float *logits1 = (float *)malloc((size_t)in->vocab * sizeof(float));
+        if (!logits1) { fprintf(stderr, "logits allocation failed\n"); return 1; }
+        uint32_t mtp_pos = 0, u = 0;
+        int have_u = 0;
+        for (;;) {
+            if (g_interrupt) { interrupted = 1; break; }
+            if (!have_u) {   /* first token from the prefill logits, then one ordinary step to set the hidden state */
+                const uint32_t t0 = rl_sampler_sample(&sampler, logits);
+                GEN_EMIT(t0);
+                if (stopped_on_eog || generated >= max_tokens) break;
+                if (!rl_engine_step(e, RL_BACKEND_GPU, t0, logits, &st, error, sizeof(error))) { fprintf(stderr, "\ndecode failed: %s\n", error); return 1; }
+                u = rl_sampler_sample(&sampler, logits);
+                GEN_EMIT(u);
+                if (stopped_on_eog || generated >= max_tokens) break;
+                have_u = 1;
+                continue;
+            }
+            if (rl_engine_position(e, RL_BACKEND_GPU) + 2u > in->context) break;
+            uint32_t d = 0;
+            const double c0 = now_ms();
+            if (!rl_engine_mtp_draft(e, u, mtp_pos++, &d, NULL, error, sizeof(error))) { fprintf(stderr, "\nMTP draft failed: %s\n", error); return 1; }
+            const double c1 = now_ms();
+            if (!rl_engine_verify2(e, u, d, logits, logits1, error, sizeof(error))) { fprintf(stderr, "\nspeculative decode failed: %s\n", error); return 1; }
+            spec_mtp_ms += c1 - c0; spec_verify_ms += now_ms() - c1;
+            spec_cycles++;
+            const uint32_t v = rl_sampler_sample(&sampler, logits);
+            const int accepted = v == d;
+            if (!rl_engine_verify_commit(e, accepted, error, sizeof(error))) { fprintf(stderr, "\nverify commit failed: %s\n", error); return 1; }
+            GEN_EMIT(v);
+            if (stopped_on_eog || generated >= max_tokens) break;
+            if (accepted) {
+                spec_accepted++;
+                u = rl_sampler_sample(&sampler, logits1);
+                GEN_EMIT(u);
+                if (stopped_on_eog || generated >= max_tokens) break;
+            } else {
+                u = v;
+            }
+        }
+        free(logits1);
+    }
+    while (!speculate && generated < max_tokens) {
         if (g_interrupt) { interrupted = 1; break; }
         const uint32_t next = rl_sampler_sample(&sampler, logits);
         ids[prompt_len + generated] = next;
@@ -450,6 +553,11 @@ int main(int argc, char **argv) {
         }
         fprintf(stderr, "prompt tokens        : %u (%.1f ms, %.2f tok/s)\n", prompt_len, prefill_ms, prompt_len * 1000.0 / prefill_ms);
         if (state_dir) fprintf(stderr, "state cache          : %u tokens restored, %u stored\n", state_loaded, state_saved);
+        if (speculate) fprintf(stderr, "MTP speculation      : %u cycles, %u drafts accepted (%.3f), %.2f tokens per pass\n",
+                               spec_cycles, spec_accepted, spec_cycles ? (double)spec_accepted / spec_cycles : 0.0,
+                               spec_cycles ? (double)(spec_cycles + spec_accepted) / spec_cycles : 0.0);
+        if (speculate && spec_cycles) fprintf(stderr, "MTP speculation time : draft %.2f ms, 2-row verify %.2f ms per cycle\n",
+                                               spec_mtp_ms / spec_cycles, spec_verify_ms / spec_cycles);
         fprintf(stderr, "generated tokens     : %u (%.1f ms, %.2f tok/s over %u decode passes)\n", generated, gen_ms,
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);
         fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f [load %.1f gpu %.1f] shared %.1f out %.1f) dense GPU %.1f ms\n",

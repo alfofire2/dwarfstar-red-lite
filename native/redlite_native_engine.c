@@ -185,6 +185,8 @@ static uint64_t dense_bytes(const rl_engine *e) {
     return total;
 }
 
+static int open_mtp(rl_engine *e, const char *path, char *error, size_t cap);   /* dev45, below */
+
 rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in, char *error, size_t cap) {
     if (!model_path) { set_error(error, cap, "model path required"); return NULL; }
     rl_engine *e = (rl_engine *)calloc(1, sizeof(*e));
@@ -252,6 +254,7 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
         set_error(error, cap, "routed expert map is not slice-safe for every layer"); rl_engine_close(e); return NULL;
     }
     if (!rl_native_iq2_xxs_build_grid(e->iq2_grid, error, cap)) { rl_engine_close(e); return NULL; }
+    if (e->cfg.mtp_path && e->cfg.mtp_path[0] && !open_mtp(e, e->cfg.mtp_path, error, cap)) { rl_engine_close(e); return NULL; }
 
     in->dense_bytes = dense_bytes(e);
     in->state_bytes = (uint64_t)(rl_engine_conv_count(e) + rl_engine_rec_count(e)) * in->n_recurrent * sizeof(float) +
@@ -287,9 +290,110 @@ void rl_engine_close(rl_engine *e) {
     rl_backend_state_free(&e->cpu);
     rl_backend_state_free(&e->gpu);
     rl_native_free_expert_map(&e->expert_map);
+    if (e->mtp_enabled) { rl_native_free_expert_map(&e->mtp_expert_map); rl_gguf_model_close(&e->mtp_gguf); }
     free(e->layers);
     rl_gguf_model_close(&e->gguf);
     free(e);
+}
+
+/* dev45: open and audit the MTP block file against the trunk's shape */
+static int open_mtp(rl_engine *e, const char *path, char *error, size_t cap) {
+    rl_gguf_model *g = &e->mtp_gguf;
+    const rl_engine_info *in = &e->info;
+    if (!rl_gguf_model_open(path, g, error, cap) || !rl_gguf_model_map(g, error, cap)) return 0;
+    e->mtp_enabled = 1;   /* from here rl_engine_close releases it */
+    if (!g->architecture || strcmp(g->architecture, "qwen3next") != 0 || g->n_embd != in->hidden) {
+        set_error(error, cap, "MTP file is not a qwen3next file of the same width"); return 0;
+    }
+    const uint32_t l = in->n_layer;   /* nextn block follows the trunk */
+    e->mtp_layer = l;
+    rl_layer_tensors *t = &e->mtp;
+    memset(t, 0, sizeof(*t));
+    t->kind = RL_LAYER_MAP_FULL_ATTENTION;
+    t->recurrent_index = UINT32_MAX;
+    t->attention_index = in->n_attention;
+    t->attn_norm = rl_gguf_find_layer(g, l, "attn_norm.weight");
+    t->post_norm = rl_gguf_find_layer(g, l, "post_attention_norm.weight");
+    t->q = rl_gguf_find_layer(g, l, "attn_q.weight");
+    t->k = rl_gguf_find_layer(g, l, "attn_k.weight");
+    t->v = rl_gguf_find_layer(g, l, "attn_v.weight");
+    t->q_norm = rl_gguf_find_layer(g, l, "attn_q_norm.weight");
+    t->k_norm = rl_gguf_find_layer(g, l, "attn_k_norm.weight");
+    t->o = rl_gguf_find_layer(g, l, "attn_output.weight");
+    t->router = rl_gguf_find_layer(g, l, "ffn_gate_inp.weight");
+    t->sh_gate_inp = rl_gguf_find_layer(g, l, "ffn_gate_inp_shexp.weight");
+    t->sh_gate = rl_gguf_find_layer(g, l, "ffn_gate_shexp.weight");
+    t->sh_up = rl_gguf_find_layer(g, l, "ffn_up_shexp.weight");
+    t->sh_down = rl_gguf_find_layer(g, l, "ffn_down_shexp.weight");
+    e->mtp_eh_proj = rl_gguf_find_layer(g, l, "nextn.eh_proj.weight");
+    e->mtp_enorm = rl_gguf_find_layer(g, l, "nextn.enorm.weight");
+    e->mtp_hnorm = rl_gguf_find_layer(g, l, "nextn.hnorm.weight");
+    e->mtp_head_norm = rl_gguf_find_layer(g, l, "nextn.shared_head_norm.weight");
+    e->mtp_head = rl_gguf_find(g, "output.weight");
+    e->mtp_embd = rl_gguf_find(g, "token_embd.weight");
+    const uint64_t qcount = (uint64_t)in->n_head * in->head_dim, kvcount = (uint64_t)in->n_head_kv * in->head_dim;
+    if (!expect(t->attn_norm, "mtp attn_norm", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect(t->post_norm, "mtp post_attention_norm", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect_dense(t->q, "mtp attn_q", 2u, in->hidden, 2u * qcount, error, cap) ||
+        !expect_dense(t->k, "mtp attn_k", 2u, in->hidden, kvcount, error, cap) ||
+        !expect_dense(t->v, "mtp attn_v", 2u, in->hidden, kvcount, error, cap) ||
+        !expect(t->q_norm, "mtp attn_q_norm", 0u, 1u, in->head_dim, 0, error, cap) ||
+        !expect(t->k_norm, "mtp attn_k_norm", 0u, 1u, in->head_dim, 0, error, cap) ||
+        !expect_dense(t->o, "mtp attn_output", 2u, qcount, in->hidden, error, cap) ||
+        !expect(t->router, "mtp ffn_gate_inp", 0u, 2u, in->hidden, in->n_expert, error, cap) ||
+        !expect(t->sh_gate_inp, "mtp ffn_gate_inp_shexp", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect_dense(t->sh_gate, "mtp ffn_gate_shexp", 2u, in->hidden, e->gguf.n_ff_shexp, error, cap) ||
+        !expect_dense(t->sh_up, "mtp ffn_up_shexp", 2u, in->hidden, e->gguf.n_ff_shexp, error, cap) ||
+        !expect_dense(t->sh_down, "mtp ffn_down_shexp", 2u, e->gguf.n_ff_shexp, in->hidden, error, cap) ||
+        !expect_dense(e->mtp_eh_proj, "nextn.eh_proj", 2u, 2u * in->hidden, in->hidden, error, cap) ||
+        !expect(e->mtp_enorm, "nextn.enorm", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect(e->mtp_hnorm, "nextn.hnorm", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect(e->mtp_head_norm, "nextn.shared_head_norm", 0u, 1u, in->hidden, 0, error, cap) ||
+        !expect_dense(e->mtp_head, "mtp output", 2u, in->hidden, in->vocab, error, cap) ||
+        !expect_dense(e->mtp_embd, "mtp token_embd", 2u, in->hidden, in->vocab, error, cap)) return 0;
+    if (!rl_native_build_expert_map(path, in->n_expert, &e->mtp_expert_map, error, cap)) return 0;
+    if (!e->mtp_expert_map.all_slice_safe || e->mtp_expert_map.layer_count != 1u) {
+        set_error(error, cap, "MTP routed experts are not one slice-safe layer"); return 0;
+    }
+    return 1;
+}
+
+int rl_engine_mtp_enabled(const rl_engine *e) { return e && e->mtp_enabled; }
+
+int rl_engine_verify2(rl_engine *e, uint32_t t0, uint32_t d, float *logits0, float *logits1, char *error, size_t cap) {
+    if (!e || !e->gpu_enabled || t0 >= e->info.vocab || d >= e->info.vocab) { set_error(error, cap, "invalid verify arguments"); return 0; }
+#ifdef __APPLE__
+    return rl_metal_engine_verify2(e, e->metal, t0, d, logits0, logits1, error, cap);
+#else
+    set_error(error, cap, "verify needs Metal"); return 0;
+#endif
+}
+
+int rl_engine_verify_commit(rl_engine *e, int accepted, char *error, size_t cap) {
+    if (!e || !e->gpu_enabled) { set_error(error, cap, "invalid verify commit"); return 0; }
+#ifdef __APPLE__
+    return rl_metal_engine_verify_commit(e, e->metal, accepted, error, cap);
+#else
+    (void)accepted; set_error(error, cap, "verify needs Metal"); return 0;
+#endif
+}
+
+int rl_engine_mtp_draft(rl_engine *e, uint32_t next_token, uint32_t mtp_position, uint32_t *draft, float *logits, char *error, size_t cap) {
+    if (!e || !e->mtp_enabled || !e->gpu_enabled || !draft) { set_error(error, cap, "MTP block not loaded"); return 0; }
+    if (next_token >= e->info.vocab || mtp_position >= e->info.context) { set_error(error, cap, "MTP token or position out of range"); return 0; }
+    float *emb = (float *)malloc((size_t)e->info.hidden * sizeof(float));
+    if (!emb) { set_error(error, cap, "MTP embedding allocation failed"); return 0; }
+    const size_t rb = rl_gguf_row_bytes(e->mtp_embd->ggml_type, e->info.hidden);
+    const uint8_t *row = rl_gguf_tensor_data(&e->mtp_gguf, e->mtp_embd) + (size_t)next_token * rb;
+    int ok = rb && rl_quant_dequant_row(e->mtp_embd->ggml_type, row, e->info.hidden, e->iq2_grid, emb);
+    if (!ok) set_error(error, cap, "MTP token embedding dequantization failed");
+#ifdef __APPLE__
+    ok = ok && rl_metal_engine_mtp_draft(e, e->metal, emb, mtp_position, draft, logits, error, cap);
+#else
+    if (ok) { set_error(error, cap, "MTP needs Metal"); ok = 0; }
+#endif
+    free(emb);
+    return ok;
 }
 
 const rl_engine_info *rl_engine_info_get(const rl_engine *e) { return e ? &e->info : NULL; }
