@@ -10,7 +10,7 @@ N="$ROOT/native"
 mkdir -p "$OUT"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  CC_CMD=(xcrun --sdk macosx clang)
+  CC_CMD=(xcrun --sdk "${REDLITE_SDK:-macosx}" clang)
 else
   CC_CMD=("${CC:-cc}")
 fi

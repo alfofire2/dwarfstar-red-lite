@@ -101,6 +101,9 @@ The full list of invocations that constitute "field validation" is the step list
 `.github/workflows/mac-m4-field-validation.yml` (self-hosted M4 Pro runner, reads
 `REDLITE_MODEL_PATH`). When you add a new native stage, add its parity step there.
 
+`REDLITE_SDK` (dev47) selects the SDK for every `xcrun --sdk` build (default `macosx`; on the M4 Pro
+the Command Line Tools ship a MacOSX27 SDK their linker cannot read, so builds there use
+`REDLITE_SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`).
 Environment variables: `REDLITE_REDMETAL_LIB` overrides the dylib path for the Python
 bridge; `REDLITE_JOBS` sets bootstrap build parallelism; `REDLITE_LLAMA_DIR` points
 `regress_m4.sh` and `scripts/dev/build_ref_llama.sh` at a bootstrapped llama.cpp checkout

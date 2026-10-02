@@ -8,7 +8,7 @@ BIN="$LLAMA/build/bin"
 OUT="$ROOT/.deps/redmetal"
 mkdir -p "$OUT"
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  LIB="$BIN/libllama.dylib"; CXX_CMD=(xcrun --sdk macosx clang++)
+  LIB="$BIN/libllama.dylib"; CXX_CMD=(xcrun --sdk "${REDLITE_SDK:-macosx}" clang++)
 else
   LIB="$BIN/libllama.so"; CXX_CMD=("${CXX:-c++}")
 fi
