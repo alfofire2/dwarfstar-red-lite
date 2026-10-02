@@ -2,6 +2,13 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev42 — Qwen3-Coder-Next (M4 Max 48 GiB)
+
+- `Qwen/Qwen3-Coder-Next` runs unchanged (same architecture, rope base 5e6 read from the GGUF): Bartowski
+  IQ2_XXS 50/50 and IQ3_XXS 37/0/13 in `regress_m4.sh` against the pinned llama.cpp, dequantization
+  bit-identical. `redlite download coder` / `coder-48gb` (and the missing `48gb` = IQ3_XXS Instruct).
+  See `docs/REDLITE_DEV42_CODER_NEXT.md`.
+
 ### dev43 — session state checkpoints on disk (M4 Max 48 GiB)
 
 - `--state-dir DIR` for `redlite-generate` and `redlite-server` stores the session state (DeltaNet states,

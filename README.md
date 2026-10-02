@@ -9,7 +9,8 @@ hardware family:
 - **Model:** Qwen3-Next-80B-A3B-Instruct, two of Bartowski's GGUFs: the reference
   `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB, for 24 GiB Macs) and, since
   0.4.0, `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29 vs 16.47 on the same text), which
-  runs with every expert resident on a 48 GiB Mac.
+  runs with every expert resident on a 48 GiB Mac. Since dev42 also `Qwen/Qwen3-Coder-Next` (same
+  architecture, Bartowski IQ2_XXS / IQ3_XXS), validated against llama.cpp.
 - **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
   developed since September 2026 on a 48 GiB M4 Max.
 - **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the
