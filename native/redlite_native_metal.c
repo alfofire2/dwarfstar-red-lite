@@ -109,6 +109,11 @@ rl_native_metal_runtime *rl_native_metal_create(
         }
         uint64_t per_layer = ok && sum ? budget_bytes / sum : 0;
         if (per_layer > map->expert_count) per_layer = map->expert_count;
+        /* a class must hold one layer's whole chunk (up to expert_count) while the next layer's is prefetched */
+        uint32_t layers_in_class[RL_LRU_MAX_CLASSES] = {0};
+        for (uint32_t l = 0; ok && l < map->layer_count; ++l) layers_in_class[layer_class[l]]++;
+        for (uint32_t c = 0; ok && c < n_class; ++c)
+            if ((uint64_t)per_layer * layers_in_class[c] < 2ull * map->expert_count + 64u) ok = 0;
         if (!ok || n_class < 2u || per_layer < 16u) {
             n_class = 0;
         } else {
@@ -593,6 +598,16 @@ int rl_native_metal_encode_topk_batched(
 void *rl_native_metal_pool_handle(rl_native_metal_runtime *runtime) { return runtime ? (void *)runtime->pool : NULL; }
 
 uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime) { return runtime ? runtime->lru.capacity : 0u; }
+
+uint32_t rl_native_metal_layer_class(const rl_native_metal_runtime *runtime, uint32_t layer) {
+    return runtime && layer < RL_LRU_MAX_LAYERS ? runtime->lru.layer_class[layer] : 0u;
+}
+
+uint32_t rl_native_metal_layer_capacity(const rl_native_metal_runtime *runtime, uint32_t layer) {
+    if (!runtime) return 0u;
+    const uint32_t c = rl_native_metal_layer_class(runtime, layer);
+    return runtime->lru.class_first[c + 1u] - runtime->lru.class_first[c];
+}
 
 int rl_native_metal_release_topk(
         rl_native_metal_runtime *runtime,

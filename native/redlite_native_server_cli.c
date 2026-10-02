@@ -21,6 +21,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_statecache.h"
 #include "redlite_native_gguf_dir.h"
 #include "redlite_native_sampler.h"
 #include "redlite_native_server.h"
@@ -52,6 +53,7 @@ typedef struct {
     int reuse;             /* dev29 prefix reuse enabled (--no-reuse clears it) */
     uint32_t *history;     /* token ids the engine state holds, in order (context entries) */
     uint32_t history_len;
+    rl_statecache states;  /* dev43 --state-dir: disk checkpoints when the in-memory state does not apply */
 } engine_ctx;
 
 typedef struct {               /* wraps the server sink to time the first token */
@@ -103,11 +105,17 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     if (c->reuse && rl_engine_position(c->engine, c->backend) == c->history_len)
         reused = rl_prefix_reuse(c->history, c->history_len, ids, (uint32_t)needed);
     c->history_len = 0;   /* invalid until this request's ids are in the state */
-    int ok = reused ? 1 : rl_engine_reset(c->engine, c->backend, error, cap);
     rl_engine_step_stats st;
     memset(&st, 0, sizeof(st));
     const double t_prefill = now_ms();
-    ok = ok && rl_engine_prefill(c->engine, c->backend, ids + reused, (uint32_t)needed - reused, c->logits, &st, error, cap);
+    int ok;
+    if (reused) {
+        ok = rl_engine_prefill(c->engine, c->backend, ids + reused, (uint32_t)needed - reused, c->logits, &st, error, cap);
+    } else {   /* dev43: restore the longest stored prefix (rl_statecache_prefill resets when there is none) */
+        uint32_t loaded = 0, saved = 0;
+        ok = rl_statecache_prefill(c->engine, c->backend, &c->states, ids, (uint32_t)needed, c->logits, &st, &loaded, &saved, error, cap);
+        reused = loaded;
+    }
     const double prefill_ms = now_ms() - t_prefill;
     if (ok) { memcpy(c->history, ids, (size_t)needed * sizeof(uint32_t)); c->history_len = (uint32_t)needed; }
     free(ids);
@@ -159,6 +167,9 @@ static void usage(FILE *out) {
         "  --queue N           chat requests that may wait behind the running one (default 16; more get 503)\n"
         "  --no-reuse          reset the engine for every request (default: a prompt that extends the previous\n"
         "                      conversation exactly only prefills the new tokens)\n"
+        "  --state-dir DIR     dev43: store chunk-aligned prompt-prefix checkpoints in DIR and restore the longest\n"
+        "                      match when the in-memory state does not apply (first request, restart)\n"
+        "  --state-max-mib N   size limit of --state-dir in MiB, least recently used first (default 8192)\n"
         "  --cpu               use the CPU oracle backend (slow; the only backend off macOS)\n\n"
         "Endpoints: POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health\n");
 }
@@ -190,6 +201,8 @@ int main(int argc, char **argv) {
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
     int reuse = 1;
+    const char *state_dir = NULL;
+    uint32_t state_max_mib = 8192u;
 #ifdef __APPLE__
     int use_cpu = 0;
 #else
@@ -211,6 +224,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--top-k") == 0) { if (!parse_u32(v, &scfg.default_top_k)) return 2; }
         else if (strcmp(argv[i - 1], "--top-p") == 0) { if (!parse_f32(v, &scfg.default_top_p) || scfg.default_top_p <= 0.0f) return 2; }
         else if (strcmp(argv[i - 1], "--queue") == 0) { if (!parse_u32(v, &scfg.queue_max)) return 2; }
+        else if (strcmp(argv[i - 1], "--state-dir") == 0) state_dir = v;
+        else if (strcmp(argv[i - 1], "--state-max-mib") == 0) { if (!parse_u32(v, &state_max_mib)) return 2; }
         else if (strcmp(argv[i - 1], "--min-p") == 0) { if (!parse_f32(v, &scfg.default_min_p) || scfg.default_min_p < 0.0f || scfg.default_min_p > 1.0f) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i - 1]); usage(stderr); return 2; }
     }
@@ -257,6 +272,8 @@ int main(int argc, char **argv) {
     ctx.logits = (float *)malloc((size_t)ctx.info->vocab * sizeof(float));
     ctx.history = (uint32_t *)malloc(((size_t)ctx.info->context + 1u) * sizeof(uint32_t));
     ctx.reuse = reuse;
+    ctx.states.dir = state_dir;
+    ctx.states.max_bytes = (uint64_t)state_max_mib * 1024u * 1024u;
     int rc = 1;
     if (!ctx.logits || !ctx.history) {
         fprintf(stderr, "logits allocation failed\n");

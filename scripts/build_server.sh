@@ -28,6 +28,7 @@ ENGINE=(
   "$N/redlite_native_model.c"
   "$N/redlite_native_tables.c"
   "$N/redlite_native_reference.c"
+  "$N/redlite_native_statecache.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then

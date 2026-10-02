@@ -957,7 +957,7 @@ static int prefill_prefetch(rl_engine *e, rl_metal_engine *m, const float *pred_
         for (uint32_t k = 0; k < topk; ++k) if (umap[tid[k]] == UINT16_MAX) { umap[tid[k]] = (uint16_t)U; uid[U++] = tid[k]; }
     }
     for (uint32_t u = 0; u < U; ++u) { umap[uid[u]] = UINT16_MAX; zero_w[u] = 0.0f; }
-    if ((uint64_t)in_flight + U + topk > rl_native_metal_slot_capacity(m->experts)) return 1;
+    if ((uint64_t)in_flight + U + topk > rl_native_metal_layer_capacity(m->experts, l_next)) return 1;   /* dev43: per size class */
     rl_native_topk_plan pplan;
     memset(&pplan, 0, sizeof(pplan));
     return rl_native_metal_prepare_topk(m->experts, &e->expert_map, l_next, uid, zero_w, U, &pplan, error, cap) &&
@@ -1141,7 +1141,9 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
                     [cb commit];
                     /* ... and on through the next layer's dense pass: the prefetch is joined before that layer routes.
                      * This layer's plan stays pinned (release deferred) so the prefetch can never evict it. */
-                    const uint32_t l_next = l + 1u, in_flight = U;
+                    const uint32_t l_next = l + 1u;
+                    /* pinned slots of this layer only compete with the prefetch inside one size class */
+                    const uint32_t in_flight = rl_native_metal_layer_class(m->experts, l) == rl_native_metal_layer_class(m->experts, l_next) ? U : 0u;
                     uint32_t *p_ids = ids; float *p_w = weights, *p_zero = dummy_w;
                     const float *p_pred = (const float *)pf->pred_logits[l & 1u].contents; uint16_t *p_umap = umap; uint32_t *p_uid = uid;
                     char *p_err = prefetch_error;
