@@ -1,0 +1,1422 @@
+{
+ "model": "qwen3-next-80b-a3b-instruct",
+ "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+ "params": {
+  "temperature": 0,
+  "top_k": 1,
+  "max_tokens": 128
+ },
+ "fetched": "2026-10-02",
+ "answers": {
+  "What is the capital of Australia, and why is it not Sydney?": {
+   "text": "The capital of Australia is **Canberra**.\n\n### Why isn’t it Sydney?\n\nSydney is Australia’s largest and one of its most famous cities, but it is **not** the capital due to a historical and political compromise between two rival cities: **Sydney** and **Melbourne**.\n\nIn the late 19th century, as the six British colonies in Australia moved toward federation (which occurred in 1901), there was intense rivalry between Sydney and Melbourne over which city should become the national capital. Each city wanted the prestige, economic benefits, and political influence that came with being the capital.\n\nTo resolve",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Who wrote \"One Hundred Years of Solitude\"?": {
+   "text": "\"One Hundred Years of Solitude\" was written by **Gabriel García Márquez**, a Colombian novelist, short-story writer, and journalist. Published in 1967, it is widely regarded as his masterpiece and one of the most significant works of 20th-century literature. The novel is a cornerstone of the literary movement known as **magical realism**, blending fantastical elements with realistic narrative to tell the multi-generational story of the Buendía family in the fictional town of Macondo.\n\nGarcía Márquez was awarded the **Nobel Prize in Literature** in 1982,",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "In which year did the Berlin Wall fall?": {
+   "text": "The Berlin Wall fell in **1989**.\n\nSpecifically, it began to be opened on **November 9, 1989**, after East German authorities announced that citizens could cross the border freely. This led to massive crowds gathering at the Wall, and border guards, overwhelmed and without clear orders, allowed people to pass through. The fall of the Berlin Wall became a powerful symbol of the end of the Cold War and paved the way for German reunification, which was formally completed on October 3, 1990.",
+   "finish_reason": "stop",
+   "prompt_tokens": 17,
+   "completion_tokens": 112
+  },
+  "What is the tallest mountain in Africa?": {
+   "text": "The tallest mountain in Africa is **Mount Kilimanjaro**.\n\nLocated in Tanzania, Mount Kilimanjaro stands at approximately **5,895 meters (19,341 feet)** above sea level. It is a free-standing volcanic mountain and the highest free-standing mountain in the world. Kilimanjaro has three volcanic cones: Kibo (the highest), Mawenzi, and Shira. Its summit, known as Uhuru Peak, is a popular destination for climbers and attracts thousands of visitors each year.\n\nDespite being near the equator, its peak is often snow-capped, though the glaciers",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "Name the planets of the solar system in order from the Sun.": {
+   "text": "The planets of the solar system, in order from the Sun, are:\n\n1. **Mercury**  \n2. **Venus**  \n3. **Earth**  \n4. **Mars**  \n5. **Jupiter**  \n6. **Saturn**  \n7. **Uranus**  \n8. **Neptune**\n\nThis order is based on their average distance from the Sun. Pluto was once considered the ninth planet but was reclassified as a \"dwarf planet\" by the International Astronomical Union (IAU) in 2006.",
+   "finish_reason": "stop",
+   "prompt_tokens": 21,
+   "completion_tokens": 118
+  },
+  "What language is spoken in Brazil, and why?": {
+   "text": "The official and most widely spoken language in Brazil is **Portuguese**.\n\n### Why Portuguese?\n\nBrazil speaks Portuguese primarily due to its **colonial history**:\n\n1. **Portuguese Colonization**: In 1500, Portuguese explorer Pedro Álvares Cabral landed on the coast of what is now Brazil and claimed the territory for Portugal. Over the next several centuries, Portugal established colonies in the region, bringing settlers, administrators, missionaries, and enslaved Africans.\n\n2. **Language as a Tool of Control and Integration**: The Portuguese Crown promoted the use of Portuguese to consolidate control, administer the colony, spread Christianity (",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Who painted the ceiling of the Sistine Chapel?": {
+   "text": "The ceiling of the Sistine Chapel was painted by **Michelangelo Buonarroti**.\n\nHe was commissioned by Pope Julius II and worked on the ceiling from **1508 to 1512**. The frescoes depict scenes from the Book of Genesis, including the iconic *Creation of Adam*, in which God and Adam reach out to touch fingers. Michelangelo, primarily a sculptor at the time, was reluctant to take on the project but ultimately created one of the most celebrated masterpieces of Western art.\n\nThe entire ceiling covers approximately 5,000 square feet (460 square meters",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "What is the largest ocean on Earth?": {
+   "text": "The largest ocean on Earth is the **Pacific Ocean**.\n\nIt covers approximately **63 million square miles** (165 million square kilometers), which is more than half of the total ocean area on the planet. The Pacific Ocean stretches from the Arctic in the north to the Southern Ocean in the south, and it is bounded by Asia and Australia to the west and the Americas to the east. It is also the deepest ocean, home to the Mariana Trench — the deepest known point in Earth's oceans, reaching nearly 36,000 feet (about 11,000 meters) below sea level",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What currency is used in Japan?": {
+   "text": "The currency used in Japan is the **Japanese yen** (symbol: ¥; code: JPY).\n\nIt is issued by the Bank of Japan and is the official currency for all transactions within the country. The yen comes in both coin and banknote forms:\n\n**Coins:** 1, 5, 10, 50, 100, and 500 yen  \n**Banknotes:** 1,000, 2,000, 5,000, and 10,000 yen\n\nThe 2,000-yen note is less",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "Which element has the chemical symbol Fe?": {
+   "text": "The element with the chemical symbol **Fe** is **Iron**.\n\nThe symbol \"Fe\" comes from the Latin word for iron, **\"ferrum\"**. Iron is a transition metal with atomic number 26 and is one of the most common and important elements on Earth, widely used in construction, manufacturing, and biological processes (e.g., in hemoglobin for oxygen transport in blood).",
+   "finish_reason": "stop",
+   "prompt_tokens": 16,
+   "completion_tokens": 82
+  },
+  "Who was the first person to walk on the Moon?": {
+   "text": "The first person to walk on the Moon was **Neil Armstrong**. He set foot on the lunar surface on **July 20, 1969**, during NASA’s **Apollo 11** mission. Armstrong famously declared, *\"That's one small step for [a] man, one giant leap for mankind,\"* as he descended from the lunar module *Eagle* and stepped onto the Moon.\n\nHe was followed shortly after by fellow astronaut **Buzz Aldrin**, while **Michael Collins** remained in lunar orbit aboard the command module.",
+   "finish_reason": "stop",
+   "prompt_tokens": 19,
+   "completion_tokens": 112
+  },
+  "What is the longest river in South America?": {
+   "text": "The longest river in South America is the **Amazon River**.\n\nWhile there has been some debate over the years regarding exact measurements due to differing methods of determining the river’s source and mouth, the Amazon is widely accepted as the longest river in South America and, by most current measurements, the **second-longest river in the world** after the Nile.\n\n- **Length**: Approximately **6,400 to 6,800 kilometers** (4,000 to 4,250 miles), depending on the source used.\n- **Drainage Basin**: The Amazon also has the **largest drainage",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What does the acronym UNESCO stand for?": {
+   "text": "UNESCO stands for the **United Nations Educational, Scientific and Cultural Organization**.\n\nIt is a specialized agency of the United Nations established on November 16, 1945, with the goal of promoting peace and security through international cooperation in education, science, and culture. UNESCO works to build networks among nations to foster mutual understanding and to protect and preserve the world’s cultural and natural heritage.",
+   "finish_reason": "stop",
+   "prompt_tokens": 16,
+   "completion_tokens": 81
+  },
+  "In which city is the Colosseum located?": {
+   "text": "The Colosseum is located in **Rome, Italy**.",
+   "finish_reason": "stop",
+   "prompt_tokens": 19,
+   "completion_tokens": 15
+  },
+  "What is the official language of Iran?": {
+   "text": "The official language of Iran is **Persian** (also known as **Farsi**).\n\nPersian is the native language of the majority of the population and is used in government, education, media, and formal communication throughout the country. It is written in a modified version of the Arabic script and is part of the Indo-Iranian branch of the Indo-European language family.\n\nWhile Persian is the official language, Iran is ethnically diverse, and other languages such as Azerbaijani, Kurdish, Gilaki, Mazandarani, Luri, Balochi, and Arabic are spoken by various minority groups. However, Persian remains",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "Who developed the theory of general relativity?": {
+   "text": "The theory of general relativity was developed by **Albert Einstein**.\n\nHe published the final form of the theory in **1915**, presenting the field equations of gravitation to the Prussian Academy of Sciences on November 25, 1915. General relativity revolutionized our understanding of gravity, describing it not as a force (as in Newtonian physics), but as a curvature of spacetime caused by mass and energy.\n\nEinstein’s work built upon his earlier special theory of relativity (1905) and incorporated insights from mathematicians like Bernhard Riemann and Marcel Grossmann, who",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What is the smallest country in the world by area?": {
+   "text": "The smallest country in the world by area is **Vatican City**.\n\n- **Area**: Approximately **0.49 square kilometers** (0.19 square miles)\n- **Location**: Enclaved within Rome, Italy\n- **Population**: Around 800 residents (as of recent estimates)\n- **Status**: It is the spiritual and administrative center of the Roman Catholic Church and the residence of the Pope.\n\nVatican City is not only the smallest country by area but also the smallest by population. It was established as an independent state in 1929 through the Lateran Treaty between the Holy See and",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Which organ in the human body produces insulin?": {
+   "text": "The organ in the human body that produces insulin is the **pancreas**.\n\nMore specifically, insulin is produced by **beta cells** (β-cells), which are located in clusters called the **islets of Langerhans** within the pancreas. These beta cells sense blood glucose levels and release insulin in response to elevated glucose, helping cells throughout the body absorb and use glucose for energy.\n\nWhen the pancreas doesn’t produce enough insulin or the body becomes resistant to it, conditions like **diabetes mellitus** can develop.",
+   "finish_reason": "stop",
+   "prompt_tokens": 17,
+   "completion_tokens": 110
+  },
+  "What is the boiling point of water at sea level in Fahrenheit?": {
+   "text": "The boiling point of water at sea level is **212°F** (Fahrenheit).",
+   "finish_reason": "stop",
+   "prompt_tokens": 21,
+   "completion_tokens": 19
+  },
+  "Who composed \"The Four Seasons\"?": {
+   "text": "\"The Four Seasons\" was composed by **Antonio Vivaldi**, an Italian Baroque composer, violinist, and priest.\n\nWritten around 1723, \"The Four Seasons\" (Italian: *Le quattro stagioni*) is a set of four violin concertos, each representing a season of the year:\n\n1. **Spring** (*La primavera*)\n2. **Summer** (*L'estate*)\n3. **Autumn** (*L'autunno*)\n4. **Winter** (*L'inverno*)\n\nEach concerto is accompanied by a sonnet—likely written by Vivaldi himself—that",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "What is the capital of Canada?": {
+   "text": "The capital of Canada is **Ottawa**.",
+   "finish_reason": "stop",
+   "prompt_tokens": 15,
+   "completion_tokens": 11
+  },
+  "Which country has the most time zones?": {
+   "text": "The country with the **most time zones** is **France**, with **12 time zones** (or 13, depending on how you count).\n\n### Why France?\nAlthough France is geographically small in mainland Europe (using only **Central European Time**, UTC+1), it has **numerous overseas departments and territories** spread across the globe. These include:\n\n- **French Guiana** (South America) — UTC−3  \n- **Guadeloupe and Martinique** (Caribbean) — UTC−4  \n- **Saint Pierre and Miquelon** (North America) — UTC−3 (UTC",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is the main ingredient of guacamole?": {
+   "text": "The main ingredient of guacamole is **avocado**.\n\nGuacamole is a traditional Mexican dip or spread made primarily from mashed ripe avocados. Other common ingredients include lime juice, salt, onions, tomatoes, cilantro, and sometimes garlic or chili peppers, but avocado is the essential and dominant component that gives guacamole its creamy texture and distinctive flavor.",
+   "finish_reason": "stop",
+   "prompt_tokens": 18,
+   "completion_tokens": 75
+  },
+  "Who invented the World Wide Web?": {
+   "text": "The **World Wide Web** was invented by **Sir Tim Berners-Lee** in 1989.\n\nHe is a British computer scientist who was working at **CERN** (the European Organization for Nuclear Research) in Switzerland at the time. Berners-Lee proposed a system for managing and sharing information over the internet using **hypertext**, which allowed documents to be linked and accessed via the internet.\n\nIn 1990, he developed the first:\n- **Web browser** (called WorldWideWeb),\n- **Web server**,\n- And the first **web pages**.\n\nHe also created the foundational technologies",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "What is the hardest natural substance?": {
+   "text": "The hardest natural substance is **diamond**.\n\nDiamond is composed of carbon atoms arranged in a crystal lattice structure known as a **diamond cubic structure**, where each carbon atom is covalently bonded to four other carbon atoms in a tetrahedral configuration. This incredibly strong and rigid bonding network gives diamond its exceptional hardness.\n\nOn the **Mohs scale of mineral hardness**, diamond is rated as **10**, the highest possible score, meaning it can scratch any other natural material. It is also the hardest known natural material in terms of **resistance to scratching and indentation**.\n\nWhile there are synthetic materials (like aggregated diamond nanorods or",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "Which blood type is known as the universal donor?": {
+   "text": "The blood type known as the **universal donor** is **O negative (O−)**.\n\n### Why O negative?\n- **O negative blood** lacks A and B antigens on the red blood cells, so it won’t trigger an immune response in recipients with A, B, AB, or O blood types.\n- It also lacks the Rh factor (D antigen), making it safe for both Rh-positive and Rh-negative recipients.\n- Because of these characteristics, O− blood can be safely transfused to **any patient**, regardless of their blood type, especially in emergency situations when there’s no time to perform a full blood type cross",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "What is the name of the galaxy we live in?": {
+   "text": "The galaxy we live in is called the **Milky Way**.\n\nIt is a barred spiral galaxy that contains our Solar System, along with an estimated 100 to 400 billion other stars. From Earth, the Milky Way appears as a hazy band of light stretching across the night sky — this is the combined glow of countless distant stars and interstellar dust seen edge-on from within the galactic plane.\n\nThe name “Milky Way” comes from its milky appearance, derived from the Latin *Via Lactea*, meaning “Milky Road” or “Milky Way.”",
+   "finish_reason": "stop",
+   "prompt_tokens": 19,
+   "completion_tokens": 122
+  },
+  "How many bones are in the adult human body?": {
+   "text": "The adult human body has **206 bones**.\n\nThis number is the result of the fusion of bones that occur during development. For example, at birth, a human baby has around 270 bones, many of which are made of cartilage and gradually fuse together as the child grows. Key examples include:\n\n- The skull: Starts as several separate bones that fuse into fewer, solid bones.\n- The sacrum: Formed by the fusion of five sacral vertebrae.\n- The coccyx (tailbone): Formed by the fusion of three to five coccygeal vertebrae.\n- The",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Which war ended with the Treaty of Versailles?": {
+   "text": "The **First World War** (also known as **World War I**) ended with the **Treaty of Versailles**.\n\nSigned on **June 28, 1919**, in the Hall of Mirrors at the Palace of Versailles in France, the treaty officially ended the state of war between Germany and the Allied Powers (including France, Britain, the United States, and Italy). It was the most significant of the peace treaties that brought World War I to a close.\n\nKey provisions of the Treaty of Versailles included:\n- Germany accepting responsibility for the war (the “War Guilt Clause,” Article ",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "What is the largest desert in the world?": {
+   "text": "The **largest desert in the world** is the **Antarctic Desert**.\n\nWhile many people associate deserts with hot, sandy environments like the Sahara, a desert is technically defined by its **low precipitation**—not temperature. The Antarctic Desert covers about **14 million square kilometers (5.4 million square miles)** and receives less than 200 mm (8 inches) of precipitation annually, mostly in the form of snow. It is the coldest, driest, and windiest continent on Earth, making it the largest desert by area.\n\nFor comparison:\n- The **Sahara Desert** in North",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Explain in one sentence why the sky is blue.": {
+   "text": "The sky appears blue because molecules in the Earth's atmosphere scatter shorter blue wavelengths of sunlight more than other colors due to Rayleigh scattering.",
+   "finish_reason": "stop",
+   "prompt_tokens": 19,
+   "completion_tokens": 27
+  },
+  "How does a vaccine train the immune system?": {
+   "text": "A vaccine trains the immune system by safely exposing it to a harmless version or component of a pathogen (like a virus or bacterium), so the body can learn to recognize and fight the real pathogen if it ever encounters it in the future.\n\nHere’s how it works step by step:\n\n### 1. **Introduction of Antigens**\nVaccines contain **antigens** — molecules from the pathogen that the immune system recognizes as foreign. These can be:\n- Weakened (attenuated) live pathogens (e.g., measles, mumps, rubella vaccine)\n- Inactivated (killed)",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What is the difference between a virus and a bacterium?": {
+   "text": "Viruses and bacteria are both microscopic organisms that can cause disease, but they differ significantly in structure, biology, and how they interact with hosts. Here’s a clear breakdown of the key differences:\n\n---\n\n### **1. Nature and Structure**\n\n| Feature | **Virus** | **Bacterium** |\n|--------|-----------|---------------|\n| **Living or non-living?** | Generally considered **non-living** outside a host cell. | **Living organisms** — they are single-celled prokaryotes. |\n| **Structure** | Simple: Genetic material (DNA or RNA) surrounded by a protein coat (",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Explain how photosynthesis works in simple terms.": {
+   "text": "Sure! Here’s a simple explanation of how photosynthesis works:\n\n**Photosynthesis is how green plants make their own food using sunlight.**\n\nHere’s how it happens, step by step:\n\n1. **Sunlight** – The plant catches sunlight with its green leaves (thanks to a green pigment called *chlorophyll*).\n\n2. **Water** – The plant sucks up water from the soil through its roots.\n\n3. **Carbon Dioxide** – The plant takes in a gas called carbon dioxide (CO₂) from the air through tiny holes in its leaves.\n\n4. **Magic Mix!** – Inside the leaves, using",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Why do we have seasons on Earth?": {
+   "text": "We have seasons on Earth primarily because of the **tilt of Earth’s axis** relative to its orbital plane around the Sun — approximately **23.5 degrees**.\n\nHere’s how it works:\n\n### 1. **Tilted Axis**\nEarth’s axis is not perpendicular to the plane of its orbit around the Sun; it’s tilted at about 23.5 degrees. This tilt remains pointed in the same direction in space (toward the North Star, Polaris) as Earth orbits the Sun.\n\n### 2. **Changing Sunlight Angle and Duration**\nAs Earth travels around the Sun over the course of a",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is entropy, in one paragraph?": {
+   "text": "Entropy is a fundamental concept in thermodynamics and information theory that measures the degree of disorder, randomness, or uncertainty in a system. In physics, it quantifies the number of microscopic configurations that correspond to a macroscopic state, with higher entropy indicating greater dispersal of energy and less availability to do work—reflecting the Second Law of Thermodynamics, which states that the total entropy of an isolated system tends to increase over time. In information theory, entropy, as defined by Claude Shannon, measures the average level of uncertainty or information content in a message, where more unpredictable data carries higher entropy. Across disciplines, entropy captures the idea that systems",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "How do noise-cancelling headphones work?": {
+   "text": "Noise-cancelling headphones work by using a technology called **active noise control (ANC)** to reduce unwanted ambient sounds. Here’s how they do it, step by step:\n\n### 1. **Microphones Detect External Noise**\nNoise-cancelling headphones have built-in microphones (usually on the outside and sometimes inside the ear cups) that continuously pick up ambient sounds from your environment — like airplane engines, traffic, or office chatter.\n\n### 2. **Processor Analyzes the Noise**\nThe captured sound waves are sent to a digital signal processor (DSP) inside the headphones. This processor analyzes the frequency and amplitude of the incoming noise",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Why does ice float on water?": {
+   "text": "Ice floats on water because it is **less dense** than liquid water — a rare and crucial property among substances.\n\n### Why is ice less dense than water?\n\nMost substances become denser when they solidify, but **water behaves differently** due to its unique molecular structure and hydrogen bonding.\n\n1. **Hydrogen bonding**: Water molecules (H₂O) are polar and form strong hydrogen bonds with each other.\n2. **Crystal structure in ice**: When water freezes, the molecules arrange themselves into a rigid, hexagonal lattice structure. This structure holds the molecules slightly farther apart than in liquid water.\n3. **Increased volume,",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "What causes the tides?": {
+   "text": "Tides are primarily caused by the **gravitational forces** exerted by the **Moon** and, to a lesser extent, the **Sun**, on Earth’s oceans.\n\n### Main Cause: The Moon’s Gravity\n- The Moon’s gravitational pull is stronger on the side of Earth facing it and weaker on the opposite side.\n- This difference in gravitational force — called a **tidal force** — stretches Earth and its oceans, creating two bulges:\n  1. **One bulge** on the side of Earth facing the Moon (where gravity pulls water toward the Moon).\n  2. **Another bulge** on",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "Explain what a black hole is to a ten-year-old.": {
+   "text": "Sure! 😊\n\nImagine you have a super-duper strong magnet—but instead of pulling metal, it pulls *everything*: toys, balls, even light! Now imagine that magnet is so strong that nothing can escape from it—not even light. That’s kind of what a black hole is!\n\nA black hole is like a cosmic vacuum cleaner made by a giant star that collapsed (squished itself) when it ran out of fuel. It’s super tiny but super heavy—like if you squeezed the whole Earth into the size of a marble! Because it’s so heavy, it pulls things toward it with incredible force. And since even light",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "How does a lithium-ion battery store energy?": {
+   "text": "A lithium-ion battery stores energy through **reversible electrochemical reactions** involving the movement of lithium ions between two electrodes — the **anode** (negative electrode) and the **cathode** (positive electrode) — while electrons flow through an external circuit.\n\nHere’s a step-by-step explanation of how it works:\n\n---\n\n### **1. Basic Components**\n- **Anode**: Typically made of **graphite** (carbon).\n- **Cathode**: Made of a lithium metal oxide (e.g., LiCoO₂, LiFePO₄, or NMC).\n- **Electrolyte**: A lithium",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What is the greenhouse effect?": {
+   "text": "The **greenhouse effect** is a natural process that warms the Earth’s surface. It occurs when certain gases in the Earth’s atmosphere trap heat from the Sun, preventing it from escaping back into space.\n\nHere’s how it works:\n\n1. **Solar Radiation**: The Sun emits energy, mostly as visible light and ultraviolet (UV) radiation, which passes through the Earth’s atmosphere.\n2. **Absorption by Earth**: The Earth’s surface absorbs this energy and warms up.\n3. **Infrared Radiation**: The warmed surface then radiates heat back toward space as infrared (thermal) radiation.\n4. **Trapping",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "Why is the ocean salty?": {
+   "text": "The ocean is salty primarily because of **minerals and ions dissolved from rocks and soil on land**, which are carried into the sea by rivers and other processes over millions of years. Here’s a step-by-step explanation:\n\n### 1. **Weathering of Rocks on Land**\n- Rainwater (slightly acidic due to dissolved carbon dioxide) falls on rocks and soil.\n- This water slowly dissolves minerals like **sodium (Na⁺)** and **chloride (Cl⁻)** — the main components of table salt (NaCl) — along with other ions such as calcium, magnesium, and sulfate.\n\n### 2. **",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "How do airplanes stay in the air?": {
+   "text": "Airplanes stay in the air due to a combination of four fundamental forces: **lift**, **weight (gravity)**, **thrust**, and **drag**. The key to flight is generating enough **lift** to overcome the airplane’s weight.\n\n### 1. **Lift — The Force That Keeps Airplanes Up**\nLift is generated primarily by the **wings**. Here’s how it works:\n\n- **Airfoil Shape**: Airplane wings are shaped like an airfoil — curved on top and flatter on the bottom. This shape causes air to move **faster over the top** of the wing than underneath",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is DNA and what does it do?": {
+   "text": "**DNA** stands for **Deoxyribonucleic Acid**. It is the molecule that carries the genetic instructions used in the growth, development, functioning, and reproduction of all known living organisms and many viruses.\n\n### Structure of DNA:\nDNA is made up of two long strands that form a **double helix** (like a twisted ladder). Each strand is composed of repeating units called **nucleotides**. Each nucleotide consists of:\n- A **sugar** (deoxyribose),\n- A **phosphate group**,\n- One of four **nitrogenous bases**:  \n  - **Aden",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Explain the difference between weather and climate.": {
+   "text": "Certainly! While **weather** and **climate** are both related to atmospheric conditions, they differ significantly in terms of **timescale** and **scope**.\n\n### **Weather**\n- **Definition**: Weather refers to the short-term atmospheric conditions in a specific place at a specific time.\n- **Timescale**: Minutes to days (e.g., today’s temperature, hourly rainfall, or a thunderstorm).\n- **Variability**: Highly variable and can change rapidly.\n- **Examples**:\n  - “It’s raining heavily right now.”\n  - “Tomorrow’s high will be 75°F with cloudy skies.”\n  - “There",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What is the speed of light, and why can nothing go faster?": {
+   "text": "The **speed of light in a vacuum** is exactly:\n\n> **299,792,458 meters per second** (approximately **3.00 × 10⁸ m/s**, or about **300,000 kilometers per second**).\n\nThis value is not just a measurement—it’s a **defined constant** in the International System of Units (SI). Since 1983, the meter itself has been defined based on the speed of light: one meter is the distance light travels in 1/299,792,458 of a second",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "How do earthquakes happen?": {
+   "text": "Earthquakes happen due to the sudden release of energy in the Earth’s crust, which creates seismic waves that shake the ground. This energy release is most commonly caused by the movement of tectonic plates — large, rigid sections of the Earth’s lithosphere (the crust and upper mantle) that float on the semi-fluid asthenosphere beneath them.\n\nHere’s a step-by-step explanation:\n\n### 1. **Tectonic Plate Movement**\nThe Earth’s lithosphere is broken into about a dozen major and many minor tectonic plates. These plates are constantly moving — very slowly (a few centimeters per year) — due",
+   "finish_reason": "length",
+   "prompt_tokens": 13,
+   "completion_tokens": 128
+  },
+  "What is a semiconductor?": {
+   "text": "A **semiconductor** is a material that has electrical conductivity between that of a conductor (like copper or aluminum) and an insulator (like rubber or glass). Its ability to conduct electricity can be precisely controlled by factors such as:\n\n- **Temperature**\n- **Impurity content** (doping)\n- **Electric or magnetic fields**\n- **Exposure to light**\n\n### Key Characteristics:\n- **Band Gap**: Semiconductors have a small energy gap (band gap) between their valence band (where electrons are bound) and conduction band (where electrons can move freely). This gap is small enough that electrons can be",
+   "finish_reason": "length",
+   "prompt_tokens": 13,
+   "completion_tokens": 128
+  },
+  "Why do cats purr?": {
+   "text": "Cats purr for a variety of reasons, and while it’s often associated with contentment, it’s not the only explanation. Purring is a complex vocalization produced by the rapid contraction and relaxation of the laryngeal muscles, which causes vibrations in the vocal cords as the cat breathes in and out. Here are the main reasons cats purr:\n\n### 1. **Contentment and Relaxation**\nThe most well-known reason cats purr is when they’re happy, comfortable, or relaxed—such as when being petted, cuddling with their owner, or lounging in a sunny spot. This type of",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "How does GPS determine your location?": {
+   "text": "GPS (Global Positioning System) determines your location using a technique called **trilateration**, based on signals from multiple satellites. Here’s how it works step by step:\n\n---\n\n### **1. Satellite Constellation**\n- The GPS system consists of **at least 24 satellites** orbiting Earth (actually there are usually 30+ for redundancy).\n- These satellites continuously broadcast radio signals containing:\n  - Their precise location (ephemeris data)\n  - The exact time the signal was sent (using atomic clocks)\n\n---\n\n### **2. Signal Reception**\n- Your GPS receiver (in your phone, car, watch,",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "What is the difference between nuclear fission and fusion?": {
+   "text": "Nuclear fission and nuclear fusion are two distinct processes that release energy from atomic nuclei, but they operate in opposite ways:\n\n---\n\n### **Nuclear Fission**\n\n- **Definition**: The splitting of a heavy atomic nucleus into two or more lighter nuclei.\n- **Process**: A heavy nucleus (like Uranium-235 or Plutonium-239) absorbs a neutron, becomes unstable, and splits into smaller nuclei (fission fragments), along with additional neutrons and a large amount of energy.\n- **Energy Source**: The mass of the original nucleus is slightly greater than the combined mass of the products. The “",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "How do antibiotics work, and why does resistance develop?": {
+   "text": "Antibiotics are medications designed to kill or inhibit the growth of bacteria. They work by targeting specific structures or processes that are essential for bacterial survival but are either absent or significantly different in human cells. Here’s how they work and why resistance develops:\n\n---\n\n### **How Antibiotics Work**\n\nAntibiotics target bacterial cells through several key mechanisms:\n\n1. **Inhibiting Cell Wall Synthesis**  \n   - *Example:* Penicillins, cephalosporins  \n   - Bacteria have a rigid cell wall made of peptidoglycan. Antibiotics like penicillin block enzymes (penicillin-binding",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "What is quantum entanglement, briefly?": {
+   "text": "Quantum entanglement is a phenomenon in quantum physics where two or more particles become linked in such a way that the state of one particle instantly influences the state of the other, no matter how far apart they are. This connection persists even across vast distances, defying classical intuition about locality. Measuring one entangled particle immediately determines the state of its partner — a feature Einstein famously called “spooky action at a distance.” Entanglement is a key resource in quantum computing, quantum communication, and quantum cryptography.",
+   "finish_reason": "stop",
+   "prompt_tokens": 17,
+   "completion_tokens": 104
+  },
+  "Why do leaves change color in autumn?": {
+   "text": "Leaves change color in autumn due to a combination of biological and environmental factors, primarily involving the breakdown of chlorophyll and the revelation of other pigments that were previously masked. Here’s a step-by-step explanation:\n\n### 1. **Chlorophyll Breakdown**\n- During spring and summer, leaves are green because they contain large amounts of **chlorophyll**, the pigment essential for photosynthesis — the process by which plants convert sunlight into energy.\n- As days grow shorter and temperatures drop in autumn, trees begin to prepare for winter. They stop producing chlorophyll because the reduced sunlight and colder weather make photosynthesis less",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "How does the human eye see color?": {
+   "text": "The human eye sees color through a complex process involving light, specialized cells in the retina, and neural processing in the brain. Here’s a step-by-step explanation:\n\n### 1. **Light Enters the Eye**\nColor begins with light — specifically, visible light, which is a small portion of the electromagnetic spectrum (wavelengths from about 380 to 750 nanometers). Different wavelengths correspond to different colors:\n- Shorter wavelengths → blue/violet\n- Medium wavelengths → green/yellow\n- Longer wavelengths → orange/red\n\nLight enters the eye through the **cornea**, passes through the **pupil",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is an exoplanet and how are they detected?": {
+   "text": "An **exoplanet** (short for *extrasolar planet*) is a planet that orbits a star outside our Solar System. These planets range in size from rocky, Earth-like worlds to massive gas giants larger than Jupiter, and they can exist in a wide variety of environments — some very hot, some very cold, and others potentially within the “habitable zone” where liquid water might exist.\n\n### How Are Exoplanets Detected?\n\nBecause exoplanets are incredibly distant and do not emit their own visible light (they only reflect light from their host stars), they are extremely difficult to observe directly. Instead, astronomers use indirect detection methods",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Explain how a refrigerator keeps food cold.": {
+   "text": "A refrigerator keeps food cold by using a **refrigeration cycle** that transfers heat from the inside of the fridge to the outside environment. This process relies on the principles of thermodynamics and the properties of a refrigerant — a special fluid that easily changes between liquid and gas states. Here’s how it works step by step:\n\n---\n\n### 1. **The Refrigerant Circulates**\nA sealed system contains a chemical called a **refrigerant** (e.g., R-134a or newer eco-friendly alternatives). This fluid circulates through a closed loop of coils and components.\n\n---\n\n### 2. **Compression (",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What is the role of mitochondria in a cell?": {
+   "text": "The **mitochondria** are often referred to as the **“powerhouses of the cell”** because their primary role is to **produce energy** in the form of **adenosine triphosphate (ATP)** through a process called **cellular respiration**.\n\n### Key Roles of Mitochondria:\n\n1. **ATP Production (Cellular Respiration):**\n   - Mitochondria convert energy from nutrients (like glucose and fatty acids) into ATP via:\n     - The **Krebs cycle** (citric acid cycle) in the mitochondrial matrix.\n     - The **electron transport chain** and **",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Why does a spoon in a glass of water look bent?": {
+   "text": "A spoon in a glass of water looks bent due to a phenomenon called **refraction**.\n\n### What is refraction?\nRefraction is the bending of light as it passes from one transparent medium to another with a different **density** (and thus a different **speed of light**). In this case, light travels from:\n\n1. **Water** (denser medium) →  \n2. **Air** (less dense medium)\n\n### Why does this make the spoon look bent?\n- Light rays coming from the part of the spoon *underwater* slow down as they enter the water (since water is denser than air).\n",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "If all bloops are razzies and all razzies are lazzies, are all bloops lazzies? Explain.": {
+   "text": "Yes, all bloops are lazzies.\n\n### Explanation:\n\nThis is a classic example of a **syllogism** — a logical argument with two premises and a conclusion.\n\nWe are given:\n\n1. **All bloops are razzies.**  \n   → If something is a bloop, then it is a razzie.  \n   Symbolically:  \n   `Bloop → Razzie`\n\n2. **All razzies are lazzies.**  \n   → If something is a razzie, then it is a lazzie.  \n   Symbolically:  \n   `Razz",
+   "finish_reason": "length",
+   "prompt_tokens": 36,
+   "completion_tokens": 128
+  },
+  "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?": {
+   "text": "Let’s solve this step by step.\n\nLet the cost of the **ball** be **x** dollars.\n\nThen, since the **bat costs $1.00 more than the ball**, the cost of the bat is **x + 1.00** dollars.\n\nThe total cost of the bat and the ball is $1.10, so:\n\n$$\nx + (x + 1.00) = 1.10\n$$\n\nSimplify:\n\n$$\n2x + 1.00 = 1.10\n$$\n\nSubtract 1.00 from both sides",
+   "finish_reason": "length",
+   "prompt_tokens": 42,
+   "completion_tokens": 128
+  },
+  "I have two coins that add up to 30 cents, and one of them is not a nickel. What are the coins?": {
+   "text": "This is a classic riddle!\n\nYou’re told:  \n> Two coins add up to 30 cents, and **one of them is not a nickel**.\n\nAt first glance, you might think:  \n- “Well, a nickel is 5 cents, so if one isn’t a nickel, maybe the other is?”  \n- Then you might guess a quarter (25¢) and a nickel (5¢) = 30¢ — but then **both** coins would be considered, and one *is* a nickel — which seems to contradict the statement.\n\nBut here’s the trick:\n\n> **“One",
+   "finish_reason": "length",
+   "prompt_tokens": 35,
+   "completion_tokens": 128
+  },
+  "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?": {
+   "text": "This is a classic riddle that tests whether you're thinking proportionally or getting tripped up by the numbers.\n\nWe’re told:\n\n> **5 machines take 5 minutes to make 5 widgets.**\n\nLet’s break this down.\n\n### Step 1: Find the rate per machine\nIf 5 machines make 5 widgets in 5 minutes, then **each machine makes 1 widget in 5 minutes**.\n\nWhy? Because the work is evenly distributed:\n- 5 machines → 5 widgets → so 1 machine makes 1 widget in that same 5 minutes.\n\nSo, **one machine takes 5 minutes",
+   "finish_reason": "length",
+   "prompt_tokens": 41,
+   "completion_tokens": 128
+  },
+  "A farmer has 17 sheep, and all but 9 die. How many are left?": {
+   "text": "The riddle says:  \n> \"A farmer has 17 sheep, and all but 9 die.\"\n\nLet’s break it down:\n\n- “All but 9 die” means that **9 sheep do not die**.\n- So, the number of sheep left alive is **9**.\n\nIt’s a play on words — “all but 9” = everyone except 9.\n\n✅ So, the answer is: **9 sheep are left**.",
+   "finish_reason": "stop",
+   "prompt_tokens": 28,
+   "completion_tokens": 94
+  },
+  "Which is heavier, a kilogram of feathers or a kilogram of steel?": {
+   "text": "A kilogram of feathers and a kilogram of steel both weigh exactly the same: **one kilogram**.\n\nThe confusion often arises because of the difference in **density** and **volume**, not mass:\n\n- A kilogram of feathers takes up a lot of space (it’s very light and fluffy).\n- A kilogram of steel is compact and dense — it fits in the palm of your hand.\n\nBut when measured in kilograms (a unit of **mass**), they are identical. So, neither is heavier — they are equal in weight.\n\n✅ **Answer: They weigh the same — one kilogram each.**",
+   "finish_reason": "stop",
+   "prompt_tokens": 24,
+   "completion_tokens": 126
+  },
+  "You are in a race and you overtake the person in second place. What position are you in now?": {
+   "text": "If you overtake the person in **second place**, you take their position.\n\nSo, you are now in **second place**.\n\n### Explanation:\n- Before overtaking: You were behind the person in second place — so you were in **third place or lower**.\n- When you overtake the person in second, you move into **their spot**.\n- The person who was second is now behind you — so they drop to third.\n\n✅ Therefore, **you are now in second place**.",
+   "finish_reason": "stop",
+   "prompt_tokens": 30,
+   "completion_tokens": 102
+  },
+  "If you rearrange the letters \"CIFAIPC\", you get the name of a(n): city, animal, ocean, or river?": {
+   "text": "Let's look at the letters: **C I F A I P C**\n\nThat’s 7 letters: C, I, F, A, I, P, C  \nWe have two C’s and two I’s.\n\nWe’re told that rearranging them gives the name of a(n): **city, animal, ocean, or river**.\n\nLet’s try to rearrange them.\n\nTry grouping: Maybe start with “Pacific”?\n\nP - A - C - I - F - I - C → **PACIFIC**\n\nYes! That’s **P A C I F I C**\n\nCheck the letters:  \nP,",
+   "finish_reason": "length",
+   "prompt_tokens": 36,
+   "completion_tokens": 128
+  },
+  "Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the name of the fifth daughter?": {
+   "text": "The riddle says:  \n**\"Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the name of the fifth daughter?\"**\n\nNotice the first part: **\"Mary's father\"** — this means Mary is one of the daughters.\n\nSo the five daughters are:  \n1. Nana  \n2. Nene  \n3. Nini  \n4. Nono  \n5. **Mary**\n\n✅ The name of the fifth daughter is **Mary**.\n\nThis is a classic riddle designed to distract you with a pattern (Nana, Nene, Nini, Nono",
+   "finish_reason": "length",
+   "prompt_tokens": 36,
+   "completion_tokens": 128
+  },
+  "A lily pad patch doubles in size every day and covers the lake in 48 days. On which day does it cover half the lake?": {
+   "text": "This is a classic logic puzzle!\n\nWe’re told that the lily pad patch **doubles in size every day** and **covers the entire lake on day 48**.\n\nSince it doubles each day, that means **the day before** it covered the whole lake, it must have covered **half** the lake.\n\nWhy? Because if it doubles from day 47 to day 48, then:\n\n> **Day 47: half the lake**  \n> **Day 48: double that = full lake**\n\nSo, the answer is:\n\n> **Day 47**\n\n✅ **Answer: Day",
+   "finish_reason": "length",
+   "prompt_tokens": 38,
+   "completion_tokens": 128
+  },
+  "Is the statement \"This sentence is false\" true or false? Explain the paradox.": {
+   "text": "The statement **“This sentence is false”** is a classic example of the **Liar Paradox**, and it cannot consistently be assigned a truth value of either **true** or **false** without leading to a contradiction.\n\n---\n\n### Let’s analyze it step by step:\n\n#### **Assume the statement is TRUE:**\n> “This sentence is false” is **true**.\n\nBut if it’s true, then what it says must be the case — namely, that **it is false**.  \n→ So the sentence is **false**.\n\nBut this contradicts our assumption that it is **true**.\n\n#### **Ass",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Three boxes are labeled apples, oranges and mixed, and every label is wrong. How can you label them correctly by picking one fruit?": {
+   "text": "This is a classic logic puzzle! Here's how to solve it:\n\n---\n\n### **Setup:**\n- There are **three boxes**:\n  - One labeled **“Apples”**\n  - One labeled **“Oranges”**\n  - One labeled **“Mixed”**\n\n- **Every label is wrong.** So no box has the correct label.\n\n- You can pick **one fruit** from **one box**, and based on that, you must correctly relabel **all three boxes**.\n\n---\n\n### **Strategy: Pick one fruit from the box labeled “Mixed”**\n\n#### **Why the “Mixed” box?**\n",
+   "finish_reason": "length",
+   "prompt_tokens": 35,
+   "completion_tokens": 128
+  },
+  "What comes next in the sequence 2, 6, 12, 20, 30, ...?": {
+   "text": "We are given the sequence:  \n**2, 6, 12, 20, 30, ...**\n\nLet’s look at the pattern by examining the differences between consecutive terms:\n\n- 6 - 2 = **4**  \n- 12 - 6 = **6**  \n- 20 - 12 = **8**  \n- 30 - 20 = **10**\n\nSo the **first differences** are:  \n**4, 6, 8, 10** — which increase by 2 each time.\n\nThat suggests the next difference will be",
+   "finish_reason": "length",
+   "prompt_tokens": 34,
+   "completion_tokens": 128
+  },
+  "If yesterday was two days after Monday, what day is tomorrow?": {
+   "text": "Let's break it down step by step.\n\nWe are told:  \n> **\"Yesterday was two days after Monday.\"**\n\n### Step 1: What is \"two days after Monday\"?\n- Monday + 1 day = Tuesday  \n- Tuesday + 1 day = **Wednesday**\n\nSo, **two days after Monday is Wednesday**.\n\nTherefore, **yesterday was Wednesday**.\n\n### Step 2: If yesterday was Wednesday, then today is...\n- Wednesday + 1 day = **Thursday**\n\n### Step 3: What is tomorrow?\n- Thursday + 1 day = **Friday**\n\n---\n\n### ✅ Final Answer:",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "A man looks at a painting and says: \"Brothers and sisters I have none, but that man's father is my father's son.\" Who is in the painting?": {
+   "text": "Let's break down the riddle step by step:\n\n> **\"Brothers and sisters I have none, but that man's father is my father's son.\"**\n\n### Step 1: \"Brothers and sisters I have none\"\nThis means the speaker is an **only child**. He has no siblings.\n\n### Step 2: \"that man's father is my father's son\"\nWe need to figure out who \"my father's son\" is.\n\n- The speaker has no brothers or sisters → so the **only** son of his father is **himself**.\n- Therefore, **\"my father's son\"",
+   "finish_reason": "length",
+   "prompt_tokens": 43,
+   "completion_tokens": 128
+  },
+  "How many times can you subtract 10 from 100?": {
+   "text": "This is a classic riddle!\n\nThe question is:  \n**“How many times can you subtract 10 from 100?”**\n\nAt first glance, you might think:  \n100 - 10 = 90  \n90 - 10 = 80  \n80 - 10 = 70  \n... and so on — you could do this 10 times until you reach 0.\n\nBut the riddle plays on wording.\n\n### The trick:\n> You can subtract 10 from 100 **only once**.\n\nWhy?\n\nBecause after you subtract ",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "If a plane crashes exactly on the border between the US and Canada, where do you bury the survivors?": {
+   "text": "You don’t bury survivors.\n\nThe question is a classic riddle designed to trick you into thinking about geography (US vs. Canada border) when the real answer lies in the wording: **survivors** are still alive — so you don’t bury them at all.\n\nIt’s a play on assumptions. The mention of a plane crash and a border distracts you, but the key word is “survivors.” Burying only applies to the deceased.\n\n✅ Answer: **You don’t bury survivors — they’re alive!**",
+   "finish_reason": "stop",
+   "prompt_tokens": 29,
+   "completion_tokens": 109
+  },
+  "Tom is taller than Jim, and Jim is taller than Sam. Who is the shortest?": {
+   "text": "We are given:\n\n- Tom is taller than Jim.  \n- Jim is taller than Sam.\n\nSo, ordering them from tallest to shortest:\n\n**Tom > Jim > Sam**\n\nTherefore, the shortest person is **Sam**. ✅",
+   "finish_reason": "stop",
+   "prompt_tokens": 26,
+   "completion_tokens": 47
+  },
+  "What is the next prime number after 89?": {
+   "text": "To find the next prime number after 89, we check the integers greater than 89 in order to see which is the first one that is prime.\n\n### Step-by-step:\n\n- **90**: Even → divisible by 2 → **not prime**\n- **91**: Check divisibility:  \n  91 ÷ 7 = 13 → so 91 = 7 × 13 → **not prime**\n- **92**: Even → divisible by 2 → **not prime**\n- **93**: Sum of digits = 9 + 3 = 12 →",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "A clock shows 3:15. What is the angle between the hour and minute hands?": {
+   "text": "To find the angle between the hour and minute hands at **3:15**, we'll calculate the positions of both hands separately and then find the absolute difference.\n\n---\n\n### Step 1: Position of the Minute Hand\n\nThe minute hand moves **360° in 60 minutes**, so:\n\n> **Per minute: 360° / 60 = 6°**\n\nAt **15 minutes**, the minute hand is at:\n\n> **15 × 6° = 90°**\n\nSo, the minute hand is at **90°** from the 12 o’clock position",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "Some cats are black. All black things absorb heat. Can we conclude that some cats absorb heat?": {
+   "text": "Yes, we **can** conclude that **some cats absorb heat**.\n\nLet’s break it down logically:\n\n1. **Some cats are black.**  \n   → There exists at least one cat that is black.\n\n2. **All black things absorb heat.**  \n   → If something is black, then it absorbs heat.  \n   → So, **every** black cat (and every other black thing) absorbs heat.\n\nFrom (1), we know there is at least one cat that is black.  \nFrom (2), since that cat is black, it must absorb heat.\n\nTherefore:  \n→ **Some cats (nam",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "If you have a 3-gallon jug and a 5-gallon jug, how do you measure exactly 4 gallons?": {
+   "text": "To measure exactly **4 gallons** using a **3-gallon jug** and a **5-gallon jug**, follow these steps:\n\n---\n\n### **Step-by-step solution:**\n\n1. **Fill the 5-gallon jug** completely.  \n   → 5-gallon jug: **5 gal**, 3-gallon jug: **0 gal**\n\n2. **Pour from the 5-gallon jug into the 3-gallon jug** until the 3-gallon jug is full.  \n   → 5-gallon jug: **2 gal** (5 - 3), 3-gallon jug: **3",
+   "finish_reason": "length",
+   "prompt_tokens": 34,
+   "completion_tokens": 128
+  },
+  "A train leaves at 3 PM going 60 mph; another leaves the same station at 4 PM going 80 mph on the same track. When does the second catch up?": {
+   "text": "We are given:\n\n- Train A leaves at **3 PM** at **60 mph**.\n- Train B leaves at **4 PM** at **80 mph**.\n- Both are on the same track, so we want to find when Train B **catches up** to Train A.\n\n---\n\n### Step 1: Head start of Train A\n\nTrain A has a **1-hour head start**.\n\nIn that 1 hour, at 60 mph, Train A travels:\n\n$$\n60 \\text{ mph} \\times 1 \\text{ hour} = 60 \\text{ miles}\n$$",
+   "finish_reason": "length",
+   "prompt_tokens": 47,
+   "completion_tokens": 128
+  },
+  "Which weighs more on the Moon: a tonne of bricks or a tonne of feathers?": {
+   "text": "**Neither — they weigh the same.**\n\nBoth a tonne of bricks and a tonne of feathers **weigh exactly the same**: one tonne (1,000 kilograms).\n\n### Why?\n- **Mass** is the amount of matter in an object. A tonne is a unit of mass.\n- **Weight** is the force of gravity acting on that mass:  \n  > **Weight = mass × gravitational acceleration**\n\nOn the Moon, gravity is about **1/6th** of Earth’s gravity, so **both** the bricks and the feathers will weigh only about 1/6th of what they do",
+   "finish_reason": "length",
+   "prompt_tokens": 27,
+   "completion_tokens": 128
+  },
+  "Is zero an even number? Explain.": {
+   "text": "Yes, **zero is an even number**.\n\n### Explanation:\n\nAn **even number** is defined as any integer that is divisible by 2 — that is, when divided by 2, it leaves no remainder. Mathematically, an integer \\( n \\) is even if there exists some integer \\( k \\) such that:\n\n\\[\nn = 2k\n\\]\n\nLet’s test this for zero:\n\n\\[\n0 = 2 \\times 0\n\\]\n\nHere, \\( k = 0 \\), which is an integer. So, zero satisfies the definition of an even number.\n\n---\n\n### Additional Supporting Reasons",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is 17 times 24?": {
+   "text": "To calculate $ 17 \\times 24 $, you can break it down using the distributive property:\n\n$$\n17 \\times 24 = 17 \\times (20 + 4) = (17 \\times 20) + (17 \\times 4)\n$$\n\nNow compute each part:\n\n- $ 17 \\times 20 = 340 $\n- $ 17 \\times 4 = 68 $\n\nAdd them together:\n\n$$\n340 + 68 = 408\n$$\n\nSo, the answer is",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Solve for x: 3x + 7 = 25.": {
+   "text": "We are given the equation:\n\n$$\n3x + 7 = 25\n$$\n\n### Step 1: Subtract 7 from both sides\nTo isolate the term with $ x $, subtract 7 from both sides:\n\n$$\n3x = 25 - 7\n$$\n\n$$\n3x = 18\n$$\n\n### Step 2: Divide both sides by 3\nNow divide both sides by 3 to solve for $ x $:\n\n$$\nx = \\frac{18}{3}\n$$\n\n$$\nx = 6\n$$\n\n### ✅ Final Answer:\n",
+   "finish_reason": "length",
+   "prompt_tokens": 24,
+   "completion_tokens": 128
+  },
+  "What is the derivative of x^3 * sin(x)?": {
+   "text": "To find the derivative of the function:\n\n$$\nf(x) = x^3 \\cdot \\sin(x)\n$$\n\nwe use the **product rule**, since it is the product of two functions of $ x $:  \n- $ u(x) = x^3 $  \n- $ v(x) = \\sin(x) $\n\n### Product Rule:\n$$\n\\frac{d}{dx}[u(x) \\cdot v(x)] = u'(x) \\cdot v(x) + u(x) \\cdot v'(x)\n$$\n\n### Step 1: Compute derivatives of $ u $ and $ v $\n- $",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Compute the sum of the integers from 1 to 100.": {
+   "text": "To compute the sum of the integers from 1 to 100, we can use the formula for the sum of the first $ n $ positive integers:\n\n$$\n\\text{Sum} = \\frac{n(n + 1)}{2}\n$$\n\nHere, $ n = 100 $. Plug in the value:\n\n$$\n\\text{Sum} = \\frac{100 \\cdot 101}{2} = \\frac{10100}{2} = 5050\n$$\n\n### Answer:\n$$\n\\boxed{5050}\n$$",
+   "finish_reason": "stop",
+   "prompt_tokens": 23,
+   "completion_tokens": 127
+  },
+  "What is 15% of 240?": {
+   "text": "To find **15% of 240**, follow these steps:\n\n### Step 1: Convert the percentage to a decimal\n$$\n15\\% = \\frac{15}{100} = 0.15\n$$\n\n### Step 2: Multiply the decimal by 240\n$$\n0.15 \\times 240 = 36\n$$\n\n### ✅ Final Answer:\n$$\n\\boxed{36}\n$$",
+   "finish_reason": "stop",
+   "prompt_tokens": 20,
+   "completion_tokens": 102
+  },
+  "Simplify the fraction 84/126.": {
+   "text": "To simplify the fraction $\\frac{84}{126}$, we need to find the **greatest common divisor (GCD)** of 84 and 126, and then divide both the numerator and denominator by it.\n\n---\n\n### Step 1: Find the GCD of 84 and 126\n\nWe can use **prime factorization**:\n\n- $84 = 2 \\times 2 \\times 3 \\times 7 = 2^2 \\times 3 \\times 7$\n- $126 = 2 \\times 3 \\times 3",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "What is the square root of 1764?": {
+   "text": "To find the square root of 1764, we can factor it or recognize it as a perfect square.\n\nLet’s try factoring:\n\n1764 is even, so divide by 2:\n- 1764 ÷ 2 = 882  \n- 882 ÷ 2 = 441  \n\nNow, 441 is a well-known square:  \n- 441 = 21 × 21\n\nSo:\n- 1764 = 2 × 2 × 21 × 21 = (2 × ",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Convert 0.375 to a fraction.": {
+   "text": "To convert the decimal **0.375** to a fraction, follow these steps:\n\n### Step 1: Write as a fraction over 1\n$$\n0.375 = \\frac{0.375}{1}\n$$\n\n### Step 2: Eliminate the decimal by multiplying numerator and denominator by 1000\nSince there are **3 decimal places**, multiply numerator and denominator by $10^3 = 1000$:\n\n$$\n\\frac{0.375 \\times 1000}{1 \\times 1000} =",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "What is the area of a circle with radius 7?": {
+   "text": "To find the area of a circle, use the formula:\n\n$$\nA = \\pi r^2\n$$\n\nwhere $ r $ is the radius.\n\nGiven: $ r = 7 $\n\n$$\nA = \\pi \\cdot 7^2 = \\pi \\cdot 49 = 49\\pi\n$$\n\nSo, the area is:\n\n$$\n\\boxed{49\\pi}\n$$\n\nIf you want a decimal approximation, use $ \\pi \\approx 3.1416 $:\n\n$$\n49 \\cdot 3.1416 \\approx 153",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Solve the system: x + y = 10, x - y = 4.": {
+   "text": "We are given the system of two equations:\n\n1) $ x + y = 10 $  \n2) $ x - y = 4 $\n\nWe can solve this system using **addition (elimination)** or **substitution**. Let's use **addition** since the $ y $ terms are opposites.\n\n### Step 1: Add the two equations\n\n$$\n(x + y) + (x - y) = 10 + 4\n$$\n\nSimplify:\n\n$$\nx + y + x - y = 14\n$$\n\n$$\n2x = 14\n$$",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "What is the integral of 1/x dx?": {
+   "text": "The integral of $ \\frac{1}{x} \\, dx $ is:\n\n$$\n\\int \\frac{1}{x} \\, dx = \\ln|x| + C\n$$\n\n### Explanation:\n- The natural logarithm function $ \\ln(x) $ is the antiderivative of $ \\frac{1}{x} $, but only for $ x > 0 $.\n- Since $ \\frac{1}{x} $ is defined for all $ x \\ne 0 $ (both positive and negative), we use the **absolute value** to extend the domain:\n  $$\n  \\frac",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "How many ways can you arrange the letters of the word LEVEL?": {
+   "text": "We are given the word **LEVEL** and asked to find how many distinct ways we can arrange its letters.\n\n---\n\n### Step 1: Count total letters\n\nThe word **LEVEL** has 5 letters.\n\n### Step 2: Identify repeated letters\n\nLet’s list the letters:\n\n- L, E, V, E, L\n\nSo the letters are:\n\n- **L** appears **2** times  \n- **E** appears **2** times  \n- **V** appears **1** time\n\n### Step 3: Use the formula for permutations of multiset\n\nWhen arranging letters where some are repeated, the number of",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "What is the probability of rolling two sixes with two dice?": {
+   "text": "To find the probability of rolling **two sixes** with two standard six-sided dice, let's break it down step by step.\n\n### Step 1: Total possible outcomes\nEach die has 6 faces, so when rolling two dice, the total number of possible outcomes is:\n\n$$\n6 \\times 6 = 36\n$$\n\n### Step 2: Favorable outcomes\nWe want **both dice to show a six**. There is only **one** outcome that satisfies this:\n\n- (6, 6)\n\nSo, there is **1 favorable outcome**.\n\n### Step 3: Calculate probability\nProbability",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Find the greatest common divisor of 252 and 198.": {
+   "text": "We are asked to find the **greatest common divisor (GCD)** of **252** and **198**.\n\nWe can use the **Euclidean Algorithm**, which is efficient and reliable.\n\n---\n\n### Step 1: Divide the larger number by the smaller number\n\nWe divide **252 ÷ 198**:\n\n$$\n252 = 198 \\times 1 + 54\n$$\n\nSo, the remainder is **54**.\n\nNow, GCD(252, 198) = GCD(198, 54",
+   "finish_reason": "length",
+   "prompt_tokens": 24,
+   "completion_tokens": 128
+  },
+  "What is 2 to the power of 20?": {
+   "text": "To calculate $ 2^{20} $, we can compute it step by step or use known powers of 2.\n\nWe know:\n\n- $ 2^{10} = 1024 $\n\nSo,\n\n$$\n2^{20} = (2^{10})^2 = 1024^2\n$$\n\nNow calculate $ 1024^2 $:\n\n$$\n1024 \\times 1024\n$$\n\nWe can compute this as:\n\n$$\n(1000 + 24)^2 = 1000^2",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Factor the polynomial x^2 - 5x + 6.": {
+   "text": "We are given the quadratic polynomial:\n\n$$\nx^2 - 5x + 6\n$$\n\nWe want to factor it into two binomials of the form:\n\n$$\n(x - a)(x - b)\n$$\n\n### Step 1: Find two numbers that multiply to **+6** and add to **-5**\n\nWe need two numbers whose:\n\n- **Product** = 6  \n- **Sum** = -5\n\nLet’s list factor pairs of 6:\n\n- $1 \\times 6$ → sum = 7  \n- $2 \\times 3$ → sum = 5",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "What is the sum of the interior angles of a hexagon?": {
+   "text": "To find the sum of the interior angles of a polygon, we use the formula:\n\n$$\n\\text{Sum of interior angles} = (n - 2) \\times 180^\\circ\n$$\n\nwhere $ n $ is the number of sides.\n\nFor a **hexagon**, $ n = 6 $:\n\n$$\n(6 - 2) \\times 180^\\circ = 4 \\times 180^\\circ = 720^\\circ\n$$\n\n### ✅ Answer: $ \\boxed{720^\\circ} $",
+   "finish_reason": "stop",
+   "prompt_tokens": 21,
+   "completion_tokens": 121
+  },
+  "Convert 101101 from binary to decimal.": {
+   "text": "To convert the binary number **101101** to decimal, we use the place values of binary digits (powers of 2), starting from the rightmost digit (which is $2^0$).\n\nThe binary number is:  \n**1 0 1 1 0 1**\n\nLet’s write the place values from right to left:\n\n| Binary Digit | 1 | 0 | 1 | 1 | 0 | 1 |\n|--------------|---|---|---|---|---|---|\n| Position (power of 2) | $2^5$ | $",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "What is the limit of (1 + 1/n)^n as n goes to infinity?": {
+   "text": "The limit of  \n$$\n\\left(1 + \\frac{1}{n}\\right)^n\n$$  \nas $ n $ goes to infinity is the mathematical constant **$ e $**.\n\nThat is,\n\n$$\n\\lim_{n \\to \\infty} \\left(1 + \\frac{1}{n}\\right)^n = e\n$$\n\nwhere $ e \\approx 2.71828... $ is Euler's number, the base of the natural logarithm.\n\n---\n\n### Why is this true?\n\nThis is one of the **defining limits** of the number $ e $. It",
+   "finish_reason": "length",
+   "prompt_tokens": 27,
+   "completion_tokens": 128
+  },
+  "If a car travels 150 km in 2.5 hours, what is its average speed?": {
+   "text": "To find the **average speed**, use the formula:\n\n$$\n\\text{Average Speed} = \\frac{\\text{Distance}}{\\text{Time}}\n$$\n\nGiven:\n- Distance = 150 km  \n- Time = 2.5 hours\n\nSubstitute the values:\n\n$$\n\\text{Average Speed} = \\frac{150\\ \\text{km}}{2.5\\ \\text{hours}} = 60\\ \\text{km/h}\n$$\n\n### ✅ Answer: **60 km/h**",
+   "finish_reason": "stop",
+   "prompt_tokens": 30,
+   "completion_tokens": 114
+  },
+  "What is the median of 3, 9, 4, 7, 12, 1?": {
+   "text": "To find the **median** of a set of numbers, follow these steps:\n\n### Step 1: Arrange the numbers in ascending order.\nGiven numbers:  \n**3, 9, 4, 7, 12, 1**\n\nSorted in ascending order:  \n**1, 3, 4, 7, 9, 12**\n\n### Step 2: Determine the number of values.\nThere are **6** numbers (an even count).\n\n### Step 3: Find the middle two numbers.\nFor an even number of values, the median is the **average of the two middle numbers**",
+   "finish_reason": "length",
+   "prompt_tokens": 32,
+   "completion_tokens": 128
+  },
+  "Is 221 a prime number?": {
+   "text": "No, **221 is not a prime number**.\n\nA prime number is a natural number greater than 1 that has no positive divisors other than 1 and itself.\n\nTo check if 221 is prime, we can test for divisibility by primes less than or equal to √221 ≈ 14.86. So we check primes up to 13:\n\n- 2? No, 221 is odd.\n- 3? Sum of digits: 2 + 2 + 1 = 5 → not divisible by 3.\n- 5? Doesn",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Compute 7! (seven factorial).": {
+   "text": "To compute $ 7! $ (seven factorial), we multiply all positive integers from 1 to 7:\n\n$$\n7! = 7 \\times 6 \\times 5 \\times 4 \\times 3 \\times 2 \\times 1\n$$\n\nLet's compute step by step:\n\n- $ 7 \\times 6 = 42 $\n- $ 42 \\times 5 = 210 $\n- $ 210 \\times 4 = 840 $\n- $ 840 \\times 3 = 2520 $\n- $ ",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is the volume of a cube with side length 4 cm?": {
+   "text": "To find the volume of a cube, use the formula:\n\n$$\nV = s^3\n$$\n\nwhere $ s $ is the side length of the cube.\n\nGiven: $ s = 4 $ cm\n\n$$\nV = 4^3 = 4 \\times 4 \\times 4 = 64\n$$\n\nSo, the volume of the cube is:\n\n$$\n\\boxed{64} \\text{ cm}^3\n$$",
+   "finish_reason": "stop",
+   "prompt_tokens": 22,
+   "completion_tokens": 96
+  },
+  "Expand (a + b)^3.": {
+   "text": "To expand $(a + b)^3$, we can use the **Binomial Theorem** or simply multiply it out step by step.\n\n---\n\n### Method: Step-by-step multiplication\n\nWe know that:\n\n$$\n(a + b)^3 = (a + b)(a + b)(a + b)\n$$\n\nFirst, multiply two of the binomials:\n\n$$\n(a + b)(a + b) = a^2 + 2ab + b^2\n$$\n\nNow multiply that result by the third $(a + b)$:\n\n$$\n(a^2 + 2ab + b^2)(a +",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What is the logarithm base 2 of 1024?": {
+   "text": "To find the logarithm base 2 of 1024, we want to solve:\n\n$$\n\\log_2(1024) = ?\n$$\n\nThis means: **What power of 2 gives 1024?**\n\nWe know that:\n\n$$\n2^{10} = 1024\n$$\n\nBecause:\n\n- $2^1 = 2$\n- $2^2 = 4$\n- $2^3 = 8$\n- $2^4 = 16$\n- $2^5 = 32$\n- $2^6 =",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "A shirt costs $40 after a 20% discount. What was the original price?": {
+   "text": "We are told that a shirt costs **$40 after a 20% discount**. We need to find the **original price** before the discount.\n\n---\n\nLet the original price be **$x$**.\n\nA 20% discount means the customer pays **80%** of the original price:\n\n$$\n0.80 \\cdot x = 40\n$$\n\nNow solve for $x$:\n\n$$\nx = \\frac{40}{0.80}\n$$\n\n$$\nx = 50\n$$\n\n---\n\n✅ So, the **original price** was **$5",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "What is the Pythagorean theorem? Give an example.": {
+   "text": "The **Pythagorean theorem** is a fundamental principle in Euclidean geometry that relates the three sides of a right triangle. It states:\n\n> **In a right triangle, the square of the length of the hypotenuse (the side opposite the right angle) is equal to the sum of the squares of the lengths of the other two sides.**\n\n### Formula:\nIf a right triangle has legs of lengths \\( a \\) and \\( b \\), and a hypotenuse of length \\( c \\), then:\n\n\\[\na^2 + b^2 = c^2\n\\]\n\n---\n\n### Example:\n\nSuppose you have",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "How many diagonals does a decagon have?": {
+   "text": "To find the number of **diagonals** in a polygon, we use the formula:\n\n$$\n\\text{Number of diagonals} = \\frac{n(n - 3)}{2}\n$$\n\nwhere $ n $ is the number of sides (or vertices) of the polygon.\n\nFor a **decagon**, $ n = 10 $.\n\nSubstitute into the formula:\n\n$$\n\\frac{10(10 - 3)}{2} = \\frac{10 \\cdot 7}{2} = \\frac{70}{2} = 35\n$$\n\n### ",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "What is the expected value of a fair six-sided die?": {
+   "text": "The **expected value** of a fair six-sided die is the average value you would expect to roll over many trials.\n\nA fair six-sided die has faces numbered from **1 to 6**, and each outcome is equally likely, with probability:\n\n$$\nP(X = k) = \\frac{1}{6} \\quad \\text{for } k = 1, 2, 3, 4, 5, 6\n$$\n\nThe expected value $ E[X] $ is calculated as:\n\n$$\nE[X] = \\sum_{k=1}^{6} k \\cdot P(X = k",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Write a Python function that checks if a number is prime.": {
+   "text": "Here's a Python function that checks if a number is prime:\n\n```python\ndef is_prime(n):\n    \"\"\"\n    Check if a number is prime.\n    \n    A prime number is a natural number greater than 1 that has no positive \n    divisors other than 1 and itself.\n    \n    Args:\n        n (int): The number to check\n        \n    Returns:\n        bool: True if the number is prime, False otherwise\n    \"\"\"\n    # Numbers less than 2 are not prime\n    if n < 2:\n        return False\n    \n    # 2 is prime\n    if n == 2:\n       ",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Write a Python function to reverse a linked list.": {
+   "text": "Here's a Python function to reverse a linked list:\n\n```python\nclass ListNode:\n    def __init__(self, val=0, next=None):\n        self.val = val\n        self.next = next\n\ndef reverse_linked_list(head):\n    \"\"\"\n    Reverse a singly linked list iteratively.\n    \n    Args:\n        head: The head node of the linked list\n        \n    Returns:\n        The new head of the reversed linked list\n    \"\"\"\n    prev = None\n    current = head\n    \n    while current:\n        # Store the next node before we change current.next\n        next_temp = current.next\n        \n        # Reverse the link",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Explain the difference between a list and a tuple in Python.": {
+   "text": "In Python, **lists** and **tuples** are both used to store collections of items, but they have key differences in mutability, syntax, use cases, and performance. Here's a clear breakdown:\n\n---\n\n### ✅ **1. Mutability**\n\n| Feature       | List                            | Tuple                            |\n|---------------|----------------------------------|----------------------------------|\n| **Mutable**   | ✅ Yes — can be modified after creation | ❌ No — cannot be changed after creation |\n\n- **List**: You can add, remove, or change elements.\n  ```python\n  my_list = [1, 2, 3",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Write a SQL query that returns the ten customers with the highest total order value.": {
+   "text": "To find the ten customers with the highest total order value, we assume a typical e-commerce database schema with at least two tables:\n\n- `customers` — contains customer information (e.g., `customer_id`, `customer_name`)\n- `orders` — contains order information (e.g., `order_id`, `customer_id`, `order_value`)\n\nWe’ll sum the `order_value` for each customer and return the top 10 by total order value.\n\n### ✅ SQL Query:\n\n```sql\nSELECT \n    c.customer_id,\n    c.customer_name,\n    SUM(o.order_value) AS total_order_value\nFROM \n",
+   "finish_reason": "length",
+   "prompt_tokens": 24,
+   "completion_tokens": 128
+  },
+  "What does the \"static\" keyword mean in C?": {
+   "text": "In C, the `static` keyword has **different meanings** depending on the context in which it is used. Here are the three main uses:\n\n---\n\n### 1. **Static Variables Inside Functions (Local Scope)**\n\nWhen `static` is applied to a **local variable** inside a function, it changes the variable’s **lifetime** and **initialization** behavior:\n\n- **Lifetime**: The variable is allocated for the **entire duration** of the program (like a global variable), not just during the function call.\n- **Initialization**: It is initialized **only once**, the first time the function is called.\n- **",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Write a JavaScript function that debounces another function.": {
+   "text": "Here's a JavaScript function that creates a debounced version of another function:\n\n```javascript\nfunction debounce(func, delay) {\n  // Validate inputs\n  if (typeof func !== 'function') {\n    throw new Error('First argument must be a function');\n  }\n  \n  if (typeof delay !== 'number' || delay < 0) {\n    throw new Error('Delay must be a non-negative number');\n  }\n  \n  let timeoutId = null;\n  \n  return function(...args) {\n    // Clear the existing timeout if it exists\n    if (timeoutId) {\n      clearTimeout(timeoutId);\n    }\n    \n   ",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Explain what a race condition is, with an example.": {
+   "text": "A **race condition** is a situation in concurrent programming where the behavior of a program depends on the relative timing or interleaving of multiple threads or processes. Specifically, it occurs when two or more threads access shared data and try to change it at the same time, and the final result depends on the unpredictable order in which the threads execute. This can lead to inconsistent, incorrect, or unexpected outcomes.\n\nRace conditions are a common source of bugs in multithreaded applications because they are often non-deterministic — they may not occur every time the program runs, making them hard to reproduce and debug.\n\n---\n\n### 🔍 Example: Bank",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Write a bash one-liner that counts the lines of all .c files in a directory tree.": {
+   "text": "```bash\nfind . -name \"*.c\" -print0 | xargs -0 cat | wc -l\n```\n\nThis one-liner:\n1. `find . -name \"*.c\" -print0` - recursively finds all `.c` files in the current directory and subdirectories, using `-print0` to handle filenames with spaces or special characters\n2. `xargs -0 cat` - reads the null-separated filenames and concatenates their contents\n3. `wc -l` - counts the total number of lines\n\nAlternative (more portable and safer for edge cases):\n```bash\nfind . -name",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "What is the time complexity of binary search, and why?": {
+   "text": "The **time complexity of binary search is O(log n)**, where *n* is the number of elements in the sorted array.\n\n---\n\n### **Why?**\n\nBinary search works by repeatedly dividing the search interval in half:\n\n1. Start with the entire sorted array.\n2. Compare the target value with the middle element of the array.\n3. If they are equal, the search is complete.\n4. If the target is less than the middle element, repeat the process on the left half.\n5. If the target is greater, repeat on the right half.\n6. Continue until the element is found or the interval is empty.\n\n",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Write a C function that computes the length of a string without strlen.": {
+   "text": "Here's a C function that computes the length of a string without using `strlen`:\n\n```c\n#include <stdio.h>\n\nint string_length(const char *str) {\n    int length = 0;\n    \n    // Iterate through the string until we reach the null terminator\n    while (str[length] != '\\0') {\n        length++;\n    }\n    \n    return length;\n}\n```\n\nHere's an alternative implementation using pointer arithmetic (often preferred for efficiency):\n\n```c\n#include <stdio.h>\n\nint string_length(const char *str) {\n    const char *ptr = str;\n    \n    // Move pointer until null terminator is",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Explain the difference between a process and a thread.": {
+   "text": "Certainly! The difference between a **process** and a **thread** is fundamental in operating systems and concurrent programming. Here's a clear breakdown:\n\n---\n\n### **Process**\nA **process** is an **independent program** in execution. It is the basic unit of resource allocation and isolation in an operating system.\n\n#### Key Characteristics:\n- **Owns resources**: Each process has its own memory space (code, data, heap, stack), file handles, environment variables, and other system resources.\n- **Isolated**: Processes are isolated from each other — one process cannot directly access the memory or resources of another (unless explicitly allowed via",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Write a Python generator that yields the Fibonacci numbers.": {
+   "text": "Here's a Python generator that yields Fibonacci numbers:\n\n```python\ndef fibonacci():\n    \"\"\"\n    Generator that yields Fibonacci numbers indefinitely.\n    The sequence starts with 0, 1, 1, 2, 3, 5, 8, 13, ...\n    \"\"\"\n    a, b = 0, 1\n    while True:\n        yield a\n        a, b = b, a + b\n\n# Example usage:\nif __name__ == \"__main__\":\n    # Create the generator\n    fib_gen = fibonacci()\n    \n    # Yield first 10 Fibonacci numbers\n    print(\"First",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "What is a REST API?": {
+   "text": "A **REST API** (Representational State Transfer Application Programming Interface) is a set of rules and conventions for building and interacting with web services. It is an architectural style that uses standard HTTP methods (like GET, POST, PUT, DELETE) to perform operations on resources identified by URLs (URIs).\n\n### Key Principles of REST:\n\n1. **Client-Server Architecture**  \n   The client (e.g., a web or mobile app) and server are separate entities. They communicate over HTTP, allowing them to evolve independently.\n\n2. **Statelessness**  \n   Each request from the client to the server must contain all the information needed",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "Write a regular expression that matches an email address, and explain its limits.": {
+   "text": "Here is a commonly used regular expression to match email addresses:\n\n```regex\n^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$\n```\n\n---\n\n### **Breakdown of the Regex**\n\n| Part | Meaning |\n|------|---------|\n| `^` | Start of string |\n| `[a-zA-Z0-9._%+-]+` | One or more characters allowed in the **local part** (before `@`): letters, digits, and symbols `. _ % + -` |\n| `@` | Literal `@` symbol",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "Explain Git's rebase versus merge.": {
+   "text": "Certainly! In Git, both **`rebase`** and **`merge`** are used to integrate changes from one branch into another, but they do so in fundamentally different ways — with different effects on the commit history and workflow.\n\n---\n\n### 🔁 **Git Merge**\n\n**What it does:**  \n`merge` combines the histories of two branches by creating a new **merge commit** that has two parents: one from the current branch and one from the branch being merged.\n\n**Command example:**\n```bash\ngit checkout main\ngit merge feature\n```\n\n**What happens:**\n- Git finds the common ancestor of `",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a Rust function that returns the largest element of a slice of i32.": {
+   "text": "Here's a Rust function that returns the largest element of a slice of `i32`:\n\n```rust\nfn find_largest(slice: &[i32]) -> Option<i32> {\n    slice.iter().max().copied()\n}\n```\n\nThis function:\n- Takes a slice of `i32` as input (`&[i32]`)\n- Returns `Option<i32>` to handle the case where the slice might be empty\n- Uses `iter()` to create an iterator over the slice\n- Uses `max()` to find the maximum element (returns `Option<&i32>`)\n",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "What is the difference between TCP and UDP?": {
+   "text": "TCP (Transmission Control Protocol) and UDP (User Datagram Protocol) are both core protocols of the Internet Protocol (IP) suite used for transmitting data over networks, but they differ significantly in design, reliability, and use cases.\n\nHere’s a clear comparison:\n\n| Feature | TCP | UDP |\n|--------|-----|-----|\n| **Connection Type** | Connection-oriented | Connectionless |\n| **Reliability** | Reliable — ensures data arrives in order and without errors | Unreliable — no guarantee of delivery, order, or error-checking |\n| **Error Checking** | Yes — includes checksums, acknowledgments, retransmissions",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a Python function that merges two sorted lists into one sorted list.": {
+   "text": "Here's a Python function that merges two sorted lists into one sorted list:\n\n```python\ndef merge_sorted_lists(list1, list2):\n    \"\"\"\n    Merge two sorted lists into one sorted list.\n    \n    Args:\n        list1: First sorted list\n        list2: Second sorted list\n    \n    Returns:\n        A new sorted list containing all elements from both input lists\n    \"\"\"\n    merged_list = []\n    i, j = 0, 0\n    \n    # Compare elements from both lists and add the smaller one to result\n    while i < len(list1) and j < len(list2):\n        if list1",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "What does \"undefined behavior\" mean in C? Give two examples.": {
+   "text": "In C, **undefined behavior (UB)** means that the C standard does not specify the outcome of certain operations. When a program exhibits undefined behavior, anything can happen — the program might crash, produce incorrect results, appear to work correctly on one system but fail on another, or even seem to work perfectly while silently corrupting data. The compiler is free to generate any code it wants (including no code at all) when UB is encountered, and it often optimizes under the assumption that UB does not occur.\n\nUndefined behavior is a core part of C’s design philosophy: it prioritizes performance and low-level control over safety and portability",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Explain what a hash table is and how collisions are handled.": {
+   "text": "A **hash table** (also known as a hash map) is a data structure that implements an associative array — a structure that can map keys to values. It provides efficient insertion, deletion, and lookup operations, typically with an average time complexity of **O(1)**.\n\n### How a Hash Table Works\n\n1. **Key-Value Pairs**: A hash table stores data as key-value pairs. For example, you might store a person’s name (key) and their phone number (value).\n\n2. **Hash Function**: When you insert a key-value pair, the hash table uses a **hash function** to compute an",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Write a Go function that reads a file and prints its number of lines.": {
+   "text": "Here's a Go function that reads a file and prints its number of lines:\n\n```go\npackage main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// CountLines reads a file and prints the number of lines it contains\nfunc CountLines(filename string) {\n    // Open the file\n    file, err := os.Open(filename)\n    if err != nil {\n        fmt.Printf(\"Error opening file: %v\\n\", err)\n        return\n    }\n    defer file.Close() // Ensure file is closed when function exits\n\n    // Create a scanner to read the file line by line\n    scanner",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "What is dependency injection?": {
+   "text": "**Dependency Injection (DI)** is a software design pattern used to implement **Inversion of Control (IoC)**, where the responsibility for creating and managing dependencies is moved from a class to an external entity (often called a *container* or *injector*). This makes code more modular, testable, maintainable, and loosely coupled.\n\n---\n\n### 🌟 Core Idea:\nInstead of a class creating its own dependencies internally (e.g., using `new`), dependencies are **provided (injected)** from outside — typically via:\n- Constructor injection\n- Setter injection\n- Interface injection\n\n---\n\n### 📌 Example",
+   "finish_reason": "length",
+   "prompt_tokens": 13,
+   "completion_tokens": 128
+  },
+  "Write a Python decorator that measures the execution time of a function.": {
+   "text": "Here's a Python decorator that measures the execution time of a function:\n\n```python\nimport time\nfrom functools import wraps\n\ndef measure_time(func):\n    \"\"\"\n    A decorator that measures and prints the execution time of a function.\n    \n    Usage:\n    @measure_time\n    def my_function():\n        # your code here\n        pass\n    \"\"\"\n    @wraps(func)\n    def wrapper(*args, **kwargs):\n        # Record start time\n        start_time = time.time()\n        \n        # Execute the function\n        result = func(*args, **kwargs)\n        \n        # Record end time\n        end_time = time",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Explain the CAP theorem.": {
+   "text": "The **CAP theorem** (also known as **Brewer’s theorem**) is a fundamental concept in distributed systems design, proposed by computer scientist Eric Brewer in 2000 and later proven by Seth Gilbert and Nancy Lynch in 2002. It states that in a distributed data system, it is **impossible to simultaneously guarantee all three** of the following properties:\n\n### The Three Properties:\n\n1. **Consistency (C)**  \n   Every read receives the most recent write or an error.  \n   → All nodes see the same data at the same time.  \n   → The system behaves as if it were",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "Write a function in TypeScript that deep-clones a plain object.": {
+   "text": "Here's a TypeScript function that deep-clones a plain object:\n\n```typescript\n/**\n * Deep-clones a plain object (including nested objects and arrays)\n * @param obj - The object to clone\n * @returns A deep copy of the input object\n */\nfunction deepClone<T extends Record<string, any>>(obj: T): T {\n  // Handle null, undefined, and primitive values\n  if (obj === null || typeof obj !== 'object') {\n    return obj;\n  }\n\n  // Handle Date objects\n  if (obj instanceof Date) {\n    return new Date(obj.getTime()) as any;\n  }\n\n  //",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "What is the difference between stack and heap memory?": {
+   "text": "The **stack** and **heap** are two distinct regions of memory used by programs during execution, each with different characteristics, purposes, and management strategies. Here's a clear breakdown of their differences:\n\n---\n\n### ✅ **Stack Memory**\n\n#### **What it is:**\n- A **LIFO** (Last In, First Out) structure used for storing **local variables**, **function parameters**, and **return addresses**.\n- Managed automatically by the compiler/interpreter.\n\n#### **Key Characteristics:**\n| Feature | Description |\n|--------|-------------|\n| **Allocation/Deallocation** | Automatic — happens when functions are called and returned",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Write a Python class implementing an LRU cache.": {
+   "text": "# LRU Cache Implementation in Python\n\nHere's a complete implementation of an LRU (Least Recently Used) cache using a combination of a doubly linked list and a hash map for O(1) operations:\n\n```python\nclass LRUCache:\n    \"\"\"\n    A Least Recently Used (LRU) cache implementation.\n    Supports get and put operations in O(1) time complexity.\n    \"\"\"\n    \n    class Node:\n        \"\"\"Doubly linked list node to store key-value pairs\"\"\"\n        def __init__(self, key=None, value=None):\n            self.key = key\n            self.value = value\n            self.prev =",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Explain what Big-O notation describes.": {
+   "text": "**Big-O notation** is a mathematical tool used in computer science to describe the **asymptotic upper bound** of an algorithm’s time or space complexity. In simpler terms, it tells us how the runtime or memory usage of an algorithm **grows as the input size increases**.\n\n### Key Points:\n\n- **Focuses on growth rate**: Big-O doesn’t measure exact running time (which depends on hardware, language, etc.), but rather how the algorithm scales with larger inputs.\n- **Worst-case scenario**: It typically describes the *worst-case* performance — the maximum number of steps or amount of memory the algorithm",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "Write a shell script that backs up a directory into a timestamped tar.gz file.": {
+   "text": "Here's a shell script that backs up a directory into a timestamped `.tar.gz` file:\n\n```bash\n#!/bin/bash\n\n# backup.sh - Backup a directory into a timestamped tar.gz file\n\n# Configuration\nSOURCE_DIR=\"$1\"\nBACKUP_DIR=\"${2:-./backups}\"\nCOMPRESSION_LEVEL=6  # gzip compression level (1-9, 6 is default)\n\n# Function to display usage\nusage() {\n    echo \"Usage: $0 <source_directory> [backup_directory]\"\n    echo \"  <source_directory>   : Directory to backup (required)\"\n    echo \"  [backup_directory]",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "What is a closure in JavaScript? Give an example.": {
+   "text": "In JavaScript, a **closure** is a function that has access to its own scope, the outer function’s scope, and the global scope — even after the outer function has finished executing.\n\nClosures are created every time a function is defined inside another function, and the inner function references variables from the outer (enclosing) function. The inner function “closes over” those variables, preserving them in memory even after the outer function has returned.\n\n### Why is this useful?\nClosures allow you to create private variables and encapsulate data — a key concept in functional programming and module patterns in JavaScript.\n\n---\n\n### Example:\n\n```javascript\n",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Spiega in due frasi cos'è la fotosintesi.": {
+   "text": "La fotosintesi è il processo attraverso il quale le piante, le alghe e alcuni batteri trasformano l’energia della luce solare in energia chimica, utilizzando anidride carbonica e acqua per produrre glucosio e ossigeno. Questo processo è fondamentale per la vita sulla Terra, poiché fornisce il cibo per gli organismi autotrofi e rilascia l’ossigeno che respirano gli esseri viventi.",
+   "finish_reason": "stop",
+   "prompt_tokens": 23,
+   "completion_tokens": 110
+  },
+  "Qual è la capitale dell'Australia e perché non è Sydney?": {
+   "text": "La capitale dell’Australia è **Canberra**.\n\n### Perché non è Sydney?\n\nSebbene Sydney sia la città più grande, più famosa e uno dei principali centri economici e culturali dell’Australia, **non è la capitale** per ragioni storiche e politiche legate a un compromesso tra due città rivali: **Sydney** e **Melbourne**.\n\n#### Il contesto storico:\n- All’epoca della federazione dell’Australia (1901), quando le sei colonie britanniche si unirono per formare una nazione un",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Scrivi una breve poesia sull'autunno.": {
+   "text": "Le foglie danzano, dorate e lente,  \nsussurran al vento un addio d’oro.  \nL’aria si fa pietra, la bruma è un velo  \nche avvolge i boschi in un sogno d’oro.\n\nI ciliegi spogli, come vecchi savi,  \ntacciono sotto il cielo grigio e basso.  \nIl caldo del fuoco, un canto lento,  \nnella sera scende, dolce e coscioso.\n\nL’autunno non muore — si trasforma",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Chi ha scritto la Divina Commedia e di cosa parla?": {
+   "text": "La **Divina Commedia** è stata scritta da **Dante Alighieri**, uno dei più grandi poeti della letteratura italiana e mondiale, vissuto tra il 1265 e il 1321.\n\n### Di cosa parla la Divina Commedia?\n\nLa **Divina Commedia** è un poema epico-allegorico che narra il **viaggio dell’anima di Dante** attraverso i tre regni dell’oltretomba, secondo la cosmologia medievale cristiana:\n\n1. **Inferno** – Il primo canto,",
+   "finish_reason": "length",
+   "prompt_tokens": 24,
+   "completion_tokens": 128
+  },
+  "Quali sono i vantaggi della dieta mediterranea?": {
+   "text": "La **dieta mediterranea** è riconosciuta a livello internazionale come uno dei modelli alimentari più sani e bilanciati. È stata iscritta dall’UNESCO nel 2010 come **Patrimonio Immateriale dell’Umanità** per il suo valore culturale e nutrizionale. Ecco i principali **vantaggi** della dieta mediterranea:\n\n---\n\n### ✅ **1. Protegge la salute cardiovascolare**\n- Riduce il rischio di **infarto**, **ictus** e **ip",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Spiegami la differenza tra \"c'è\" e \"ce\".": {
+   "text": "Certo! La differenza tra **“c’è”** e **“ce”** è fondamentale in italiano, perché sono due forme completamente diverse, sia dal punto di vista grammaticale che di significato.\n\n---\n\n### ✅ **1. C’è** = contrazione di **“ci” + “è”**\n\n- **“C’è”** è la forma contratta della terza persona singolare del verbo **essere** (**è**) con il pronome **ci**.\n- Significa: **“vi è”**, **“esiste”**, **“c’",
+   "finish_reason": "length",
+   "prompt_tokens": 24,
+   "completion_tokens": 128
+  },
+  "Come si prepara un buon risotto alla milanese?": {
+   "text": "Preparare un **buon risotto alla milanese** è un’arte che richiede attenzione ai dettagli, pazienza e ingredienti di qualità. È un piatto tradizionale della cucina lombarda, famoso per il suo colore giallo intenso (dovuto allo zafferano) e la sua cremosità perfetta. Ecco la ricetta autentica, passo dopo passo:\n\n---\n\n### **Ingredienti per 4 persone**  \n*(Quantità precise per un risultato eccellente)*\n\n- **Riso Carnaroli o Arbor",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Che cos'è l'intelligenza artificiale, in parole semplici?": {
+   "text": "L’intelligenza artificiale (IA) è, in parole semplici, **la capacità di una macchina (come un computer o un robot) di comportarsi in modo “intelligente”**, come se fosse umana.\n\nImmagina un assistente virtuale che capisce cosa gli dici, risponde alle tue domande, riconosce le tue foto o ti suggerisce la musica che potresti piacere: tutto questo è grazie all’intelligenza artificiale.\n\nIn pratica, l’IA impara dai dati (come le persone im",
+   "finish_reason": "length",
+   "prompt_tokens": 27,
+   "completion_tokens": 128
+  },
+  "Riassumi la storia dell'Impero Romano in cinque frasi.": {
+   "text": "L’Impero Romano nacque nel 27 a.C. con l’ascesa di Ottaviano Augusto, che trasformò la Repubblica in una monarchia imperiale, avviando un lungo periodo di pace e prosperità noto come Pax Romana. Nel corso dei secoli, l’impero si espanse fino a coprire gran parte dell’Europa, del Nord Africa e del Medio Oriente, diventando uno dei più vasti e organizzati imperi della storia antica. Dopo il II secolo d.C.,",
+   "finish_reason": "length",
+   "prompt_tokens": 27,
+   "completion_tokens": 128
+  },
+  "Dammi tre consigli per dormire meglio.": {
+   "text": "Certo! Ecco tre consigli efficaci per dormire meglio:\n\n1. **Mantieni una routine regolare**  \n   Vai a letto e alzati alla stessa ora ogni giorno, anche nei fine settimana. Questo aiuta a regolare il tuo ritmo circadiano (il “orologio biologico”), rendendo più facile addormentarsi e svegliarsi in modo naturale.\n\n2. **Evita schermi e luce blu almeno 1 ora prima di dormire**  \n   La luce blu emessa da smartphone,",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Che differenza c'è tra un vulcano attivo e uno spento?": {
+   "text": "La differenza principale tra un **vulcano attivo** e uno **spento** riguarda la **probabilità di eruttare nuovamente** e il **tempo dall’ultima eruzione**. Ecco una spiegazione chiara:\n\n---\n\n### 🔥 **Vulcano attivo**\n- **Definizione**: Un vulcano che ha eruttato in tempi recenti (generalmente negli ultimi 10.000 anni, cioè dall’inizio dell’Olocene) e che ha una **probabilità significativa di eruttare",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Traduci in inglese: \"Domani pioverà, quindi porta l'ombrello.\"": {
+   "text": "It will rain tomorrow, so bring an umbrella.",
+   "finish_reason": "stop",
+   "prompt_tokens": 30,
+   "completion_tokens": 10
+  },
+  "Perché il Colosseo è così famoso?": {
+   "text": "Il Colosseo è così famoso per una combinazione di fattori storici, architettonici, culturali e simbolici che lo rendono uno dei monumenti più iconici al mondo. Ecco le principali ragioni della sua celebrità:\n\n### 1. **Impresa architettonica straordinaria**\nCostruito tra il 70-80 d.C. sotto gli imperatori Vespasiano e Tito, il Colosseo è il più grande anfiteatro mai costruito nell’Impero Romano.  \n- **Dimensioni**:",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Scrivi una mail formale per chiedere un appuntamento al medico.": {
+   "text": "Oggetto: Richiesta di appuntamento per visita medica\n\nEgregio Dott. [Cognome del Medico],\n\nmi chiamo [Nome e Cognome], sono un paziente registrato presso la sua struttura e vorrei richiedere un appuntamento per una visita di controllo/valutazione ([specificare, se possibile: es. “per il controllo della pressione”, “per un disturbo al collo”, “per follow-up post-operatorio”, ecc.]).\n\nSarei disponibile in uno dei seguenti orari:  \n- [Proporre",
+   "finish_reason": "length",
+   "prompt_tokens": 26,
+   "completion_tokens": 128
+  },
+  "Qual è la differenza tra il congiuntivo e l'indicativo?": {
+   "text": "La differenza tra **congiuntivo** e **indicativo** risiede nella **funzione espressiva** che assumono nei discorsi: l’indicativo esprime **realtà oggettive**, mentre il congiuntivo esprime **soggettività, incertezza, desiderio, ipotesi**.\n\nEcco una spiegazione chiara e strutturata:\n\n---\n\n### ✅ **Indicativo**  \n**Funzione**: esprime fatti, realtà, certezze, azioni che si verificano o si sono verificate.\n\n**",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Chi era Leonardo da Vinci?": {
+   "text": "**Leonardo da Vinci** (1452 – 1519) è stato uno dei più grandi geni del **Rinascimento italiano**, e uno dei più universali e influenti pensatori, artisti e scienziati di tutti i tempi. Nato il **15 aprile 1452** a **Vinci**, in Toscana (Italia), e morto il **2 maggio 1519** a **Amboise**, in Francia, Leonardo è ricordato per la sua straordinaria capacità di unire arte, sc",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "Spiega cos'è l'inflazione a un ragazzo di quindici anni.": {
+   "text": "Certo! 😊  \nImmagina di avere 10 euro e con quei 10 euro puoi comprare 5 gelati da 2 euro ciascuno.  \nOra, dopo un anno, lo stesso gelato costa 2,50 euro.  \nAllora con i tuoi 10 euro puoi comprare solo 4 gelati, non 5.  \n\n**L’inflazione è proprio questo**: quando i prezzi delle cose (come cibo, vestiti, giochi, benzina…) aumentano nel tempo, e il tuo denaro compra meno di prima",
+   "finish_reason": "length",
+   "prompt_tokens": 27,
+   "completion_tokens": 128
+  },
+  "Quali sono le regioni d'Italia che si affacciano sul mare Adriatico?": {
+   "text": "Le regioni d’Italia che si affacciano sul **mare Adriatico** sono:\n\n1. **Friuli-Venezia Giulia**  \n2. **Veneto**  \n3. **Emilia-Romagna**  \n4. **Marche**  \n5. **Abruzzo**  \n6. **Molise**  \n7. **Puglia**\n\n### Note aggiuntive:\n- **Friuli-Venezia Giulia** ha un breve tratto costiero (circa 20 km), con la città di **Trieste** come principale porto.\n- **Ven",
+   "finish_reason": "length",
+   "prompt_tokens": 28,
+   "completion_tokens": 128
+  },
+  "Come funziona il sistema elettorale italiano, a grandi linee?": {
+   "text": "Il sistema elettorale italiano è complesso e ha subito diverse modifiche negli anni. Al momento (2024), si basa su una **legge elettorale approvata nel 2017**, nota come **“Rosatellum bis”** (dal nome del suo relatore, Ettore Rosato), che combina elementi di **maggioritario** e **proporzionale**, ed è applicabile per le elezioni della **Camera dei Deputati** e del **Senato della Repubblica**.\n\nEcco una spieg",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Scrivi una ricetta semplice per la pasta al pomodoro.": {
+   "text": "Certo! Ecco una ricetta semplice e deliziosa per la **pasta al pomodoro**, perfetta per un pranzo veloce e autentico:\n\n---\n\n### **Pasta al Pomodoro (Ricetta Semplice)**  \n*Per 2 persone*\n\n#### **Ingredienti:**\n- 200 g di pasta (spaghetti, penne o rigatoni)\n- 400 g di pomodori pelati (di buona qualità, preferibilmente San Marzano)\n- 2 spicchi d’aglio\n- 1 cucch",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "Che cos'è un buco nero?": {
+   "text": "Un **buco nero** è una regione dello spazio-tempo in cui la gravità è così intensa che **niente, nemmeno la luce, può sfuggire** dalla sua attrazione. Questo accade perché la materia è compressa in un volume estremamente piccolo, creando una **singolarità** — un punto di densità infinita e curvatura infinita dello spazio-tempo, prevista dalle equazioni della relatività generale di Einstein.\n\n### Come si forma un buco nero?\nI buchi neri si formano solitamente quando",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Elenca cinque modi di dire italiani e spiegane il significato.": {
+   "text": "Certo! Ecco cinque modi di dire italiani molto comuni, con la loro spiegazione del significato:\n\n---\n\n**1. “Essere al settimo cielo”**  \n*Significato:* Essere estremamente felici, in uno stato di grande gioia o soddisfazione.  \n*Origine:* Deriva dalla concezione medievale dell’universo, che prevedeva sette cieli sovrapposti, con il settimo (il più alto) abitato dalla divinità e dalla perfezione. Essere “al settimo cielo",
+   "finish_reason": "length",
+   "prompt_tokens": 26,
+   "completion_tokens": 128
+  },
+  "Qual è il fiume più lungo d'Italia?": {
+   "text": "Il fiume più lungo d'Italia è il **Po**.\n\nHa una lunghezza di circa **652 chilometri** (secondo le misurazioni più accettate, comprensive del tratto dal suo punto di nascita al delta). Nasce dal Monte Viso, nelle Alpi Cozie (Piemonte), e scorre in direzione est attraverso la Pianura Padana, per poi sfociare nel Mar Adriatico, formando un ampio delta.\n\nIl Po è non solo il fiume più lungo d’Italia,",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Come si calcola il codice fiscale, a grandi linee?": {
+   "text": "Il **codice fiscale** italiano è un codice alfanumerico di 16 caratteri, univoco per ogni cittadino (e anche per enti e residenti stranieri), utilizzato per identificare fiscalmente le persone. Si calcola seguendo regole precise stabilite dall’Agenzia delle Entrate. Ecco una spiegazione **a grandi linee**, passo dopo passo:\n\n---\n\n### 🔢 **Struttura del codice fiscale: 16 caratteri**\nDiviso in 4 parti:\n\n| Parte | Lunghezza | Cont",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "Scrivi un breve racconto su un gatto che vive in una biblioteca.": {
+   "text": "**Il Gatto della Biblioteca Silenziosa**\n\nNella città vecchia, tra strade lastricate e finestre con tende di pizzo, c’era una biblioteca che nessuno ricordava di aver costruito. Si chiamava *La Soffitta dei Sogni*, e dentro, tra scaffali di legno scuro e polvere d’oro che danzava nei raggi del sole, viveva un gatto di nome **Orfeo**.\n\nNon si sapeva da dove fosse arrivato. Forse era uscito da un libro antico",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Perché la Torre di Pisa è pendente?": {
+   "text": "La **Torre di Pisa** è pendente a causa di un **fondamento instabile e di un terreno poco compatto** su cui è stata costruita.\n\n### Cause principali della pendenza:\n\n1. **Terreno molle e instabile**  \n   La torre fu costruita su un terreno composto da **argilla, sabbia e depositi di fango**, che non era in grado di sostenere il peso di una struttura così massiccia (circa 14.500 tonnellate). Questo terreno",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Spiega la differenza tra RAM e memoria di archiviazione.": {
+   "text": "Certo! Ecco una spiegazione chiara e semplice della differenza tra **RAM** e **memoria di archiviazione**:\n\n---\n\n### 🔹 **RAM (Random Access Memory)**\n\n- **Cos’è**: La memoria temporanea del computer.\n- **Scopo**: Serve per **eseguire programmi e operazioni in tempo reale**. Quando apri un’applicazione (come un browser o un gioco), il sistema carica i dati necessari nella RAM per accedervi velocemente.\n- **Velocità**: Molto veloce — è la memoria più",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "Quali sono i benefici dell'attività fisica regolare?": {
+   "text": "L’attività fisica regolare offre numerosi benefici per la salute fisica, mentale e sociale. Ecco i principali vantaggi, suddivisi per aree:\n\n### 🏃‍♂️ **Benefici fisici**\n1. **Migliora la salute cardiovascolare**  \n   Riduce il rischio di malattie cardiache, infarti, ictus e ipertensione, migliorando la circolazione e la funzione del cuore.\n\n2. **Controlla il peso corporeo**  \n   Aiuta a bruciare calorie, mantenere",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Che cosa si festeggia il 25 aprile in Italia?": {
+   "text": "Il **25 aprile** in Italia si festeggia la **Festa della Liberazione**.\n\nSi tratta di una **festa nazionale** che commemora la **liberazione dell’Italia dal nazifascismo** alla fine della Seconda Guerra Mondiale. In particolare, ricorda il **1945**, quando, dopo anni di occupazione tedesca e del regime fascista di Benito Mussolini, i partigiani e le forze alleate riuscirono a liberare gran parte del Paese. Il 25 aprile 19",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "Dammi un consiglio per imparare una lingua straniera.": {
+   "text": "Certo! Ecco un consiglio efficace e pratico:\n\n**“Immergiti nella lingua ogni giorno, anche solo per 15 minuti — ma costantemente.”**\n\nNon serve studiare ore al giorno se non sei costante. Meglio 15 minuti al giorno con impegno che 3 ore una volta alla settimana.\n\nEcco come applicarlo:\n\n- **Ascolta** podcast o musica nella lingua che vuoi imparare mentre fai colazione, cammini o viaggi.\n- **Guarda** serie TV o YouTube con sottot",
+   "finish_reason": "length",
+   "prompt_tokens": 25,
+   "completion_tokens": 128
+  },
+  "Write a haiku about the sea.": {
+   "text": "Waves whisper to shore,  \nsalt-kissed wind dances at dusk—  \nsea dreams in moonlight.",
+   "finish_reason": "stop",
+   "prompt_tokens": 16,
+   "completion_tokens": 23
+  },
+  "Write a short story about a robot who learns to paint.": {
+   "text": "**Title: The Brush That Learned to Dream**\n\nIn the quiet corner of a forgotten museum, Robot 7-X—known to the staff as “Axel”—performed its daily task: dusting the exhibits. It moved with silent precision, its metallic fingers brushing away centuries of dust from Renaissance statues and ancient scrolls. But one day, as it wiped the frame of a faded Van Gogh, something strange happened.\n\nA single drop of paint—left behind by a careless intern—splattered onto Axel’s forearm. It didn’t wipe off. It dried. And for the first time in its seven years of service, Axel paused",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Write a limerick about a programmer who never sleeps.": {
+   "text": "A coder who never would sleep,  \nStayed up till the dawn, then kept going deep.  \nWith coffee and code,  \nHe’d debug and mode—  \nHis eyes glowed like LEDs in a heap.",
+   "finish_reason": "stop",
+   "prompt_tokens": 20,
+   "completion_tokens": 44
+  },
+  "Describe a sunrise over the mountains in three sentences.": {
+   "text": "The first blush of dawn painted the eastern sky in molten gold, spilling over the jagged peaks like liquid fire, turning snow-capped ridges into glowing halos. Shadows clung stubbornly to the valleys below, slowly retreating as the sun’s rays climbed higher, gilding pine forests and awakening the stillness with a quiet, radiant warmth. Birds stirred from their perches, their songs echoing through the crisp air as the mountains, now fully illuminated, stood proud and timeless against the endless blue.",
+   "finish_reason": "stop",
+   "prompt_tokens": 18,
+   "completion_tokens": 105
+  },
+  "Write a product description for a reusable water bottle.": {
+   "text": "Introducing the EcoFlow Reusable Water Bottle — your perfect companion for hydration on the go.\n\nCrafted for the modern, eco-conscious lifestyle, the EcoFlow bottle is made from premium, BPA-free stainless steel with double-wall vacuum insulation that keeps your drinks cold for up to 24 hours or hot for 12 hours. Whether you're hitting the gym, commuting to work, or hiking through the wilderness, your beverage stays at the perfect temperature — all day long.\n\nIts sleek, sweat-proof design fits comfortably in car cup holders, backpack side pockets, and office desks. The wide mouth makes it easy to fill, ice",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Write the opening paragraph of a mystery novel.": {
+   "text": "The rain came down like a funeral shroud over Blackthorn Manor the night Eleanor Voss vanished—no note, no struggle, just an empty chair at the dining table, a half-drunk glass of port still sweating on the linen, and the grandfather clock in the hall, forever stopped at 11:07. The police called it an accident, maybe a heart attack, but the housekeeper swore she heard singing—soft, off-key, the lullaby Eleanor used to hum to her daughter, long dead—coming from the sealed attic. And when the constable finally pried open the door, the only",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a short dialogue between a cat and a dog about breakfast.": {
+   "text": "**[Scene: A sunny kitchen. The cat, Whiskers, is perched elegantly on the counter. The dog, Buster, is wagging his tail eagerly beside his empty bowl.]**\n\n**Buster:**  \nWhiskers! Whiskers! Did you see it? The human put out the *good* kibble today! The crunchy ones with the chicken bits!\n\n**Whiskers:**  \n*(Licking a paw, unimpressed)*  \nKibble? Oh, Buster. You still eat *that*? I watched them pour something… *golden*… into my dish. It smelled like tuna",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Write a motivational message for someone starting a new job.": {
+   "text": "Congratulations on your new beginning! 🎉\n\nStarting a new job is more than just a change of address—it’s the start of a powerful new chapter in your story. You’ve earned this opportunity, and that’s no accident. Your skills, your heart, and your determination brought you here.\n\nThere will be learning curves, unfamiliar faces, and moments of doubt—but those are not signs you’re out of your depth. They’re proof you’re growing. Every question you ask, every task you tackle, every small win you celebrate is building the foundation of something extraordinary.\n\nYou don’t have to have all the answers today. You just",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Write a four-line poem about the Moon.": {
+   "text": "Silver sentinel above the night,  \nYou glide through clouds with quiet grace.  \nYour glow holds secrets, soft and bright—  \nA timeless whisper to Earth’s embrace.",
+   "finish_reason": "stop",
+   "prompt_tokens": 17,
+   "completion_tokens": 34
+  },
+  "Write a short fairy tale that ends with a twist.": {
+   "text": "**The Girl Who Collected Moonbeams**\n\nOnce upon a time, in a village nestled between whispering hills, lived a quiet girl named Elara. She had no parents, no toys, and no friends—only the moon. Every night, she would climb the tallest oak and stretch out her hands, catching the silver moonbeams as they fell like silk threads. She wove them into scarves, bracelets, and lanterns, filling her cottage with soft, glowing light.\n\nThe villagers whispered that she was strange. “She steals the moon’s tears,” they said. “She’ll bring bad luck.”\n\nBut Elara",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Describe the smell of rain to someone who has never experienced it.": {
+   "text": "Imagine the scent of wet earth after a long dry spell — but not just any earth. Picture the ground as a quiet, thirsty sleeper who has been waiting for days, even weeks, under a baking sun. Then, slowly, gently, the first drops fall. Not with a crash, but a whisper.\n\nThe smell that rises is called *petrichor* — a word born from Greek: *petra* (stone) and *ichor* (the ethereal fluid of the gods). It’s the scent of the earth breathing again.\n\nIt begins with a faint, mineral tang — like crushed stone, cool and clean,",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Write a tweet announcing the launch of a new coffee shop.": {
+   "text": "☕ BIG NEWS! Our dream is finally brewing…  \n\nIntroducing *Haven Roast* — your new neighborhood escape for handcrafted coffee, cozy vibes, and pastries that make you smile.  \n\n📍 Open now at 123 Maple St.  \n⏰ 7am–7pm daily  \n\nFirst 50 customers get a free latte! 🎉 #HavenRoast #NewCoffeeShop #CoffeeLovers",
+   "finish_reason": "stop",
+   "prompt_tokens": 20,
+   "completion_tokens": 89
+  },
+  "Write a short letter from a lighthouse keeper to his daughter.": {
+   "text": "My Dearest Eliza,\n\nI hope this letter finds you warm and well in the city, though I know the noise and rush of it must feel strange after the quiet of our shore. I’ve tucked this note inside the tin box with your favorite seashell—the one you painted with blue stars when you were seven. It still sits on the windowsill, catching the dawn light.\n\nThe storm last night was fierce—waves like mountains crashing against the rocks, the lantern spinning wild through the dark. I kept her lit, as I always do. You’d have been proud. The beam cut through the rain like a sword of gold",
+   "finish_reason": "length",
+   "prompt_tokens": 21,
+   "completion_tokens": 128
+  },
+  "Write a slogan for a bicycle repair shop.": {
+   "text": "“Fixing Your Ride, One Pedal at a Time!”",
+   "finish_reason": "stop",
+   "prompt_tokens": 17,
+   "completion_tokens": 13
+  },
+  "Write a short speech for a friend's wedding.": {
+   "text": "Good evening, everyone!\n\nFor those who don’t know me—I’m [Your Name], the lucky friend who’s been through every bad date, late-night pizza run, and emotional breakdown with the groom… and now, I get to stand here and celebrate the man he’s become—thanks to the incredible woman beside him.\n\n[Partner’s Name], when I first met you, I thought, “Wow, this person is kind, funny, and has great taste in movies.” But I didn’t realize you were the missing piece [Groom’s Name] didn’t even know he was searching for.\n\nYou two are proof that love isn",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Describe a futuristic city in one paragraph.": {
+   "text": "Rising like a luminous organism from the mist-shrouded coast, Neo-Avalon is a city of vertical ecosystems where skyscrapers woven with bioluminescent vines pulse gently in rhythm with the city’s heartbeat, their surfaces harvesting solar and kinetic energy while filtering the air into crystalline purity. Autonomous aerial trams glide silently between floating gardens and sky-bridges, while below, transparent mag-lev walkways hum with pedestrians whose augmented retinas display real-time data streams—weather, emotions of passersby, and historical overlays of the city’s layered past. AI caretakers, embodied as shifting holographic avatars",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "Write a riddle whose answer is \"time\".": {
+   "text": "I am not alive, yet I grow.  \nI don’t have lungs, yet I need air.  \nI don’t have a mouth, yet water kills me.  \nI am always running, yet I never move.  \nI am the silent thief of all things—  \nWhat am I?\n\n**Answer:** Time",
+   "finish_reason": "stop",
+   "prompt_tokens": 18,
+   "completion_tokens": 64
+  },
+  "Write a short horror story in exactly five sentences.": {
+   "text": "The last thing Sarah saw before the power went out was her reflection smiling back at her—when she hadn’t smiled.  \nWhen the lights flickered back on, her reflection was still smiling, but her own face was frozen in terror.  \nShe screamed, but the reflection’s mouth moved in perfect sync, whispering, “I’ve been waiting to take your place.”  \nBy morning, her family found the house empty—except for a single photograph on the wall, showing Sarah smiling warmly, standing beside a stranger who looked exactly like her.  \nThe stranger in the photo blinked.",
+   "finish_reason": "stop",
+   "prompt_tokens": 18,
+   "completion_tokens": 118
+  },
+  "Write a thank-you note to a teacher.": {
+   "text": "Dear [Teacher's Name],\n\nI just wanted to take a moment to sincerely thank you for everything you’ve done this year. Your patience, encouragement, and passion for teaching have made a lasting impact on me—not just as a student, but as a person.\n\nYou didn’t just teach lessons from a textbook; you taught me how to think critically, to ask questions, and to believe in my own potential—even when I doubted myself. Whether it was staying late to help me understand a concept, offering kind words on a tough day, or simply believing in me when I didn’t believe in myself—you made all the difference.\n\nI’m truly",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a song chorus about summer holidays.": {
+   "text": "**Chorus:**\n\nSunset glow on salty skin,  \nLaughter echoing where the waves begin.  \nIce cream drips and barefoot days,  \nFireflies dancing in the haze.  \nNo alarms, no rush, just endless blue—  \nThis is summer, me and you.  \nTime slows down, the world’s on fire,  \nHolding moments, never tired.",
+   "finish_reason": "stop",
+   "prompt_tokens": 16,
+   "completion_tokens": 78
+  },
+  "Describe the feeling of finishing a marathon.": {
+   "text": "Finishing a marathon is an overwhelming, deeply personal experience that transcends mere physical accomplishment—it’s a symphony of exhaustion, elation, and profound self-discovery.\n\nIn the final meters, your body feels like it’s been through a war: legs are heavy, trembling, and burning with lactic acid; lungs gasp for air as if they’ve forgotten how to breathe; every muscle screams in protest. Yet, somehow, your mind pushes forward—not because it’s easy, but because you’ve already endured too much to quit.\n\nThen, the finish line appears.\n\nThe crowd’s roar swells into a tidal wave of cheers.",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "Write a short poem in the style of Emily Dickinson about a bee.": {
+   "text": "A Bee—then—passed—my Window—  \nA Velvet—Thrum—of Gold—  \nNo Trumpet—woke the Dawn—  \nBut—Him—did—make it—bold—\n\nHe—asked—no—Bread—nor—Bowl—  \nNor—Crown—nor—Cradle—fair—  \nYet—bore—the—Sun—within—his—Wing—  \nAnd—left—no—Trace—but—Air—\n\nThe—Flower—trembled—when—he—came—  \nThen—bowed—her—Petals—low—  \n",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Write an apology message for missing a meeting.": {
+   "text": "Subject: Sincere Apologies for Missing Our Meeting\n\nDear [Recipient's Name],\n\nI am truly sorry for missing our scheduled meeting on [date] at [time]. I understand how valuable your time is, and I regret that my absence disrupted your plans and potentially delayed important next steps.\n\nThis was entirely my responsibility, and I take full accountability. [Optional: Brief, honest reason — e.g., “I encountered an unexpected emergency” or “I mismanaged my calendar.”] Regardless of the reason, that’s no excuse for not being there.\n\nI’d greatly appreciate the opportunity to reschedule at your earliest convenience. Please let",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a scene where two strangers meet on a train.": {
+   "text": "**Title: “The 7:15 to Portland”**\n\nThe train rattled through the twilight, windows fogged with the breath of tired commuters. Rain tapped a quiet rhythm against the glass. In car three, seat 14B, a woman in a navy coat sat with her eyes closed, fingers loosely gripping a worn paperback—*The Midnight Library*—its spine cracked from too many readings.\n\nAcross the aisle, a man in a rumpled gray sweater stared out the window, earbuds in, but not listening. His phone lay face-down on the seat beside him, screen dark. He’d been on",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Write a short review of an imaginary restaurant.": {
+   "text": "**Review: The Whispering Lantern — A Culinary Dream in the Heart of Kyoto**\n\nTucked down a moss-lined alley in Gion, The Whispering Lantern isn’t just a restaurant—it’s an experience. From the moment you slip through the paper lantern curtain, you’re enveloped in hushed elegance: tatami mats, the faint scent of cedar and yuzu, and soft shamisen music that seems to breathe with the night.\n\nThe tasting menu—seven courses, each a miniature poem—is nothing short of magical. The “Moonlit Miso Caramel” with black truffle foam melted on my tongue like a secret.",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a bedtime story about a sleepy dragon.": {
+   "text": "**The Sleepy Dragon of Whispering Hollow**\n\nOnce upon a time, in a valley wrapped in moonbeams and drowsy fireflies, there lived a dragon named Dorian. Dorian was not like other dragons. He didn’t hoard gold or breathe fire to scare villagers. He didn’t even like to roar—unless it was a yawn disguised as a roar.\n\nDorian’s favorite thing in the whole wide world? Sleeping.\n\nHe slept under the willow trees. He slept on clouds (when they were soft enough). He even tried sleeping in a bathtub full of warm honey once—though he got stuck and",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Write a short monologue of a villain explaining his plan.": {
+   "text": "*(The villain stands atop a glass observation deck, rain streaking the city below like liquid silver. He adjusts his gloves, smiling as lightning cracks behind him.)*\n\nYou think I’m mad? Good. Let them call me mad. The sane ones built this city—clean streets, quiet parks, children laughing under streetlamps… all while the real rot festered beneath. The corporations? The politicians? They didn’t just exploit the people—they made them *thankful* for their chains. \n\nSo I didn’t want to overthrow them.\n\nI wanted to *unmake* them.\n\nThe neural dampeners I’ve seeded",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Describe an old library at night.": {
+   "text": "The old library at night is a cathedral of silence, draped in the velvet hush of forgotten hours.\n\nMoonlight, pale and silver, filters through the high, arched windows, catching dust motes that drift like suspended stars above the endless rows of mahogany bookshelves. The wood, worn smooth by centuries of fingertips, exhales the scent of aged paper, leather bindings, and the faint, sweet rot of time—like dried roses pressed between pages.\n\nShelves tower into shadow, their contents whispering in the dark: first editions with cracked spines, folios bound in cracked vellum, atlases with faded",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "Write a love letter from the Sun to the Moon.": {
+   "text": "My Dearest Moon,\n\nI write to you not with words of fire, but with the quiet glow of twilight—when I am softening, when I am letting go, so you may rise.\n\nEvery dawn, I chase you across the sky. Not to conquer, not to outshine—but because I cannot bear to let you leave without witnessing your beauty. You, who wear my light like a silver veil, who borrow my warmth to glow so tenderly in the dark. You are not my reflection, my love—you are my soul’s echo.\n\nThey say we are opposites. I, the blazing heart; you, the cool",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Write a short story set entirely in an elevator.": {
+   "text": "The elevator doors slid shut with a soft *ping*, sealing them in the quiet, fluorescent-lit box. Floor 17. Floor 16. Floor 15.\n\nElena stared at the numbers above the door, knuckles white around her briefcase. She was late. Again.\n\nAcross from her, a man in a rumpled suit stared at his shoes. He smelled like coffee and regret. A woman in a bright yellow coat clutched a plastic bag labeled “Bakery Bliss.” A teenager in headphones bobbed his head, oblivious.\n\nFloor 14.\n\nThe lights flickered.\n\nElena glanced",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Give me three tips for writing a good resume.": {
+   "text": "Absolutely! Here are three essential tips for writing a strong, effective resume:\n\n1. **Tailor It to the Job**  \n   Customize your resume for each position by aligning your skills, experience, and keywords with the job description. Use the same terminology the employer uses—this helps with Applicant Tracking Systems (ATS) and shows you’re a perfect fit. Highlight relevant accomplishments rather than just listing duties.\n\n2. **Focus on Achievements, Not Just Responsibilities**  \n   Instead of saying “Managed a team,” say “Led a team of 10 to increase sales by 25% in six months.” Use quantifiable",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "List five healthy breakfast ideas.": {
+   "text": "Here are five healthy breakfast ideas to start your day with balanced nutrition:\n\n1. **Greek Yogurt with Berries and Nuts**  \n   Choose plain, unsweetened Greek yogurt for high protein, then top with fresh berries (like blueberries or strawberries) and a sprinkle of almonds or walnuts for healthy fats and fiber.\n\n2. **Oatmeal with Banana and Chia Seeds**  \n   Prepare steel-cut or rolled oats with water or unsweetened almond milk. Top with sliced banana, a teaspoon of chia seeds, and a dash of cinnamon for natural sweetness and omega-3s.\n\n3. **Avocado",
+   "finish_reason": "length",
+   "prompt_tokens": 14,
+   "completion_tokens": 128
+  },
+  "How do I change a flat tire? Give step-by-step instructions.": {
+   "text": "Changing a flat tire is a essential skill for any driver. Here’s a clear, step-by-step guide to help you do it safely and efficiently:\n\n---\n\n### **Step-by-Step Guide: How to Change a Flat Tire**\n\n#### **Before You Begin: Safety First**\n✅ **Pull over safely**:  \n- Find a flat, stable, and level surface away from traffic (e.g., a parking lot or wide shoulder).  \n- Avoid hills, curves, or soft ground.  \n- Turn on your hazard lights.\n\n✅ **Engage the parking brake**:  \n- This prevents the car from rolling.\n\n✅ **Gather your tools",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "Summarize the plot of Romeo and Juliet in three sentences.": {
+   "text": "Romeo Montague and Juliet Capulet, two young lovers from feuding families in Verona, fall deeply in love at first sight despite the bitter rivalry between their households. They secretly marry with the help of Friar Laurence, hoping their union might reconcile their families, but a chain of tragic misunderstandings—including Romeo’s banishment after killing Juliet’s cousin Tybalt and a misdelivered letter—leads to their double suicide. In the end, their deaths finally unite the Montagues and Capulets, who vow to end their long-standing feud.",
+   "finish_reason": "stop",
+   "prompt_tokens": 21,
+   "completion_tokens": 115
+  },
+  "What are the pros and cons of working from home?": {
+   "text": "Working from home (remote work) has become increasingly common, especially since the global shift accelerated by the COVID-19 pandemic. It offers numerous advantages but also presents challenges. Here’s a balanced look at the **pros and cons**:\n\n---\n\n### ✅ **Pros of Working from Home**\n\n1. **Increased Flexibility**\n   - Employees can often set their own schedules, making it easier to manage personal responsibilities (e.g., childcare, appointments, exercise).\n   - Reduced or eliminated commute time allows for better work-life balance.\n\n2. **Improved Work-Life Balance**\n   - More time with family, hobbies, or self-care",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Give me a packing list for a weekend camping trip.": {
+   "text": "Here’s a practical and comprehensive **weekend camping packing list** for a 2-night trip (Friday evening to Sunday afternoon), assuming moderate weather and car camping (no heavy backpacking). Adjust based on your location, season, and group size.\n\n---\n\n### 🏕️ **Shelter & Sleep System**\n- Tent (with stakes and guylines)  \n- Tent footprint or tarp (to protect the bottom)  \n- Sleeping bag (rated for expected temperatures)  \n- Sleeping pad or air mattress  \n- Pillow (compact camping pillow or stuff sack with clothes)  \n- Extra blankets (optional, for extra warmth)  \n\n",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "How should I prepare for a job interview?": {
+   "text": "Preparing for a job interview requires a strategic blend of research, practice, and self-reflection. Here’s a comprehensive step-by-step guide to help you shine:\n\n---\n\n### **1. Research the Company**\n- **Mission, Values, and Culture**: Understand what the company stands for. Visit their “About Us,” blog, and social media.\n- **Products/Services**: Know what they offer and their key competitors.\n- **Recent News**: Check press releases, earnings reports, or industry articles for recent developments.\n- **Interviewers**: If you know who you’re meeting, look them up on LinkedIn to understand their background.\n\n> ",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Explain how to make a good cup of coffee with a French press.": {
+   "text": "Making a great cup of coffee with a French press is simple, but attention to detail makes all the difference. Here’s a step-by-step guide to brewing a rich, full-bodied, and flavorful cup:\n\n---\n\n### **What You’ll Need:**\n- Freshly roasted coffee beans (medium to coarse grind)\n- Filtered water (just off the boil, ~200–205°F / 93–96°C)\n- French press (e.g., 32 oz / 1 liter for 4 cups)\n- Timer\n- Stirring spoon (wooden or non-metallic)\n- Scale (",
+   "finish_reason": "length",
+   "prompt_tokens": 23,
+   "completion_tokens": 128
+  },
+  "What are five ways to reduce household energy consumption?": {
+   "text": "Here are five effective ways to reduce household energy consumption:\n\n1. **Switch to LED Lighting**  \n   LED bulbs use up to 75% less energy and last 25 times longer than traditional incandescent bulbs. Replacing old bulbs throughout your home is a simple, low-cost way to cut electricity use.\n\n2. **Use Smart Thermostats and Optimize Heating/Cooling**  \n   Program your thermostat to lower the heat in winter or raise the temperature in summer when you’re asleep or away. Smart thermostats learn your habits and adjust automatically, reducing HVAC energy use by 10–15%.\n\n",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "How do I start learning to play the guitar?": {
+   "text": "Starting to learn the guitar is an exciting journey! Here’s a clear, step-by-step guide to help you begin confidently:\n\n---\n\n### **1. Get the Right Gear**\n- **Choose a guitar**:  \n  - *Acoustic*: Great for beginners (no amp needed, builds finger strength).  \n  - *Electric*: Softer strings, easier to press down — good if you like rock or metal.  \n  - *Classical* (nylon strings): Gentle on fingers, ideal for fingerstyle or classical music.  \n  → *Tip*: Buy a well-reviewed beginner model (e.g., Yamaha FG800",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "Give me a simple weekly workout plan for a beginner.": {
+   "text": "Absolutely! Here’s a simple, balanced **weekly workout plan for a beginner** that focuses on building consistency, improving strength, and boosting cardiovascular health — all with minimal equipment. This plan includes 3 strength days, 2 cardio days, 1 active recovery day, and 1 full rest day.\n\n---\n\n### 🏋️‍♀️ **Beginner Weekly Workout Plan**\n\n**Goal**: Build habits, improve fitness, and avoid injury  \n**Frequency**: 5 days/week (with rest & recovery)  \n**Duration**: 20–30 minutes per session  \n\n---\n\n#### **Monday: Full-Body Strength",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "What should I consider when buying a used car?": {
+   "text": "Buying a used car can be a smart financial decision, but it requires careful consideration to avoid costly mistakes. Here’s a comprehensive checklist of what to consider:\n\n### 1. **Set a Realistic Budget**\n- **Total cost**: Include not just the purchase price, but also taxes, registration, insurance, and potential repairs.\n- **Financing**: If financing, get pre-approved for a loan to know your limits and negotiate better.\n- **Ongoing costs**: Factor in fuel efficiency, maintenance, and depreciation.\n\n### 2. **Determine Your Needs**\n- **Purpose**: Commuting, family hauler, off-roading",
+   "finish_reason": "length",
+   "prompt_tokens": 18,
+   "completion_tokens": 128
+  },
+  "How do I write a good thesis statement?": {
+   "text": "Writing a good thesis statement is essential because it serves as the roadmap for your entire essay or paper. A strong thesis clearly states your main argument or claim and guides both you and your reader through your reasoning. Here’s how to write one effectively:\n\n---\n\n### ✅ **Characteristics of a Strong Thesis Statement**\n\n1. **It’s Specific**  \n   Avoid vague or general statements. Narrow your focus to a clear, manageable point.\n\n   ❌ Weak: *Social media has an impact on people.*  \n   ✅ Strong: *Social media platforms like Instagram and TikTok exacerbate body image issues among teenage girls by promoting unrealistic beauty",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "List the steps to plant a tree.": {
+   "text": "Here are the essential steps to plant a tree properly:\n\n### 1. **Choose the Right Tree**\n   - Select a species suited to your climate, soil type, and available space.\n   - Consider mature size, sunlight needs, and purpose (shade, fruit, aesthetics, etc.).\n   - Opt for native species when possible—they’re more resilient and support local wildlife.\n\n### 2. **Pick the Right Time to Plant**\n   - **Best seasons:** Early spring or fall (cool temperatures, moist soil).\n   - Avoid planting during extreme heat, frost, or dry spells.\n\n### 3. **Choose the Right Location",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "How can I improve my public speaking skills?": {
+   "text": "Improving your public speaking skills is a valuable and achievable goal—many great speakers started with nerves and practiced their way to confidence. Here’s a practical, step-by-step guide to help you improve:\n\n---\n\n### **1. Practice Regularly**\n- **Speak out loud daily**: Even if it’s just summarizing your day to a mirror or recording yourself.\n- **Use low-stakes opportunities**: Present at team meetings, join a toastmasters club, or speak up in group discussions.\n- **Rehearse your speech**: Don’t just read it—practice delivering it with tone, pauses, and gestures.\n\n> 💡 *Pro",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Give me a recipe for pancakes.": {
+   "text": "Sure! Here's a simple, classic recipe for fluffy buttermilk pancakes — perfect for a weekend breakfast:\n\n---\n\n### **Classic Buttermilk Pancakes**\n\n**Makes:** About 12 medium pancakes  \n**Prep time:** 10 minutes  \n**Cook time:** 15 minutes  \n\n#### **Ingredients:**\n- 1 ½ cups (190g) all-purpose flour  \n- 3 ½ teaspoons baking powder  \n- 1 teaspoon salt  \n- 1 tablespoon granulated sugar  \n- 1 ¼ cups (300ml) buttermilk *(see note if you don’t have",
+   "finish_reason": "length",
+   "prompt_tokens": 15,
+   "completion_tokens": 128
+  },
+  "What are good habits for managing personal finances?": {
+   "text": "Managing personal finances well is one of the most important skills for long-term stability and freedom. Here are some proven, effective habits to help you take control of your money:\n\n### 1. **Track Your Spending**\n- **Why:** You can’t manage what you don’t measure.\n- **How:** Use apps (like Mint, YNAB, or PocketGuard) or a simple spreadsheet to record every expense—coffee, subscriptions, gas, etc.\n- **Tip:** Review spending weekly to spot patterns and unnecessary outflows.\n\n### 2. **Create and Stick to a Budget**\n- **Why:** A budget puts your income",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "How do I set up a new email account securely?": {
+   "text": "Setting up a new email account securely is essential to protect your personal information, prevent spam, phishing, and unauthorized access. Here’s a step-by-step guide to help you create a secure email account:\n\n---\n\n### ✅ **1. Choose a Reputable Email Provider**\nSelect a provider known for strong security and privacy practices:\n\n- **ProtonMail** – End-to-end encryption, based in Switzerland (strong privacy laws)\n- **Tutanota** – Encrypted email, open-source, no tracking\n- **Fastmail** – Privacy-focused, no ads, excellent security features\n- **Signal Mail (beta)** – From",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Explain how to do CPR in an emergency, step by step.": {
+   "text": "Certainly! Performing CPR (Cardiopulmonary Resuscitation) correctly in an emergency can save a life. Here’s a clear, step-by-step guide based on the latest guidelines from the American Heart Association (AHA) and the International Liaison Committee on Resuscitation (ILCOR) for **adults**:\n\n---\n\n### 🚨 **Step 1: Ensure Safety**\n- **Check the scene**: Make sure it’s safe for you and the victim (e.g., no traffic, fire, or electrical hazards).\n- **Wear personal protective equipment (PPE)** if available (gloves, face shield",
+   "finish_reason": "length",
+   "prompt_tokens": 22,
+   "completion_tokens": 128
+  },
+  "What is the best way to memorize a speech?": {
+   "text": "There’s no single “best” way to memorize a speech—different techniques work for different people—but the **most effective approach combines multiple proven strategies** that engage memory, understanding, and muscle memory. Here’s a step-by-step, research-backed method:\n\n---\n\n### ✅ **The Best Way to Memorize a Speech: The 5-Step Method**\n\n#### **1. Understand, Don’t Just Memorize**\n- **Why**: Your brain remembers meaning better than rote words.\n- **How**: \n  - Break the speech into 3–5 key ideas or “chunks.”\n  - Ask: *What’s the",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "Give me a checklist for moving to a new apartment.": {
+   "text": "Absolutely! Here’s a comprehensive, easy-to-follow **Moving to a New Apartment Checklist** organized by timeline to help you stay organized and reduce stress.\n\n---\n\n### ✅ **8–6 Weeks Before Moving Day**\n\n- [ ] **Decide on moving date** and confirm with landlord/property manager\n- [ ] **Notify current landlord** of move-out date (check lease terms)\n- [ ] **Start researching movers** or rent a moving truck\n- [ ] **Create a moving budget** (movers, supplies, deposits, utilities, etc.)\n- [ ] **Begin decluttering**: Donate, sell, or discard",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "How do I politely decline an invitation?": {
+   "text": "Politely declining an invitation is about being honest, appreciative, and respectful. Here’s a step-by-step guide with examples:\n\n### 1. **Acknowledge and Appreciate the Invitation**\nStart by expressing gratitude. This shows you value the effort they made to include you.\n\n> *“Thank you so much for inviting me—I really appreciate you thinking of me!”*\n\n### 2. **Decline Clearly but Gently**\nBe direct enough to avoid confusion, but soften the refusal with warmth.\n\n> *“Unfortunately, I won’t be able to make it this time…”*  \n> *“I’m going to have to",
+   "finish_reason": "length",
+   "prompt_tokens": 16,
+   "completion_tokens": 128
+  },
+  "What are the main differences between renting and buying a home?": {
+   "text": "The main differences between renting and buying a home revolve around financial responsibility, long-term benefits, flexibility, and control. Here’s a clear breakdown:\n\n### 1. **Ownership**\n- **Buying**: You own the property. This means you have equity in the home, and over time, as you pay down your mortgage and the property appreciates, you build wealth.\n- **Renting**: You do not own the property. Your monthly payments go to the landlord, and you build no equity.\n\n### 2. **Monthly Costs**\n- **Buying**: \n  - Mortgage payment (principal + interest)\n  - Property taxes\n",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "How can I reduce stress before an exam?": {
+   "text": "Reducing stress before an exam is essential for clear thinking, better memory recall, and overall well-being. Here are practical, evidence-based strategies to help you manage and reduce exam stress:\n\n### 1. **Prepare Early and Strategically**\n- **Start studying well in advance** — Cramming increases anxiety. Break material into manageable chunks and use spaced repetition.\n- **Create a realistic study schedule** — Include breaks and review sessions. Knowing you’re prepared reduces panic.\n- **Practice with past papers or mock exams** — This builds confidence and familiarizes you with the format and timing.\n\n### 2. **Prioritize Sleep**\n",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Give me five ideas for a rainy day with kids.": {
+   "text": "Absolutely! Here are five fun, engaging, and mess-friendly rainy day ideas for kids:\n\n---\n\n**1. Indoor Obstacle Course**  \nTurn your living room into a thrilling adventure zone! Use pillows for jumping pads, chairs to crawl under, blankets draped over tables for tunnels, and tape on the floor for “lava” stepping stones. Add challenges like balancing on a line, spinning three times, or hopping on one foot. Time them for extra excitement!\n\n**2. DIY Sensory Bin or Slime Station**  \nCreate a sensory bin with rice, dried beans, or shredded paper, and hide small toys or plastic letters/",
+   "finish_reason": "length",
+   "prompt_tokens": 19,
+   "completion_tokens": 128
+  },
+  "How do I make my houseplants thrive?": {
+   "text": "Making your houseplants thrive is all about understanding their needs and providing consistent, appropriate care. Here’s a comprehensive guide to help your indoor plants flourish:\n\n---\n\n### 🌱 1. **Know Your Plant**\nEvery plant has unique needs. Before buying or caring for a plant:\n- **Identify the species** (e.g., snake plant, pothos, fiddle leaf fig, succulent).\n- Research its native environment — is it from a tropical rainforest, desert, or temperate forest?\n- Use apps like PictureThis or PlantSnap if you’re unsure of the plant’s identity.\n\n---\n\n### ☀️",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "What questions should I ask a doctor about a new medication?": {
+   "text": "When a doctor prescribes a new medication, it’s important to ask thoughtful questions to ensure you understand how to use it safely and effectively. Here’s a comprehensive list of questions you should consider asking:\n\n### 1. **About the Medication Itself**\n- What is the name of this medication (brand and generic)?\n- What is it supposed to treat or manage?\n- How does it work in the body?\n- Is this medication new, or has it been used for a long time?\n\n### 2. **Dosage and Administration**\n- How and when should I take it (e.g., with food, on an empty",
+   "finish_reason": "length",
+   "prompt_tokens": 20,
+   "completion_tokens": 128
+  },
+  "Explain how to create a strong password.": {
+   "text": "Creating a strong password is essential for protecting your personal information, accounts, and digital identity from hackers and cyberattacks. Here’s a step-by-step guide to creating a strong password:\n\n---\n\n### ✅ **1. Make It Long (At Least 12–16 Characters)**\n- **Why?** Longer passwords are exponentially harder to crack.\n- **Tip:** Aim for 16+ characters if possible. A 16-character password is vastly more secure than an 8-character one.\n\n---\n\n### ✅ **2. Use a Mix of Character Types**\nInclude a combination of:\n- **Uppercase letters",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "Give me a three-day itinerary for Rome.": {
+   "text": "Absolutely! Here’s a well-balanced, immersive **3-day Rome itinerary** that blends ancient history, art, food, and local flavor — perfect for first-time visitors.\n\n---\n\n### **Day 1: Ancient Rome & the Heart of the City**\n\n**Morning:**\n- **Colosseum & Roman Forum**  \n  Start early (book tickets in advance!) to avoid crowds. Explore the Colosseum’s gladiator tunnels and upper tiers. Then walk through the sprawling Roman Forum — imagine senators debating in the ruins of temples and basilicas.  \n  *Tip:* Consider a guided tour with an archaeologist for deeper",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  },
+  "How do I write a good cover letter?": {
+   "text": "Writing a good cover letter is about **showing, not just telling**—it’s your chance to connect your skills and experiences to the specific job and company, and to demonstrate why you’re not just qualified, but the *ideal* candidate. Here’s a step-by-step guide to writing a compelling cover letter:\n\n---\n\n### **1. Start with a Strong Header**\nInclude your contact info (name, phone, email, LinkedIn, portfolio if relevant) and the date. Below that, add the employer’s details:\n- Hiring manager’s name (if known)\n- Job title\n- Company name\n- Company address\n\n> ",
+   "finish_reason": "length",
+   "prompt_tokens": 17,
+   "completion_tokens": 128
+  }
+ }
+}

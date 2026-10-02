@@ -1,0 +1,236 @@
+# One prompt per line; # lines are comments. 235 prompts, in order: facts, science, reasoning, math, code, Italian, writing, instructions (dev48).
+What is the capital of Australia, and why is it not Sydney?
+Who wrote "One Hundred Years of Solitude"?
+In which year did the Berlin Wall fall?
+What is the tallest mountain in Africa?
+Name the planets of the solar system in order from the Sun.
+What language is spoken in Brazil, and why?
+Who painted the ceiling of the Sistine Chapel?
+What is the largest ocean on Earth?
+What currency is used in Japan?
+Which element has the chemical symbol Fe?
+Who was the first person to walk on the Moon?
+What is the longest river in South America?
+What does the acronym UNESCO stand for?
+In which city is the Colosseum located?
+What is the official language of Iran?
+Who developed the theory of general relativity?
+What is the smallest country in the world by area?
+Which organ in the human body produces insulin?
+What is the boiling point of water at sea level in Fahrenheit?
+Who composed "The Four Seasons"?
+What is the capital of Canada?
+Which country has the most time zones?
+What is the main ingredient of guacamole?
+Who invented the World Wide Web?
+What is the hardest natural substance?
+Which blood type is known as the universal donor?
+What is the name of the galaxy we live in?
+How many bones are in the adult human body?
+Which war ended with the Treaty of Versailles?
+What is the largest desert in the world?
+Explain in one sentence why the sky is blue.
+How does a vaccine train the immune system?
+What is the difference between a virus and a bacterium?
+Explain how photosynthesis works in simple terms.
+Why do we have seasons on Earth?
+What is entropy, in one paragraph?
+How do noise-cancelling headphones work?
+Why does ice float on water?
+What causes the tides?
+Explain what a black hole is to a ten-year-old.
+How does a lithium-ion battery store energy?
+What is the greenhouse effect?
+Why is the ocean salty?
+How do airplanes stay in the air?
+What is DNA and what does it do?
+Explain the difference between weather and climate.
+What is the speed of light, and why can nothing go faster?
+How do earthquakes happen?
+What is a semiconductor?
+Why do cats purr?
+How does GPS determine your location?
+What is the difference between nuclear fission and fusion?
+How do antibiotics work, and why does resistance develop?
+What is quantum entanglement, briefly?
+Why do leaves change color in autumn?
+How does the human eye see color?
+What is an exoplanet and how are they detected?
+Explain how a refrigerator keeps food cold.
+What is the role of mitochondria in a cell?
+Why does a spoon in a glass of water look bent?
+If all bloops are razzies and all razzies are lazzies, are all bloops lazzies? Explain.
+A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost?
+I have two coins that add up to 30 cents, and one of them is not a nickel. What are the coins?
+If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?
+A farmer has 17 sheep, and all but 9 die. How many are left?
+Which is heavier, a kilogram of feathers or a kilogram of steel?
+You are in a race and you overtake the person in second place. What position are you in now?
+If you rearrange the letters "CIFAIPC", you get the name of a(n): city, animal, ocean, or river?
+Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the name of the fifth daughter?
+A lily pad patch doubles in size every day and covers the lake in 48 days. On which day does it cover half the lake?
+Is the statement "This sentence is false" true or false? Explain the paradox.
+Three boxes are labeled apples, oranges and mixed, and every label is wrong. How can you label them correctly by picking one fruit?
+What comes next in the sequence 2, 6, 12, 20, 30, ...?
+If yesterday was two days after Monday, what day is tomorrow?
+A man looks at a painting and says: "Brothers and sisters I have none, but that man's father is my father's son." Who is in the painting?
+How many times can you subtract 10 from 100?
+If a plane crashes exactly on the border between the US and Canada, where do you bury the survivors?
+Tom is taller than Jim, and Jim is taller than Sam. Who is the shortest?
+What is the next prime number after 89?
+A clock shows 3:15. What is the angle between the hour and minute hands?
+Some cats are black. All black things absorb heat. Can we conclude that some cats absorb heat?
+If you have a 3-gallon jug and a 5-gallon jug, how do you measure exactly 4 gallons?
+A train leaves at 3 PM going 60 mph; another leaves the same station at 4 PM going 80 mph on the same track. When does the second catch up?
+Which weighs more on the Moon: a tonne of bricks or a tonne of feathers?
+Is zero an even number? Explain.
+What is 17 times 24?
+Solve for x: 3x + 7 = 25.
+What is the derivative of x^3 * sin(x)?
+Compute the sum of the integers from 1 to 100.
+What is 15% of 240?
+Simplify the fraction 84/126.
+What is the square root of 1764?
+Convert 0.375 to a fraction.
+What is the area of a circle with radius 7?
+Solve the system: x + y = 10, x - y = 4.
+What is the integral of 1/x dx?
+How many ways can you arrange the letters of the word LEVEL?
+What is the probability of rolling two sixes with two dice?
+Find the greatest common divisor of 252 and 198.
+What is 2 to the power of 20?
+Factor the polynomial x^2 - 5x + 6.
+What is the sum of the interior angles of a hexagon?
+Convert 101101 from binary to decimal.
+What is the limit of (1 + 1/n)^n as n goes to infinity?
+If a car travels 150 km in 2.5 hours, what is its average speed?
+What is the median of 3, 9, 4, 7, 12, 1?
+Is 221 a prime number?
+Compute 7! (seven factorial).
+What is the volume of a cube with side length 4 cm?
+Expand (a + b)^3.
+What is the logarithm base 2 of 1024?
+A shirt costs $40 after a 20% discount. What was the original price?
+What is the Pythagorean theorem? Give an example.
+How many diagonals does a decagon have?
+What is the expected value of a fair six-sided die?
+Write a Python function that checks if a number is prime.
+Write a Python function to reverse a linked list.
+Explain the difference between a list and a tuple in Python.
+Write a SQL query that returns the ten customers with the highest total order value.
+What does the "static" keyword mean in C?
+Write a JavaScript function that debounces another function.
+Explain what a race condition is, with an example.
+Write a bash one-liner that counts the lines of all .c files in a directory tree.
+What is the time complexity of binary search, and why?
+Write a C function that computes the length of a string without strlen.
+Explain the difference between a process and a thread.
+Write a Python generator that yields the Fibonacci numbers.
+What is a REST API?
+Write a regular expression that matches an email address, and explain its limits.
+Explain Git's rebase versus merge.
+Write a Rust function that returns the largest element of a slice of i32.
+What is the difference between TCP and UDP?
+Write a Python function that merges two sorted lists into one sorted list.
+What does "undefined behavior" mean in C? Give two examples.
+Explain what a hash table is and how collisions are handled.
+Write a Go function that reads a file and prints its number of lines.
+What is dependency injection?
+Write a Python decorator that measures the execution time of a function.
+Explain the CAP theorem.
+Write a function in TypeScript that deep-clones a plain object.
+What is the difference between stack and heap memory?
+Write a Python class implementing an LRU cache.
+Explain what Big-O notation describes.
+Write a shell script that backs up a directory into a timestamped tar.gz file.
+What is a closure in JavaScript? Give an example.
+Spiega in due frasi cos'è la fotosintesi.
+Qual è la capitale dell'Australia e perché non è Sydney?
+Scrivi una breve poesia sull'autunno.
+Chi ha scritto la Divina Commedia e di cosa parla?
+Quali sono i vantaggi della dieta mediterranea?
+Spiegami la differenza tra "c'è" e "ce".
+Come si prepara un buon risotto alla milanese?
+Che cos'è l'intelligenza artificiale, in parole semplici?
+Riassumi la storia dell'Impero Romano in cinque frasi.
+Dammi tre consigli per dormire meglio.
+Che differenza c'è tra un vulcano attivo e uno spento?
+Traduci in inglese: "Domani pioverà, quindi porta l'ombrello."
+Perché il Colosseo è così famoso?
+Scrivi una mail formale per chiedere un appuntamento al medico.
+Qual è la differenza tra il congiuntivo e l'indicativo?
+Chi era Leonardo da Vinci?
+Spiega cos'è l'inflazione a un ragazzo di quindici anni.
+Quali sono le regioni d'Italia che si affacciano sul mare Adriatico?
+Come funziona il sistema elettorale italiano, a grandi linee?
+Scrivi una ricetta semplice per la pasta al pomodoro.
+Che cos'è un buco nero?
+Elenca cinque modi di dire italiani e spiegane il significato.
+Qual è il fiume più lungo d'Italia?
+Come si calcola il codice fiscale, a grandi linee?
+Scrivi un breve racconto su un gatto che vive in una biblioteca.
+Perché la Torre di Pisa è pendente?
+Spiega la differenza tra RAM e memoria di archiviazione.
+Quali sono i benefici dell'attività fisica regolare?
+Che cosa si festeggia il 25 aprile in Italia?
+Dammi un consiglio per imparare una lingua straniera.
+Write a haiku about the sea.
+Write a short story about a robot who learns to paint.
+Write a limerick about a programmer who never sleeps.
+Describe a sunrise over the mountains in three sentences.
+Write a product description for a reusable water bottle.
+Write the opening paragraph of a mystery novel.
+Write a short dialogue between a cat and a dog about breakfast.
+Write a motivational message for someone starting a new job.
+Write a four-line poem about the Moon.
+Write a short fairy tale that ends with a twist.
+Describe the smell of rain to someone who has never experienced it.
+Write a tweet announcing the launch of a new coffee shop.
+Write a short letter from a lighthouse keeper to his daughter.
+Write a slogan for a bicycle repair shop.
+Write a short speech for a friend's wedding.
+Describe a futuristic city in one paragraph.
+Write a riddle whose answer is "time".
+Write a short horror story in exactly five sentences.
+Write a thank-you note to a teacher.
+Write a song chorus about summer holidays.
+Describe the feeling of finishing a marathon.
+Write a short poem in the style of Emily Dickinson about a bee.
+Write an apology message for missing a meeting.
+Write a scene where two strangers meet on a train.
+Write a short review of an imaginary restaurant.
+Write a bedtime story about a sleepy dragon.
+Write a short monologue of a villain explaining his plan.
+Describe an old library at night.
+Write a love letter from the Sun to the Moon.
+Write a short story set entirely in an elevator.
+Give me three tips for writing a good resume.
+List five healthy breakfast ideas.
+How do I change a flat tire? Give step-by-step instructions.
+Summarize the plot of Romeo and Juliet in three sentences.
+What are the pros and cons of working from home?
+Give me a packing list for a weekend camping trip.
+How should I prepare for a job interview?
+Explain how to make a good cup of coffee with a French press.
+What are five ways to reduce household energy consumption?
+How do I start learning to play the guitar?
+Give me a simple weekly workout plan for a beginner.
+What should I consider when buying a used car?
+How do I write a good thesis statement?
+List the steps to plant a tree.
+How can I improve my public speaking skills?
+Give me a recipe for pancakes.
+What are good habits for managing personal finances?
+How do I set up a new email account securely?
+Explain how to do CPR in an emergency, step by step.
+What is the best way to memorize a speech?
+Give me a checklist for moving to a new apartment.
+How do I politely decline an invitation?
+What are the main differences between renting and buying a home?
+How can I reduce stress before an exam?
+Give me five ideas for a rainy day with kids.
+How do I make my houseplants thrive?
+What questions should I ask a doctor about a new medication?
+Explain how to create a strong password.
+Give me a three-day itinerary for Rome.
+How do I write a good cover letter?

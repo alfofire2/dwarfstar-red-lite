@@ -1,0 +1,18 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev48",
+  "commit": "99f9890 (native/ identical to main f02607f)",
+  "date": "2026-10-02",
+  "reference": "Alibaba Cloud Model Studio qwen3-next-80b-a3b-instruct, temperature 0, top_k 1, max_tokens 128 (tests/fixtures/qwen_api_reference.json, fetched 2026-10-02, cost about 0.04 USD)",
+  "command": "python3 scripts/dev/api_compare.py compare MODEL --cache-mib full --json OUT (redlite-server greedy, 128 tokens)",
+  "prompts": 235,
+  "template_prompt_token_count_mismatch": 0,
+  "results": {
+    "IQ2_XXS": {"identical": 2, "median_common_prefix_fraction": 0.078, "mean_common_prefix_fraction": 0.131, "median_common_words": 6, "mean_common_words": 8.4, "first_word_differs": 32,
+                "identical_by_category": {"facts": "0/30", "science": "1/30", "reasoning": "0/30", "math": "0/30", "code": "0/30", "italian": "1/30", "writing": "0/30", "instructions": "0/25"}},
+    "IQ3_XXS": {"identical": 10, "median_common_prefix_fraction": 0.156, "mean_common_prefix_fraction": 0.231, "median_common_words": 11, "mean_common_words": 15.8, "first_word_differs": 15,
+                "identical_by_category": {"facts": "2/30", "science": "1/30", "reasoning": "2/30", "math": "4/30", "code": "0/30", "italian": "1/30", "writing": "0/30", "instructions": "0/25"}}
+  },
+  "short_api_answers": {"count": 35, "ours_over_1.5x_longer": {"IQ2_XXS": 3, "IQ3_XXS": 1}},
+  "api_observations": ["temperature 0 alone is not deterministic (1 of 3 runs differed); temperature 0 + top_k 1 gave 4/4 identical runs on 3 prompts", "logprobs/top_logprobs are misaligned: the chosen token is missing from its own top 5 at 23 of 30 positions, identically on repeated calls"]
+}

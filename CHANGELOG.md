@@ -2,6 +2,16 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev48 — answers compared with Qwen's own API (M4 Max 48 GiB)
+
+- `scripts/dev/api_compare.py` compares greedy answers word for word with Alibaba Cloud's
+  `qwen3-next-80b-a3b-instruct` (temperature 0, top_k 1). It covers 235 prompts in 8 categories
+  (`tests/fixtures/api_prompts.txt`); the answers are stored once in `tests/fixtures/qwen_api_reference.json`.
+- Identical answers: IQ2_XXS 2/235, IQ3_XXS 10/235. Median share of words matching from the start: 7.8 % vs
+  15.6 %. IQ3_XXS is about twice as close.
+- The API's `temperature: 0` alone is not deterministic, and its logprobs are misaligned. See
+  `docs/REDLITE_DEV48_API_REFERENCE.md`.
+
 ### docs — findings page and charts
 
 - `docs/FINDINGS.md`: what we learned, for users, with six SVG charts (decode and prefill by release vs llama.cpp,

@@ -93,6 +93,18 @@
         {"label": "norms, residuals, small steps", "values": [1.496]}
       ],
       "sources": ["benchmarks/m4max-48gb-dev38-decode.json"]
+    },
+    {
+      "id": "api_agreement",
+      "title": "Greedy answers vs Qwen's own API, 235 prompts (M4 Max, every expert resident)",
+      "unit": "%",
+      "note": "Word for word against Alibaba Cloud's qwen3-next-80b-a3b-instruct (temperature 0, top_k 1, 128 tokens). Same engine for both files: the difference between them is the quantization.",
+      "series": ["identical answers", "median share of words matching from the start"],
+      "bars": [
+        {"label": "IQ2_XXS (17.97 GiB)", "values": [0.9, 7.8]},
+        {"label": "IQ3_XXS (29.55 GiB)", "values": [4.3, 15.6]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-dev48-api-reference.json"]
     }
   ]
 }

@@ -18,6 +18,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
 | [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
 | [RESEARCH_2026_10.md](RESEARCH_2026_10.md) | October 2026 survey: current DwarfStar, Qwen3-Coder-Next, Qwen3-Next MTP GGUFs, llama.cpp/MLX/Metal techniques, ranked options |
+| [REDLITE_DEV48_API_REFERENCE.md](REDLITE_DEV48_API_REFERENCE.md) | dev48: greedy answers compared word for word with Qwen's own API (IQ2_XXS vs IQ3_XXS) |
 | [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
 
 ## Native runtime milestones of 0.4.0
