@@ -80,6 +80,16 @@ them.
 - **The token-by-token llama.cpp oracle at long positions (dev47).** `redlite-ref-llama logits` dumps every
   position one decode at a time: 16K positions took about 2 hours, 32K would take about 5 and 60K 9. The
   32K / 60K comparisons were not run.
+- **The llama.cpp oracle on 24 GiB (dev47).** `redlite-ref-llama` puts the whole 18 GiB model on Metal and fails
+  with `kIOGPUCommandBufferCallbackErrorOutOfMemory` on the M4 Pro. Correctness there is shown by bit-identity
+  with the M4 Max's native outputs.
+- **Command Line Tools with an SDK newer than their linker (dev47).** On the M4 Pro (CLT 26.6, ld-1267) the
+  MacOSX27 SDK's `.tbd` files read as "unknown architecture arm64e.x1"; `REDLITE_SDK` points the builds at
+  MacOSX26.5.
+- **Chunk-parallel DeltaNet prefill (dev44): not built.** Measured ceiling: the recurrence is at most 6.7 % of an
+  8387-token prefill, so the published 1.3–1.45× would give about 2 %.
+- **Float16 KV cache (dev47): not built.** The prefill attention `attn_fa_b` loads K/V straight into
+  `simdgroup_float8x8` tiles; half storage needs a staged rewrite of that kernel.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

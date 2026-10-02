@@ -1,0 +1,16 @@
+{
+  "machine": "Apple M4 Pro, 24 GiB (AC power)",
+  "commit": "91481ea",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "build": "REDLITE_SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk",
+  "regress": {"pass": 45, "fail": 3, "skip": 1, "failures": "llama.cpp oracle out of GPU memory (logits.vs_llama, generate.vs_llama, logits.long_context_vs_llama)", "native_outputs_vs_m4max": "bit-identical (native.bin, native.long.bin, gen.native.txt, tokenizer corpus)"},
+  "small_mac_ab_4096": {
+    "default": {"misses_per_token": 29.5, "mib_per_token": 43.1, "decode_tok_s": [32.70, 32.61, 31.16, 33.66, 35.12, 32.66], "median": 32.68},
+    "uniform": {"misses_per_token": 39.3, "mib_per_token": 55.7, "decode_tok_s": [32.05, 31.49, 30.53, 33.44, 34.77, 32.31], "median": 32.18},
+    "bias05": {"misses_per_token": 22.9, "mib_per_token": 33.1, "decode_tok_s": [34.21, 34.07, 33.72, 34.65, 35.00, 34.41], "median": 34.31},
+    "nocache": {"misses_per_token": 29.5, "mib_per_token": 43.1, "decode_tok_s": [31.68, 30.75, 28.85, 33.52, 34.05, 33.52], "median": 32.60},
+    "noprefetch": {"misses_per_token": 45.5, "mib_per_token": 33.3, "decode_tok_s": [28.14, 28.24, 27.52, 30.43, 33.49, 30.20], "median": 29.22}
+  },
+  "bench_m4_4096": {"decode4": 33.00, "prefill1100_4": 280.8, "prefill8192_4": 349.8},
+  "state_restart": {"cached": 4096, "prompt": 4212, "ttft_ms_after_restart": 1416, "identical": true}
+}

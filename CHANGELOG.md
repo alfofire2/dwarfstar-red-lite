@@ -2,6 +2,20 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev47 — M4 Pro 24 GiB field session, long context, build fix (both machines)
+
+- **M4 Pro 24 GiB** (first native measurement since dev18), IQ2_XXS, 4 GiB cache:
+  - decode 33.0 tok/s (dev18: 27.8);
+  - prefill 1100 / 8192 tokens 280.8 / 349.8 tok/s (dev18: 16.3 token by token);
+  - native outputs bit-identical to the M4 Max's (the llama.cpp oracle itself runs out of GPU memory there).
+  - A/B: dev37 slot classes +1.6 % (−25 % misses); cache bias 0.5 +5 %; prefetch +12 %; `F_NOCACHE` none.
+- `REDLITE_SDK` selects the build SDK (the M4 Pro's Command Line Tools ship an SDK their linker cannot read);
+  `scripts/dev/small_mac_session.sh` runs the whole 24 GiB session.
+- **M4 Max long context:** parity with llama.cpp at 16K positions (argmax 100/100, KL 7.9e-5; max logit 6.2 above
+  the 8K-derived 5.0 bound); 33.5K-token prompt prefill 416.7 tok/s, decode 25.7 tok/s.
+- **dev44** (chunk-parallel DeltaNet prefill) not built: the recurrence is at most 6.7 % of an 8K prefill.
+  See `docs/REDLITE_DEV47_LONG_CONTEXT.md`.
+
 ### dev45 — speculative decoding with the MTP block (M4 Max 48 GiB, full residency)
 
 - `redlite-generate --mtp FILE` (`redlite download mtp`): the Qwen3-Next MTP block drafts one token, a 2-row
