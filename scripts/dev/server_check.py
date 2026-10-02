@@ -116,14 +116,45 @@ def multi_turn(bin_dir: Path, model: str, cache_mib: str, port: int, max_tokens:
     return ok
 
 
+def state_restart(bin_dir: Path, model: str, cache_mib: str, max_tokens: int) -> bool:
+    """dev43: a long prompt on a server with --state-dir, then the same request after a restart: the second
+    server restores the stored chunk-aligned prefix (cached_tokens > 0) and answers identically."""
+    import tempfile
+    fixture = (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "long_context_prompt.txt").read_text()
+    body = {"messages": [{"role": "user", "content": fixture * 3 + "\nSummarize the text above in two sentences."}],
+            "temperature": 0, "max_tokens": max_tokens}
+    with tempfile.TemporaryDirectory() as state_dir:
+        answers = []
+        for run in ("first", "restart"):
+            srv, port = start_server(bin_dir, model, cache_mib, "--state-dir", state_dir, "--context", "8192")
+            if not srv:
+                return False
+            try:
+                content, usage, ttft = stream_chat(port, body)
+            finally:
+                rc, _ = stop_server(srv)
+            cached = usage.get("prompt_tokens_details", {}).get("cached_tokens", -1)
+            print(f"state {run}: cached={cached}/{usage.get('prompt_tokens')} ttft={ttft * 1000:.0f} ms rc={rc} content={content!r}")
+            answers.append((content, cached, rc))
+        ok = (answers[0][1] == 0 and answers[1][1] >= 2048 and answers[0][0] == answers[1][0] and bool(answers[0][0])
+              and answers[0][2] == 0 and answers[1][2] == 0)
+    print(f"state restart: {'identical greedy answer' if ok else 'MISMATCH'}")
+    return ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("model")
     ap.add_argument("--bin", default=str(Path(__file__).resolve().parents[2] / ".deps" / "redmetal"))
     ap.add_argument("--cache-mib", default="2048")
     ap.add_argument("--max-tokens", type=int, default=32)
+    ap.add_argument("--state-restart", action="store_true", help="only the dev43 --state-dir restart check")
     args = ap.parse_args()
     bin_dir = Path(args.bin)
+    if args.state_restart:
+        ok = state_restart(bin_dir, args.model, args.cache_mib, args.max_tokens)
+        print(f"SERVER STATE CHECK: {'YES' if ok else 'NO'}")
+        return 0 if ok else 1
 
     ref = subprocess.run(
         [str(bin_dir / "redlite-generate"), args.model, "--prompt", PROMPT, "--max-tokens", str(args.max_tokens),

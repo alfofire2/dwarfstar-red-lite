@@ -143,7 +143,9 @@ expect_line generate.greedy "Rayleigh scattering" "$BIN/redlite-generate" "$MODE
 expect_line server.stream_greedy "SERVER CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN"
 # dev29: the second turn reuses the first turn's state and answers exactly like a reset engine (same run, same log)
 if grep -q "multi-turn reuse: identical greedy answer" "$LOG/server.stream_greedy.log"; then echo "PASS  server.reuse_greedy"; PASS=$((PASS + 1)); else echo "FAIL  server.reuse_greedy (see $LOG/server.stream_greedy.log)"; FAIL=$((FAIL + 1)); FAILED+=(server.reuse_greedy); fi
-expect_line generate.json '"batch":2048,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
+# dev43: --state-dir checkpoints survive a server restart and give the same greedy answer
+expect_line server.state_restart "SERVER STATE CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --state-restart
+expect_line generate.json '"batch":2048,"state_loaded":0,"state_saved":0,"finish":"' "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 8 --cache-mib 2048 --no-stream --json
 # Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
 "$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
   --cache-mib 2048 --json >"$LOG/generate.sigint.log" 2>&1 &

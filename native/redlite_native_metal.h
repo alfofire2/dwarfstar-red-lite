@@ -146,6 +146,9 @@ void *rl_native_metal_residency_table(rl_native_metal_runtime *runtime);
 int rl_native_metal_touch_resident(rl_native_metal_runtime *runtime, uint32_t layer, const uint32_t *expert_ids, uint32_t count, char *error, size_t error_cap);
 /* Slot capacity of the bounded expert cache. */
 uint32_t rl_native_metal_slot_capacity(const rl_native_metal_runtime *runtime);
+/* dev43: slots a layer's experts can use (its size class; the whole pool without classes) and the class index */
+uint32_t rl_native_metal_layer_capacity(const rl_native_metal_runtime *runtime, uint32_t layer);
+uint32_t rl_native_metal_layer_class(const rl_native_metal_runtime *runtime, uint32_t layer);
 int rl_native_metal_release_topk(
     rl_native_metal_runtime *runtime,
     rl_native_topk_plan *plan,

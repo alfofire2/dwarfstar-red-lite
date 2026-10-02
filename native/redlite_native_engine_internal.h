@@ -10,6 +10,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +73,7 @@ int rl_engine_cpu_step(rl_engine *e, uint32_t token, float *logits, rl_engine_st
 rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap);
 void rl_metal_engine_destroy(rl_metal_engine *m);
 int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap);
+int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
                             rl_engine_step_stats *stats, char *error, size_t cap);
 int rl_metal_engine_preloaded(const rl_metal_engine *m, double *preload_ms);

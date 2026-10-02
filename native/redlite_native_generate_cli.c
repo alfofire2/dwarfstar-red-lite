@@ -18,6 +18,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_statecache.h"
 #include "redlite_native_gguf_dir.h"
 #include "redlite_native_sampler.h"
 #include "redlite_native_tokenizer.h"
@@ -86,7 +87,10 @@ static void usage(FILE *out) {
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
         "  --json              write the statistics as one JSON object per answer on stderr\n"
-        "  --tokens-out FILE   write prompt+generated token ids (one per line)\n");
+        "  --tokens-out FILE   write prompt+generated token ids (one per line)\n"
+        "  --state-dir DIR     dev43: restore the longest stored prompt prefix from DIR and store a checkpoint at the\n"
+        "                      largest multiple of --batch (bit-identical to a cold prefill; one-shot mode)\n"
+        "  --state-max-mib N   size limit of --state-dir, least recently used files deleted first (default 8192)\n");
 }
 
 static int parse_u32(const char *s, uint32_t *out) {
@@ -283,7 +287,8 @@ static int interactive_chat(
 int main(int argc, char **argv) {
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) { usage(argc < 2 ? stderr : stdout); return argc < 2 ? 2 : 0; }
     const char *model = argv[1];
-    const char *prompt = NULL, *system_prompt = NULL, *tokens_out = NULL;
+    const char *prompt = NULL, *system_prompt = NULL, *tokens_out = NULL, *state_dir = NULL;
+    uint32_t state_max_mib = 8192u;
     int raw = 0, stream = 1, stats = 0, interactive = 0, json = 0;
     uint32_t max_tokens = 256u;
     rl_engine_config cfg;
@@ -300,6 +305,8 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--prompt") == 0) prompt = argv[++i];
         else if (strcmp(argv[i], "--system") == 0) system_prompt = argv[++i];
         else if (strcmp(argv[i], "--tokens-out") == 0) tokens_out = argv[++i];
+        else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
+        else if (strcmp(argv[i], "--state-max-mib") == 0) { if (!parse_u32(argv[++i], &state_max_mib)) return 2; }
         else if (strcmp(argv[i], "--max-tokens") == 0) { if (!parse_u32(argv[++i], &max_tokens)) return 2; }
         else if (strcmp(argv[i], "--temperature") == 0) { if (!parse_f32(argv[++i], &sp.temperature)) return 2; }
         else if (strcmp(argv[i], "--top-k") == 0) { if (!parse_u32(argv[++i], &sp.top_k)) return 2; }
@@ -314,6 +321,7 @@ int main(int argc, char **argv) {
     if (!prompt && !interactive) { fprintf(stderr, "--prompt is required (or use --interactive)\n"); return 2; }
     if (interactive && raw) { fprintf(stderr, "--raw cannot be combined with --interactive\n"); return 2; }
     if (interactive && tokens_out) { fprintf(stderr, "--tokens-out is not supported in interactive mode\n"); return 2; }
+    if (interactive && state_dir) { fprintf(stderr, "--state-dir is not supported in interactive mode (use redlite-server)\n"); return 2; }
     if (!max_tokens) { fprintf(stderr, "--max-tokens must be greater than zero\n"); return 2; }
 
     /* no SA_RESTART: Ctrl-C at the interactive prompt interrupts getline() */
@@ -373,7 +381,9 @@ int main(int argc, char **argv) {
     /* prefill: batched Metal ingestion of the prompt (chunks of --batch), LM head on the last token */
     rl_engine_step_stats st;
     const double t_prefill = now_ms();
-    if (!rl_engine_prefill(e, RL_BACKEND_GPU, ids, prompt_len, logits, &st, error, sizeof(error))) {
+    uint32_t state_loaded = 0, state_saved = 0;
+    const rl_statecache scache = {state_dir, (uint64_t)state_max_mib * 1024u * 1024u};
+    if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len, logits, &st, &state_loaded, &state_saved, error, sizeof(error))) {
         fprintf(stderr, "prefill failed: %s\n", error); return 1;
     }
     const double prefill_ms = now_ms() - t_prefill;
@@ -439,6 +449,7 @@ int main(int argc, char **argv) {
             if (pre_ms > 0.0) fprintf(stderr, "expert preload       : %.1f ms\n", pre_ms);
         }
         fprintf(stderr, "prompt tokens        : %u (%.1f ms, %.2f tok/s)\n", prompt_len, prefill_ms, prompt_len * 1000.0 / prefill_ms);
+        if (state_dir) fprintf(stderr, "state cache          : %u tokens restored, %u stored\n", state_loaded, state_saved);
         fprintf(stderr, "generated tokens     : %u (%.1f ms, %.2f tok/s over %u decode passes)\n", generated, gen_ms,
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);
         fprintf(stderr, "last step            : %.1f ms (rec %.1f attn %.1f router %.1f routed %.1f [load %.1f gpu %.1f] shared %.1f out %.1f) dense GPU %.1f ms\n",
@@ -465,7 +476,7 @@ int main(int argc, char **argv) {
             "\"generated_tokens\":%u,\"decode_passes\":%u,\"decode_ms\":%.1f,\"decode_tok_s\":%.2f,"
             "\"gpu_routed\":%u,\"early_outs\":%u,\"cache_hits\":%llu,\"cache_misses\":%llu,"
             "\"expert_loads\":%llu,\"ssd_mib\":%.1f,\"peak_rss_mib\":%.1f,\"phys_footprint_mib\":%.1f,"
-            "\"cache_mib\":%llu,\"context\":%u,\"batch\":%u,\"finish\":\"%s\"}\n",
+            "\"cache_mib\":%llu,\"context\":%u,\"batch\":%u,\"state_loaded\":%u,\"state_saved\":%u,\"finish\":\"%s\"}\n",
             open_ms, preloaded ? "true" : "false", pre_ms, template_from_gguf ? "true" : "false",
             prompt_len, prefill_ms, prefill_ms > 0 ? prompt_len * 1000.0 / prefill_ms : 0.0,
             generated, decoded, gen_ms, decoded ? decoded * 1000.0 / gen_ms : 0.0,
@@ -473,7 +484,7 @@ int main(int argc, char **argv) {
             (unsigned long long)(st.expert_loads - loads_start), (double)(st.ssd_bytes - ssd_start) / (1024.0 * 1024.0),
             (double)peak_rss_bytes() / (1024.0 * 1024.0), (double)phys_footprint_bytes() / (1024.0 * 1024.0),
             (unsigned long long)(cfg.cache_mib == RL_ENGINE_CACHE_FULL ? rl_engine_full_residency_mib(e) : cfg.cache_mib), in->context, rl_engine_prefill_batch(e),
-            interrupted ? "interrupted" : stopped_on_eog ? "stop" : "length");
+            state_loaded, state_saved, interrupted ? "interrupted" : stopped_on_eog ? "stop" : "length");
     }
     rl_sampler_free(&sampler);
     free(logits); free(ids); free(text); free(templated);

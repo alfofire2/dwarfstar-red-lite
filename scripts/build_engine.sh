@@ -35,6 +35,7 @@ ENGINE=(
   "$ROOT/native/redlite_native_tables.c"
   "$ROOT/native/redlite_native_reference.c"
   "$ROOT/native/redlite_native_metal.c"
+  "$ROOT/native/redlite_native_statecache.c"
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then

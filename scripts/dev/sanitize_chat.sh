@@ -33,7 +33,7 @@ xcrun --sdk macosx clang -O1 -g -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURC
   "$N/redlite_native_router.c" "$N/redlite_native_router_exec.c" "$N/redlite_native_shared_exec.c" \
   "$N/redlite_native_iq2_xxs.c" "$N/redlite_native_gguf.c" "$N/redlite_native_cache.c" \
   "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c" \
-  "$N/redlite_native_metal.c" "$N/redmetal_topk.m" "$N/redmetal_router.m" \
+  "$N/redlite_native_metal.c" "$N/redlite_native_statecache.c" "$N/redmetal_topk.m" "$N/redmetal_router.m" \
   "$N/redmetal_engine.m" "$N/redmetal_engine_prefill.m" \
   -framework Foundation -framework Metal -lm -lpthread -o "$OUT/redlite-generate"
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:detect_leaks=0}"

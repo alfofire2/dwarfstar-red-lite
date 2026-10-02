@@ -1012,6 +1012,20 @@ int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap) {
     return 1;
 }
 
+/* dev43: raw state I/O on the shared buffers (the engine is idle between calls: every step waits for its GPU work) */
+int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save) {
+    if (!m || !f) return 0;
+#define RL_IO(buf, n) (save ? fwrite((buf).contents, 1, (n), f) == (n) : fread((buf).contents, 1, (n), f) == (n))
+    for (uint32_t r = 0; r < m->n_recurrent; ++r)
+        if (!RL_IO(m->conv_state[r], m->conv_state[r].length) || !RL_IO(m->rec_state[r], m->rec_state[r].length)) return 0;
+    for (uint32_t a = 0; a < m->n_attention; ++a) {
+        if (kv_bytes > m->kcache[a].length) return 0;
+        if (!RL_IO(m->kcache[a], kv_bytes) || !RL_IO(m->vcache[a], kv_bytes)) return 0;
+    }
+#undef RL_IO
+    return 1;
+}
+
 uint64_t rl_metal_engine_resident_bytes(const rl_metal_engine *m) { return m ? m->resident_bytes : 0u; }
 
 int rl_metal_engine_preloaded(const rl_metal_engine *m, double *preload_ms) {

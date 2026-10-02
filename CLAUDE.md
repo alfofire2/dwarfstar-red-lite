@@ -69,6 +69,8 @@ RL_ENGINE_PREFETCH=0 ...   # dev23/dev24 A/B: no pre-gated expert prefetch (sync
 RL_ENGINE_ATTN_SPLIT=0 ...   # dev26 A/B: decode attention back to the single-threadgroup kernel (split-K is used above 256 positions)
 RL_ENGINE_CONCURRENT=0 ...   # dev38 A/B: serial decode encoders (default: concurrent, barriers only between dependent dispatches)
 RL_ENGINE_FUSE_TAIL=0 ...   # dev39 A/B: separate expert sum / scale_add / copy dispatches in GPU-routed decode
+.deps/redmetal/redlite-server MODEL --state-dir DIR   # dev43: chunk-aligned prompt-prefix state checkpoints on disk (also redlite-generate)
+python3 scripts/dev/server_check.py MODEL --state-restart   # dev43: restart restores the stored prefix, identical greedy (regress server.state_restart)
 .deps/redmetal/redlite-engine kernel-selftest   # model-free Metal check of the decode kernels (GEMV, guard, copy, rl_route, attention) vs the CPU reference
 scripts/dev/long_positions.sh MODEL [--no-bench | --bench-only]   # parity vs llama.cpp and throughput at 4096/8192 positions
 scripts/dev/sanitize_chat.sh MODEL   # ASan+UBSan redlite-generate on a real chat turn (regress check generate.sanitize)

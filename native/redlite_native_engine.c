@@ -310,6 +310,52 @@ int rl_engine_reset(rl_engine *e, rl_engine_backend b, char *error, size_t cap) 
     return 1;
 }
 
+uint64_t rl_engine_state_bytes(const rl_engine *e, uint32_t position) {
+    if (!e) return 0;
+    return (uint64_t)e->info.n_recurrent * (rl_engine_conv_count(e) + rl_engine_rec_count(e)) * sizeof(float) +
+           (uint64_t)e->info.n_attention * 2u * rl_engine_kv_row_count(e) * position * sizeof(float);
+}
+
+uint64_t rl_engine_model_tag(const rl_engine *e) {
+    if (!e) return 0;
+    uint64_t h = 1469598103934665603ull;   /* FNV-1a over the file size and the shape */
+    const uint64_t v[] = {e->gguf.file_size, e->info.n_layer, e->info.hidden, e->info.vocab, e->info.n_expert,
+                          rl_engine_conv_count(e), rl_engine_rec_count(e), rl_engine_kv_row_count(e)};
+    for (size_t i = 0; i < sizeof(v) / sizeof(v[0]); ++i)
+        for (int b = 0; b < 8; ++b) { h ^= (v[i] >> (8 * b)) & 0xffu; h *= 1099511628211ull; }
+    return h;
+}
+
+int rl_engine_state_write(rl_engine *e, rl_engine_backend b, FILE *f, char *error, size_t cap) {
+    rl_backend_state *s = e ? state_for(e, b) : NULL;
+    if (!s || !f || b != RL_BACKEND_GPU) { set_error(error, cap, "state files need the GPU backend"); return 0; }
+#ifdef __APPLE__
+    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * s->position * sizeof(float), 1)) {
+        set_error(error, cap, "state write failed"); return 0;
+    }
+    return 1;
+#else
+    set_error(error, cap, "state files need Metal"); return 0;
+#endif
+}
+
+int rl_engine_state_read(rl_engine *e, rl_engine_backend b, FILE *f, uint32_t position, char *error, size_t cap) {
+    rl_backend_state *s = e ? state_for(e, b) : NULL;
+    if (!s || !f || b != RL_BACKEND_GPU) { set_error(error, cap, "state files need the GPU backend"); return 0; }
+    if (position > e->info.context) { set_error(error, cap, "state position exceeds the context"); return 0; }
+    if (!rl_engine_reset(e, b, error, cap)) return 0;
+#ifdef __APPLE__
+    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * position * sizeof(float), 0)) {
+        rl_engine_reset(e, b, NULL, 0);
+        set_error(error, cap, "state read failed (truncated or mismatched file)"); return 0;
+    }
+    s->position = position;
+    return 1;
+#else
+    set_error(error, cap, "state files need Metal"); return 0;
+#endif
+}
+
 uint32_t rl_engine_position(const rl_engine *e, rl_engine_backend b) {
     const rl_backend_state *s = e ? state_for((rl_engine *)e, b) : NULL;
     return s ? s->position : 0u;

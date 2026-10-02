@@ -12,6 +12,7 @@
  */
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -130,6 +131,17 @@ uint64_t rl_engine_full_residency_mib(const rl_engine *engine);
 int rl_engine_parse_cache_mib(const char *text, uint64_t *out);
 /* Effective prefill chunk: cfg.prefill_batch, or the default (2048 since dev34; dev30 used it only with full residency). */
 uint32_t rl_engine_prefill_batch(const rl_engine *engine);
+
+/*
+ * dev43: raw session state of the GPU backend: every DeltaNet conv and recurrent state, then the first
+ * `position` K and V rows of every attention layer (floats, host order). read() resets the backend first and
+ * leaves it at `position`. The caller frames the bytes (redlite_native_statecache.h).
+ */
+uint64_t rl_engine_state_bytes(const rl_engine *engine, uint32_t position);
+int rl_engine_state_write(rl_engine *engine, rl_engine_backend backend, FILE *f, char *error, size_t error_cap);
+int rl_engine_state_read(rl_engine *engine, rl_engine_backend backend, FILE *f, uint32_t position, char *error, size_t error_cap);
+/* identity of the open model for state files: GGUF byte size and hyper-parameters */
+uint64_t rl_engine_model_tag(const rl_engine *engine);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
 
