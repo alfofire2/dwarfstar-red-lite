@@ -71,6 +71,16 @@ VARIANTS = {
     ),
 }
 
+# dev45: the Qwen3-Next MTP block alone (for redlite-generate --mtp; not a model by itself)
+VARIANTS["mtp_q8_0"] = ModelVariant(
+    key="mtp_q8_0",
+    repo="a4lg/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-GGUF",
+    filename="Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf",
+    nominal_gb=2.42,
+    quality="draft-head",
+    recommended_mode="native-mtp",
+)
+
 ALIASES = {
     "24gb": "iq2_xxs",
     "small": "iq2_xxs",
@@ -80,6 +90,7 @@ ALIASES = {
     "48gb": "iq3_xxs",
     "coder": "coder_iq2_xxs",
     "coder-48gb": "coder_iq3_xxs",
+    "mtp": "mtp_q8_0",
 }
 
 def resolve_variant(name: str) -> ModelVariant:

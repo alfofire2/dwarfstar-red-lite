@@ -2,6 +2,14 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev45 — speculative decoding with the MTP block (M4 Max 48 GiB, full residency)
+
+- `redlite-generate --mtp FILE` (`redlite download mtp`): the Qwen3-Next MTP block drafts one token, a 2-row
+  verify checks it in one pass (two-vector GEMV kernels, 2-row DeltaNet kernels with in-kernel snapshots,
+  merged 2-row experts). Output is exactly that of plain decode (greedy identical).
+- IQ2_XXS, six prompts: +8.5 % to +30.0 % decode (80 → 87-104 tok/s), acceptance 0.58-0.84; IQ3_XXS code
+  prompt 75.2 → 92.3 tok/s. See `docs/REDLITE_DEV45_MTP.md`.
+
 ### dev46 — expert-cache options for 24 GiB Macs (M4 Max 48 GiB)
 
 - Opt-in: `RL_ROUTE_CACHE_BIAS=λ` (cache-aware routing: at λ = 0.5, 4 GiB cache misses 29.5 → 22.9 per token
