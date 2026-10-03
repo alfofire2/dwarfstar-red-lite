@@ -1,6 +1,41 @@
 # Changelog
 
-## Unreleased (after 0.4.1)
+## 0.5.0 — 2026-10-03
+
+Faster answers with identical output, sessions that survive restarts, a second model family, and the first native
+numbers from a 24 GiB Mac since dev18. Work of dev42–dev51 below.
+
+- **MTP speculative decoding** (dev45, dev45b).
+  - `redlite chat` and `redlite serve --native` use it automatically when the 2.26 GiB head file
+    (`redlite download mtp`) is in `models/` and every expert is resident.
+  - The output is exactly the same as plain decoding, with any sampler.
+  - M4 Max, IQ2_XXS, six prompts: +8 % to +30 % (80 → 87–104 tok/s); interactive chat on code 88.7 → 108.6 tok/s.
+  - IQ3_XXS code prompt: 79.8 → 100.6 tok/s.
+- **Session state on disk** (dev43): `--state-dir` saves a prompt prefix's state; a restart restores it
+  bit-identically. M4 Pro: 4096 of 4212 tokens restored, first token in 1.4 s.
+- **Qwen3-Coder-Next** (dev42): Bartowski IQ2_XXS / IQ3_XXS; `redlite download coder`.
+- **24 GiB Mac** (M4 Pro, 4 GiB cache):
+  - decode 33 tok/s (dev18: 27.8);
+  - prompt ingestion 360 tok/s at 8192 tokens (dev18: 16 tok/s token by token);
+  - native outputs bit-identical to the M4 Max's;
+  - `regress_m4.sh` 45 passed / 0 failed / 4 skipped: the llama.cpp oracle does not fit that GPU, and MTP needs
+    40 GiB (dev47, dev51).
+  - A larger expert cache does not speed decode up there (dev51).
+- **Answers compared with Qwen's own API** (dev48): IQ3_XXS is about twice as close as IQ2_XXS (10 vs 2 identical
+  answers of 235).
+- **M4 Max 48 GiB, every expert resident** (`bench_m4.sh`, median of 3):
+  - decode IQ2_XXS 81.15 → **86.24** tok/s, IQ3_XXS 76.88 → **79.91**;
+  - prompt ingestion at 8192 tokens 917.5–926.6 / 902.3–911.9 tok/s (0.4.1: 921.5 / 917.5).
+  - Short-prompt and 4 GiB-cache numbers varied up to 2× between runs this session and are not compared. An
+    alternated A/B against the 0.4.1 build showed no regression. Record: `benchmarks/m4max-48gb-0.5.0.json`.
+- **For users:** `docs/FINDINGS.md` with charts; `docs/ROADMAP.md`.
+- **Project:**
+  - hosted GitHub CI removed; `scripts/dev/local_ci.sh` runs the same checks;
+  - `REDLITE_SDK` for Command Line Tools whose SDK is newer than their linker.
+- **Validation (M4 Max 48 GiB):** local CI PASS, `regress_m4.sh` IQ2_XXS 51/51, IQ3_XXS 38/0/13, `quick_parity.sh`
+  PASS on both GGUFs, 0 warnings.
+
+## Milestones of 0.5.0
 
 ### Project
 

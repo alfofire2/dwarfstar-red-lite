@@ -29,7 +29,7 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 | Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
 | Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
 | Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
-| Validated on | M4 Max 48 GiB (0.3.0, 0.4.0, 0.4.1, dev42–dev47; both GGUFs); M4 Pro 24 GiB (dev18 build, and the dev47 build of 2026-10-02) | M4 Pro 24 GiB |
+| Validated on | M4 Max 48 GiB (0.3.0 – 0.5.0; both GGUFs); M4 Pro 24 GiB (dev18 build, 0.5.0) | M4 Pro 24 GiB |
 
 ## Native runtime: quick start
 
@@ -90,7 +90,7 @@ an 1185-token conversation); any other request resets. `stop` sequences are supp
 </p>
 
 In short:
-- **48 GiB, every expert resident:** decode is 12 % faster than the pinned llama.cpp (81.2 vs 72.5 tok/s),
+- **48 GiB, every expert resident:** decode is 19 % faster than the pinned llama.cpp (86.2 vs 72.5 tok/s, 0.5.0),
   97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4× slower than llama.cpp (0.3.0) to on par.
 - **24 GiB:** the native runtime needs about 5 GiB where the llama.cpp launcher keeps the whole 18 GiB model
   resident. It decodes 33 tok/s, still below the launcher's 36–38, and ingests prompts at 280–350 tok/s.
@@ -103,6 +103,15 @@ N ids of `tests/fixtures/long_context_prompt.txt`; `scripts/dev/bench_m4.sh --re
 (`--only llama`, fully resident, its default batch sizes). Records:
 `benchmarks/m4max-48gb-0.4.1.json` (0.4.1), `benchmarks/m4max-48gb-0.4.0.json` (0.4.0) and the
 older files listed below. Nothing is extrapolated from one machine to another.
+
+**0.5.0, M4 Max 48 GiB** (2026-10-03, clean build; `benchmarks/m4max-48gb-0.5.0.json`):
+
+- **Every expert resident:**
+  - decode IQ2_XXS **86.24 tok/s**, IQ3_XXS **79.91 tok/s**;
+  - with MTP, 87–104 tok/s on IQ2_XXS depending on the text;
+  - prompt ingestion at 8192 tokens 917–927 / 902–912 tok/s.
+- **Short-prompt and 4 GiB-cache numbers** varied too much between runs that session to be compared with 0.4.1;
+  every run is in the record.
 
 **0.4.1, M4 Max 48 GiB** (commit 9bb6e41 sources, clean build, 2026-10-01; prefill with the engine's
 default 2048-token chunks at both cache sizes):

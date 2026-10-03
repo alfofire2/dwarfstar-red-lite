@@ -17,7 +17,7 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 - **Prompt ingestion on the M4 Pro** is bound by its 16 GPU cores, at the same efficiency as the M4 Max (dev49, dev50).
   More kernel work there gives a few percent at a time.
 
-## Phase 1 — release 0.5.0
+## Phase 1 — release 0.5.0 (done 2026-10-03)
 
 1. `regress_m4.sh` green on the M4 Pro. The three llama.cpp-oracle checks run out of GPU memory there; skip them on
    machines where the oracle does not fit, and compare the native outputs bit for bit with a 48 GiB machine's

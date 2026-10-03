@@ -1,0 +1,17 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "release": "0.5.0",
+  "sources": "c46ed14 (native/ identical to main c46ed14), clean build 2026-10-03 (rm -rf .deps/redmetal in the release gates)",
+  "command": "scripts/dev/bench_m4.sh MODEL --reps 3 --only decode22|decode4|prefill22|prefill4 --cache-mib full --cool 90 (second session: --cool 120 after a 10-minute idle)",
+  "stable": {
+    "IQ2_XXS": {"decode_full": 86.24, "prefill8192_full": [926.6, 917.5], "prefill8192_full_runs": [[911.4, 928.6, 926.6], [923.0, 838.3, 917.5]]},
+    "IQ3_XXS": {"decode_full": 79.91, "prefill8192_full": [902.3, 911.9], "prefill8192_full_runs": [[905.6, 902.3, 902.3], [911.9, 913.4, 909.1]]}
+  },
+  "noisy_not_compared": {
+    "note": "Short-prompt and 4 GiB-cache numbers moved by up to 2x between runs of one configuration in this session (page cache of the 31.7 GB IQ3 file, GPU heat after hours of load); they are recorded, not compared with 0.4.1.",
+    "IQ2_XXS": {"prefill1100_full_runs": [[857.4, 878.2, 856.1], [886.5, 860.6, 832.0]], "prefill1100_4_runs": [788.5, 796.5, 751.8], "prefill8192_4_runs": [776.1, 662.8, 833.9], "decode4_runs": [56.89, 54.26, 53.08], "decode4_first_session": 57.58},
+    "IQ3_XXS": {"prefill1100_full_runs": [[792.1, 796.7, 814.7], [827.1, 857.1, 642.7]], "prefill1100_4_runs": [759.7, 737.7, 713.5], "prefill8192_4_runs": [516.5, 327.5, 473.3], "decode4_runs": [34.52, 39.04, 39.18], "decode4_first_session": 49.72}
+  },
+  "ab_vs_0.4.1_build_prefill1100_IQ3_XXS_full": {"pairs_tok_s": [[776.4, 852.2], [831.2, 364.6], [473.5, 516.2]], "order": "[v0.4.1, 0.5.0] alternated, 60 s cooling", "reading": "0.5.0 faster in the two undisturbed pairs; pair 2 disturbed; no evidence of a regression"},
+  "m4pro_24gb": {"source": "benchmarks/m4pro-24gb-dev51-cache-sweep.json, benchmarks/m4-dev49-prefill-experts.json", "decode_4096_median": 32.48, "prefill8192_4096": 360}
+}

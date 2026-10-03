@@ -1,0 +1,20 @@
+{
+  "machine": "Apple M4 Pro, 24 GiB (AC power)",
+  "milestone": "dev51 (roadmap 2a)",
+  "date": "2026-10-03",
+  "binary": "dev50 build (496aa79); decode path unchanged since main 00e1dc5",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "command": "CACHE=<MiB> COOL=30 scripts/dev/small_mac_ab.sh MODEL default (six prompts x 256 greedy tokens, one process per prompt)",
+  "sweep": [
+    {"cache_mib": 4096, "misses_per_token": 29.5, "mib_read_per_token": 43.1, "decode_tok_s": [30.29, 32.29, 30.14, 32.75, 34.36, 32.67], "median": 32.48, "footprint_mib": 5121},
+    {"cache_mib": 6144, "misses_per_token": 16.2, "mib_read_per_token": 23.1, "decode_tok_s": [30.72, 30.14, 29.09, 31.70, 32.44, 30.71], "median": 30.72, "footprint_mib": 6453},
+    {"cache_mib": 8192, "misses_per_token": 13.0, "mib_read_per_token": 18.2, "decode_tok_s": [30.29, 30.07, 29.55, 31.65, 32.10, 30.87], "median": 30.58, "footprint_mib": 6724},
+    {"cache_mib": 10240, "misses_per_token": 12.6, "mib_read_per_token": 17.5, "decode_tok_s": [30.72, 30.03, 29.42, 31.76, 32.47, 31.37], "median": 31.05, "footprint_mib": 6724},
+    {"cache_mib": 12288, "misses_per_token": 12.6, "mib_read_per_token": 17.5, "decode_tok_s": [30.94, 30.32, 29.57, 31.69, 32.57, 31.26], "median": 31.10, "footprint_mib": 6724},
+    {"cache_mib": 14336, "misses_per_token": 12.6, "mib_read_per_token": 17.5, "decode_tok_s": [30.90, 30.18, 29.50, 31.56, 32.54, 31.29], "median": 31.10, "footprint_mib": 6724}
+  ],
+  "swap_used_mib": 0,
+  "memory_free_percent_after": [78, 81, 87, 83, 87, 87],
+  "gpu_recommended_max_working_set_gib": 17.76,
+  "full_residency_need_mib": {"expert_slots": 17316, "dense": 1083}
+}
