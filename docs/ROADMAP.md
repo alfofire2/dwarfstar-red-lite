@@ -1,0 +1,76 @@
+# Roadmap
+
+Agreed with the project owner on 2026-10-03. Updated as steps finish: each step links its milestone document when
+done. Estimates are estimates; only measured numbers go into the results pages.
+
+## Where things stand
+
+- **Unreleased on `main` since 0.4.1:**
+  - MTP speculation (+8–30 %, identical output; server and chat use it automatically);
+  - disk checkpoints of the session state;
+  - Qwen3-Coder-Next;
+  - the comparison with Qwen's own API;
+  - prompt ingestion +3.4 %;
+  - the findings page with charts.
+- **24 GiB Mac** (M4 Pro, 4 GiB expert cache): decode 33 tok/s, prompt ingestion 360 tok/s. The llama.cpp launcher
+  decodes 36–38 tok/s there with the whole 18 GiB model resident.
+- **Prompt ingestion on the M4 Pro** is bound by its 16 GPU cores, at the same efficiency as the M4 Max (dev49, dev50).
+  More kernel work there gives a few percent at a time.
+
+## Phase 1 — release 0.5.0
+
+1. `regress_m4.sh` green on the M4 Pro. The three llama.cpp-oracle checks run out of GPU memory there; skip them on
+   machines where the oracle does not fit, and compare the native outputs bit for bit with a 48 GiB machine's
+   instead.
+2. Full checks on both Macs (`scripts/dev/local_ci.sh`, `regress_m4.sh` on both GGUFs, `quick_parity.sh`), then the
+   release:
+   - version bump in `VERSION`, `pyproject.toml` and `redlite/__init__.py`;
+   - tarball (`scripts/package_release.sh`);
+   - release notes and tag.
+
+## Phase 2 — decode on 24 GiB Macs
+
+- **2a. Expert cache size sweep on the M4 Pro**, 4 → 14 GiB. Measure decode, misses, footprint, swap and memory
+  pressure. The 4 GiB default was a cautious choice, never tested at the limit.
+- **2b. Every expert resident on 24 GiB.** IQ2_XXS needs 16.9 GiB of expert slots + 1.06 GiB of dense weights; the
+  M4 Pro's default GPU working set is 17.76 GiB. With `iogpu.wired_limit_mb` raised (sudo, reset at reboot) the
+  M4 Pro would get:
+  - GPU-routed decode;
+  - MTP speculation.
+
+  Estimate, not measured: about 40 tok/s plain, since the M4 Pro has half the M4 Max's memory bandwidth.
+  Needs a clear guide for users and planner support.
+- **2c. Cache-aware routing as the bounded-cache default.** It gains +5 % on the M4 Pro but changes outputs. Decide
+  with the Qwen API comparison (dev48) and perplexity, both run on the M4 Pro.
+
+## Phase 3 — long context
+
+- **Float16 KV cache.** It halves the attention cache's memory and traffic: at 33.5K tokens decode is 25.7 tok/s,
+  mostly attention, and 64K positions would take 1.5 GiB instead of 3.
+- It needs the prefill attention kernel (`attn_fa_b`) rewritten for half storage, and the parity checks against
+  llama.cpp re-run.
+
+## Phase 4 — product
+
+- **Activation steering** (approved), as in ds4:
+  - a vector added to the residual stream at chosen layers;
+  - strength adjustable during a chat (`/steer`);
+  - an "only the first N tokens of the answer" mode;
+  - a `--history FILE` of prefilled turns.
+- **Low-power mode on the M4 Pro:** tok/s and temperature with `pmset lowpowermode`, for laptop users.
+- **A Red Lite quantization:** search a mix of precisions that beats IQ2_XXS at the same size, judged by
+  perplexity and the API comparison. After Phase 2.
+- **Concurrent server requests** sharing expert loads. Low priority for a single local user.
+
+## Not planned
+
+- More prefill kernel tuning on the M4 Pro (dev49, dev50: a few percent per step).
+- Chunk-parallel DeltaNet prefill (dev44): at most ~2 % (dev47).
+- IQ3_M; distributed inference across two Macs.
+- Hosted CI: removed on 2026-10-03; `scripts/dev/local_ci.sh` runs the same checks.
+
+## Machines
+
+- **M4 Max 48 GiB:** development, every GGUF at full residency.
+- **M4 Pro 24 GiB (`ssh m4pro`):** the target class. Builds need `REDLITE_SDK=…/MacOSX26.5.sdk`.
+  `sudo` is allowed only for `sysctl iogpu.wired_limit_mb` and `pmset -a lowpowermode`.

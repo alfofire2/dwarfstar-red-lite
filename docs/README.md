@@ -9,6 +9,7 @@ machine). "Tested synthetically" means model-free tests only.
 
 | Document | What it covers |
 |---|---|
+| [ROADMAP.md](ROADMAP.md) | The agreed next steps (release 0.5.0, decode on 24 GiB Macs, float16 KV, steering), updated as they finish |
 | [FINDINGS.md](FINDINGS.md) | **Read first.** What we learned, with charts: where a token's time goes, speed by release vs llama.cpp, exact MTP speculation, 24 GiB cache options, long context, correctness, what did not work |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Design goal and architecture of the v0.2 launcher (sparse 80B on a 24 GiB Mac) |
 | [MEMORY.md](MEMORY.md) | Memory policy and headroom formula for 24 GiB Macs |
