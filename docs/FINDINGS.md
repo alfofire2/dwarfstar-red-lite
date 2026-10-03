@@ -162,7 +162,22 @@ On the M4 Max, with every expert resident:
   M4 Pro's own outputs were compared with the M4 Max's (which match llama.cpp), and they are bit-identical:
   logits, the long-context dump, greedy tokens and tokenizer.
 
-## 8. What did not work
+## 8. A better file at the same size
+
+Bartowski's IQ2_XXS keeps 11 of the 48 expert layers at the higher precision (IQ2_XS), half of them the first six.
+Bartowski's importance matrix shows that the experts' input energy grows steadily with depth, 400× from layer 0 to
+47. Moving the 11 precise layers to 37–47, with every other tensor unchanged:
+
+| | Bartowski's scheme (rebuilt) | Red Lite E3 |
+|---|---:|---:|
+| size | 19.30 GB | 19.30 GB |
+| perplexity | 16.370 | **16.216** (paired t = −3.9) |
+| answers identical to Qwen's API | 2 / 235 | **4 / 235** |
+
+E3 is on Hugging Face ([alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF)),
+and `redlite download 24gb` fetches it.
+
+## 9. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:
 
