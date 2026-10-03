@@ -139,3 +139,43 @@ class NativeServeCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GpuLimitTests(unittest.TestCase):
+    """dev51: a raised iogpu.wired_limit_mb allows full residency below 40 GiB of RAM (M4 Pro 24 GiB, IQ2_XXS)."""
+    IQ2_REAL = NativeResidency(17316, 1083 * 1024 * 1024)
+
+    def test_24gb_with_raised_limit_gets_full_residency(self):
+        with patch("redlite.planner.native_residency", return_value=self.IQ2_REAL):
+            d = native_defaults(24 * GIB, "/m/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", wired_mib=20480)
+        self.assertTrue(d.full_residency)
+        self.assertEqual(d.cache_mib, 17316)
+
+    def test_24gb_with_default_limit_stays_bounded(self):
+        with patch("redlite.planner.native_residency", return_value=self.IQ2_REAL):
+            d = native_defaults(24 * GIB, "/m/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", wired_mib=0)
+        self.assertFalse(d.full_residency)
+        self.assertEqual(d.cache_mib, 4096)
+
+    def test_limit_too_low_stays_bounded(self):
+        with patch("redlite.planner.native_residency", return_value=self.IQ2_REAL):
+            d = native_defaults(24 * GIB, "/m/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", wired_mib=18432)
+        self.assertFalse(d.full_residency)
+
+    def test_needed_limit_includes_margin(self):
+        from redlite.planner import native_full_residency_mib
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL), 17316 + 1083 + 1024)
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL, 2423911040), 17316 + 1083 + 2312 + 1024)
+
+    def test_mtp_needs_room_for_the_head(self):
+        import tempfile
+        from redlite.planner import NATIVE_MTP_FILE, native_mtp_file
+        with tempfile.TemporaryDirectory() as d:
+            model = Path(d) / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
+            model.write_bytes(b"")
+            with open(Path(d) / NATIVE_MTP_FILE, "wb") as f:
+                f.truncate(2423911040)
+            with patch("redlite.planner.native_residency", return_value=self.IQ2_REAL):
+                self.assertIsNone(native_mtp_file(model, "full", ram_bytes=24 * GIB, wired_mib=20480))
+                self.assertIsNotNone(native_mtp_file(model, "full", ram_bytes=24 * GIB, wired_mib=22016))
+                self.assertIsNotNone(native_mtp_file(model, "full"))   # no budget given: unchanged dev45 behaviour
