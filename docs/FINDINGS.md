@@ -93,14 +93,15 @@ Measured on the M4 Pro 24 GiB, 4 GiB expert cache, six prompts:
 |---|---:|---:|---|
 | prefetch off vs on | 45.5 vs 29.5 | 29.2 vs 32.7 tok/s | **prefetch is worth 12 %** |
 | uniform slots vs slot size classes (dev37) | 39.3 vs 29.5 | +1.6 % | layers with smaller experts fit more of them |
-| cache-aware routing, λ = 0.5 (opt-in) | 22.9 | +5 % | output changes; perplexity did not (17.586 → 17.583, M4 Max) |
+| cache-aware routing, λ = 0.5 (default with a bounded cache since dev51c) | 22.9 | +5 % | output changes; perplexity (17.586 → 17.583) and agreement with Qwen's API (8.1 vs 7.8 % median) did not |
 | uncached reads (`F_NOCACHE`) | 29.5 | no change | — |
 
 - **Prefetch:** applying the next layer's router to the current layer's input predicts most of the experts
   that layer will choose. The CPU loads them while the GPU is still computing.
 - **Slot size classes:** with per-layer slot sizes the cache misses 25 % less often.
 - **Cache-aware routing:** prefers experts that are already loaded when the router's scores are close. It
-  changes the output, so it is opt-in (`RL_ROUTE_CACHE_BIAS`).
+  changes the output but no quality measure moved, so `redlite chat` uses it with a bounded cache
+  (`--exact-routing` turns it off).
 
 **Smarter replacement than LRU does not pay.** On recorded routing traces, decayed-frequency and segmented LRU
 save at most 5 % of misses. Even a clairvoyant policy, which knows the future, would only halve them (34.7 vs

@@ -1,0 +1,54 @@
+{
+ "machine": "Apple M4 Pro, 24 GiB",
+ "milestone": "dev51 (roadmap 2c)",
+ "date": "2026-10-03",
+ "command": "[RL_ROUTE_CACHE_BIAS=0.5] python3 scripts/dev/api_compare.py compare IQ2_XXS --cache-mib 4096",
+ "bias_0": {
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "cache_mib": "4096",
+  "prompts": 235,
+  "identical": 2,
+  "median_common_prefix_fraction": 0.078,
+  "mean_common_prefix_fraction": 0.131,
+  "first_word_differs": 32,
+  "template_token_count_mismatch": 0,
+  "identical_by_category": {
+   "facts": "0/30",
+   "science": "1/30",
+   "reasoning": "0/30",
+   "math": "0/30",
+   "code": "0/30",
+   "italian": "1/30",
+   "writing": "0/30",
+   "instructions": "0/25"
+  }
+ },
+ "bias_0.5": {
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "cache_mib": "4096",
+  "prompts": 235,
+  "identical": 1,
+  "median_common_prefix_fraction": 0.081,
+  "mean_common_prefix_fraction": 0.127,
+  "first_word_differs": 32,
+  "template_token_count_mismatch": 0,
+  "identical_by_category": {
+   "facts": "0/30",
+   "science": "0/30",
+   "reasoning": "0/30",
+   "math": "0/30",
+   "code": "0/30",
+   "italian": "1/30",
+   "writing": "0/30",
+   "instructions": "0/25"
+  }
+ },
+ "perplexity_m4max_dev46": {
+  "bias_0": 17.5855,
+  "bias_0.5": 17.5826
+ },
+ "decode_m4pro_dev46_tok_s": {
+  "default": 32.68,
+  "bias05": 34.31
+ }
+}

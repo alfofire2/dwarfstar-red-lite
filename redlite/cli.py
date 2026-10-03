@@ -208,6 +208,28 @@ def _print_gpu_advice(hw, wired: int) -> None:
         print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}   (docs/REDLITE_DEV51_24GB_DECODE.md)")
 
 
+ROUTE_CACHE_BIAS_DEFAULT = "0.5"
+
+
+def _route_bias_env(model, cache_mib, args) -> None:
+    """dev51 (roadmap 2c): cache-aware routing by default with a bounded expert cache.
+
+    lambda = 0.5 is +5 % decode on the M4 Pro 24 GiB with a 4 GiB cache, with no measured quality loss: perplexity
+    17.586 -> 17.583 (dev46) and the same agreement with Qwen's own API on 235 prompts (dev51). It changes which
+    experts are picked when scores are close, so the binaries stay exact by default and --exact-routing turns it off.
+    With every expert resident there are no misses and the bias does nothing, so it is not set.
+    """
+    import os
+    from .planner import native_residency
+    if getattr(args, "exact_routing", False) or "RL_ROUTE_CACHE_BIAS" in os.environ:
+        return
+    res = native_residency(model)
+    full = str(cache_mib) == "full" or (res is not None and str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib)
+    if not full:
+        os.environ["RL_ROUTE_CACHE_BIAS"] = ROUTE_CACHE_BIAS_DEFAULT
+        print(f"[redlite] cache-aware expert routing (lambda {ROUTE_CACHE_BIAS_DEFAULT}, bounded cache); --exact-routing disables")
+
+
 def _steer_args(args) -> list[str]:
     """dev52: redlite-generate steering options (and dev52b --history) from `redlite chat`"""
     out: list[str] = []
@@ -238,6 +260,7 @@ def cmd_chat(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _route_bias_env(model, cache_mib, args)
     try:
         return run_native_chat(
             str(model), args.context, cache_mib, args.max_tokens,
@@ -273,6 +296,7 @@ def _serve_native(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _route_bias_env(model, cache_mib, args)
     try:
         return run_native_server(
             str(model), args.host, args.port, args.context or 4096, cache_mib,
@@ -379,6 +403,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
     s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
     s.add_argument("--no-mtp", action="store_true", help="Do not use the MTP head for speculative decoding even when it applies")
+    s.add_argument("--exact-routing", action="store_true", help="Bounded cache: pick experts exactly as the model does (no cache-aware routing)")
     s.add_argument("--steer", default=None, help="Activation steering vector (scripts/dev/steer_extract.py); /steer S in the chat changes the strength")
     s.add_argument("--steer-layers", default=None, help="Steered layers A-B (default 16-31)")
     s.add_argument("--steer-strength", type=float, default=None, help="Steering strength (default 1; typical 0.2-0.5 over 8-12 layers)")
@@ -402,6 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "and it fits, otherwise 4096)")
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
     s.add_argument("--no-mtp", action="store_true", help="--native: do not use the MTP head for speculative decoding")
+    s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

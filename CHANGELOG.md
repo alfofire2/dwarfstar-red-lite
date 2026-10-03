@@ -2,6 +2,13 @@
 
 ## Unreleased (after 0.5.1)
 
+### dev51c — cache-aware routing by default with a bounded cache (M4 Pro 24 GiB)
+
+- **Measured against Qwen's API** (235 prompts, 4 GiB cache): exact routing 2 identical / 7.8 % median words
+  matching; λ = 0.5 1 / 8.1 %. No measurable difference; perplexity was already unchanged (dev46).
+- **Default:** `redlite chat` / `serve --native` set `RL_ROUTE_CACHE_BIAS=0.5` with a bounded cache, for +5 % decode on
+  the M4 Pro. `--exact-routing` turns it off. Binaries stay exact by default.
+
 ### dev52 — activation steering (M4 Max 48 GiB)
 
 - **Mechanism:** `strength × vector` is added to the residual stream at the input of chosen layers, on every decode
