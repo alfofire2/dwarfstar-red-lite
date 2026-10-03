@@ -82,8 +82,51 @@ IQ3_XXS.
 - **The dense projections already run at about 60 % of the GPU's float32 peak** on the M4 Max (DeltaNet
   projections: 15.3 TFLOP in 1.55 s, about 9.9 TFLOPS). Little is left there.
 
+## dev50: decoding each weight once per 32 pairs — tried four ways, kept a pipelined decode
+
+**What the decode costs.** Two variants of the 16-pair kernel, each removing one part of the decode (M4 Max, IQ2_XXS,
+8192 tokens, full residency):
+
+| variant | expert GPU time |
+|---|---:|
+| kernel as shipped | 3.86 s |
+| decode arithmetic kept, every group read from the same block (no weight traffic) | 3.50 s |
+| real weight bytes read, decode arithmetic replaced by a byte-to-float conversion | 2.77 s |
+
+The decode **arithmetic** costs ~1.1 s; reading the weights costs ~0.36 s.
+
+**32-pair tiles, which halve the decodes per pair: all slower.** Each was compared with the 16-pair kernel in the
+same session (3.86–3.97 s):
+
+| variant | expert GPU time |
+|---|---:|
+| 256 threads, pairs 16-31 on simdgroups 4-7, which skip their multiplications when empty (bit-identical) | 4.21 s |
+| 128 threads, two partial accumulators instead of four (same register count as the 16-pair kernel) | 6.87 s |
+| same, output tiles aliased onto the weight tiles (12 KB of threadgroup memory) | 8.01 s |
+| same, pairs-16-31 branch unrolled by hand | 8.00 s |
+| same, without skipping empty pairs 16-31 | 9.57 s |
+
+On this GPU, 32-pair tiles lose whatever the accumulator layout, as dev40 also found (400 vs 872 tok/s). Doubling
+the multiplications per decoded step makes each multiplication much slower. Spilling and occupancy were both
+ruled out as the only cause (aliasing cut the threadgroup memory below the 16-pair kernel's and made it worse).
+The bound is not understood.
+
+**Kept: software pipelining.** Each thread loads and decodes step k+1's weights and activations into registers
+while the simdgroups multiply step k. Same arithmetic, logits bit-identical.
+
+| | dev49 | dev50 |
+|---|---:|---:|
+| M4 Max 48 GiB, full residency, experts GPU | 3.967 s | 3.86 s (−2.7 %) |
+| M4 Max 48 GiB, 8192 tokens | 922 tok/s | 936 tok/s (+1.5 %) |
+| M4 Pro 24 GiB, 4 GiB cache, experts GPU | 9.93 s | 9.49 s (−4.4 %) |
+| M4 Pro 24 GiB, 8192 tokens | 353 tok/s | 360 tok/s (+1.9 %) |
+
+Three alternated pairs on the M4 Max, two on the M4 Pro. `quick_parity.sh` passes on both GGUFs.
+
+**dev49 + dev50 on the M4 Pro: 348 → 360 tok/s (+3.4 %)**, with output identical to 0.4.1.
+
 ## Scope boundary
 
 - 500 tok/s on the M4 Pro was not reached, and the measurements say it cannot be reached by one kernel change.
-- The decode-once rewrite is not built.
+- Decoding once per 32 pairs was built four ways and reverted; see the dev50 section.
 - Only IQ2_XXS was measured. The IQ3 decode (`rl_iq3_group8f`) is unchanged.
