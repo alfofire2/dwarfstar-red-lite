@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased (after 0.5.1)
+## 0.5.2 — 2026-10-03
+
+Steering, prefilled conversations, and a faster bounded cache by default.
+
+- **Activation steering** (dev52): `redlite chat --steer FILE --steer-layers A-B --steer-strength S`, `/steer S` in the
+  chat, `--steer-tokens N` to steer only the start of an answer, and `scripts/dev/steer_extract.py` to build vectors
+  from two prompt sets. Exact with MTP. No pre-made vectors are shipped.
+- **`--history FILE`** (dev52b): a prefilled conversation of `user:` / `assistant:` turns, read before the first
+  message.
+- **Cache-aware routing by default with a bounded cache** (dev51c): +5 % decode on the M4 Pro 24 GiB; quality vs
+  Qwen's API unchanged. `--exact-routing` turns it off.
+- **Measured, not shipped:**
+  - low-power mode costs 22 % of decode at full residency on the M4 Pro;
+  - a float16 KV cache halves the context memory but broke CPU/Metal router parity, so it was reverted (dev53,
+    `docs/WHAT_DID_NOT_WORK.md`).
+- **Validation (M4 Max 48 GiB):** local CI PASS; `regress_m4.sh` IQ2_XXS 52/52 (new: `engine.parity.steered`), IQ3_XXS
+  39/0/13; `quick_parity.sh` PASS on both GGUFs; 0 warnings.
+
 
 ### dev51c — cache-aware routing by default with a bounded cache (M4 Pro 24 GiB)
 
