@@ -61,3 +61,12 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SteerArgsTests(unittest.TestCase):
+    def test_chat_passes_steering_options(self):
+        import argparse
+        from redlite.cli import _steer_args
+        a = argparse.Namespace(steer="v.f32", steer_layers="12-23", steer_strength=0.3, steer_tokens=None)
+        self.assertEqual(_steer_args(a), ["--steer", "v.f32", "--steer-layers", "12-23", "--steer-strength", "0.3"])
+        self.assertEqual(_steer_args(argparse.Namespace(steer=None, steer_layers=None, steer_strength=None, steer_tokens=None)), [])

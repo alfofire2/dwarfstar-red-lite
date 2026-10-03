@@ -292,6 +292,7 @@ void rl_engine_close(rl_engine *e) {
     rl_native_free_expert_map(&e->expert_map);
     if (e->mtp_enabled) { rl_native_free_expert_map(&e->mtp_expert_map); rl_gguf_model_close(&e->mtp_gguf); }
     free(e->layers);
+    free(e->steer_vec);
     rl_gguf_model_close(&e->gguf);
     free(e);
 }
@@ -359,6 +360,41 @@ static int open_mtp(rl_engine *e, const char *path, char *error, size_t cap) {
 }
 
 int rl_engine_mtp_enabled(const rl_engine *e) { return e && e->mtp_enabled; }
+
+int rl_engine_set_steering(rl_engine *e, const float *vector, uint32_t first, uint32_t last, float strength, char *error, size_t cap) {
+    if (!e) { set_error(error, cap, "invalid steering arguments"); return 0; }
+    if (!vector) { free(e->steer_vec); e->steer_vec = NULL; e->steer_strength = 0.0f; return 1; }
+    if (first > last || last >= e->info.n_layer) { if (error && cap) snprintf(error, cap, "steering layers %u-%u outside 0-%u", first, last, e->info.n_layer - 1u); return 0; }
+    float *v = (float *)malloc((size_t)e->info.hidden * sizeof(float));
+    if (!v) { set_error(error, cap, "steering vector allocation failed"); return 0; }
+    memcpy(v, vector, (size_t)e->info.hidden * sizeof(float));
+#ifdef __APPLE__
+    if (e->metal && !rl_metal_engine_set_steering(e->metal, v, e->info.hidden, error, cap)) { free(v); return 0; }
+#endif
+    free(e->steer_vec);
+    e->steer_vec = v; e->steer_first = first; e->steer_last = last; e->steer_strength = strength;
+    return 1;
+}
+
+void rl_engine_set_steering_strength(rl_engine *e, float strength) { if (e) e->steer_strength = strength; }
+
+int rl_engine_load_steering(rl_engine *e, const char *path, uint32_t first, uint32_t last, float strength, char *error, size_t cap) {
+    if (!e || !path) { set_error(error, cap, "invalid steering arguments"); return 0; }
+    FILE *f = fopen(path, "rb");
+    if (!f) { if (error && cap) snprintf(error, cap, "cannot open steering file %s", path); return 0; }
+    const size_t n = e->info.hidden;
+    float *v = (float *)malloc((n + 1u) * sizeof(float));
+    const size_t got = v ? fread(v, sizeof(float), n + 1u, f) : 0u;
+    fclose(f);
+    if (got != n) {
+        free(v);
+        if (error && cap) snprintf(error, cap, "steering file %s must hold exactly %zu float32 values", path, n);
+        return 0;
+    }
+    const int ok = rl_engine_set_steering(e, v, first, last, strength, error, cap);
+    free(v);
+    return ok;
+}
 
 int rl_engine_verify2(rl_engine *e, uint32_t t0, uint32_t d, float *logits0, float *logits1, char *error, size_t cap) {
     if (!e || !e->gpu_enabled || t0 >= e->info.vocab || d >= e->info.vocab) { set_error(error, cap, "invalid verify arguments"); return 0; }

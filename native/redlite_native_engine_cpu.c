@@ -389,6 +389,7 @@ int rl_engine_cpu_step(rl_engine *e, uint32_t token, float *logits, rl_engine_st
     for (uint32_t l = 0; l < in->n_layer; ++l) {
         const rl_layer_tensors *t = &e->layers[l];
         const double l0 = rl_engine_now_ms();
+        if (rl_engine_steers(e, l)) for (uint32_t i = 0; i < hidden; ++i) x[i] += e->steer_strength * e->steer_vec[i];   /* dev52 */
         rmsnorm_d(x, f32_data(e, t->attn_norm), hidden, in->rms_eps, normed);
         if (t->kind == RL_LAYER_MAP_RECURRENT) {
             if (!deltanet_branch(e, s, t, normed, branch, error, cap)) goto done;

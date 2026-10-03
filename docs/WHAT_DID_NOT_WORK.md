@@ -101,6 +101,9 @@ them.
 - **Removing the multiplications to bound a kernel (dev49).** With the simdgroup MACs deleted, the expert time
   fell to 266 ms because the compiler also dropped the now-unused weight decode. Only the "decode replaced by
   constants" variant (2.45 s of 4.40 s) is a valid bound.
+- **Steering doses (dev52).** A difference-of-means vector at strength 1 over 16 layers, or 0.6+ over 8 layers,
+  breaks the text into repeated tokens: the vector (|v| 4.35) is added at every steered layer, against a residual
+  norm of about 10. Usable doses were 0.2–0.5 over 8–12 layers.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

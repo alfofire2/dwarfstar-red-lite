@@ -21,6 +21,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [RESEARCH_2026_10.md](RESEARCH_2026_10.md) | October 2026 survey: current DwarfStar, Qwen3-Coder-Next, Qwen3-Next MTP GGUFs, llama.cpp/MLX/Metal techniques, ranked options |
 | [REDLITE_DEV48_API_REFERENCE.md](REDLITE_DEV48_API_REFERENCE.md) | dev48: greedy answers compared word for word with Qwen's own API (IQ2_XXS vs IQ3_XXS) |
 | [REDLITE_DEV49_PREFILL_24GB.md](REDLITE_DEV49_PREFILL_24GB.md) | dev49: why the M4 Pro reads prompts at ~350 tok/s (GPU compute, not the disk), expert decode share, a bit-identical decode speed-up |
+| [REDLITE_DEV52_STEERING.md](REDLITE_DEV52_STEERING.md) | dev52: activation steering (vectors from two prompt sets, /steer in the chat, exact with MTP) |
 | [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
 
 ## Native runtime milestones of 0.4.0

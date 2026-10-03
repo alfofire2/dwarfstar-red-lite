@@ -103,6 +103,11 @@ static NSString * const kEngineSource = @
 "    const float inv = rsqrt(total / float(n) + eps);\n"
 "    for (uint i = tid; i < n; i += 256u) norm[i] = sum[i] * inv * w[i];\n"
 "}\n"
+"kernel void rl_steer_add(device uint *rl_abort [[buffer(30)]], device float *x [[buffer(0)]], device const float *v [[buffer(1)]],\n"
+"    constant float &s [[buffer(2)]], constant uint &n [[buffer(3)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    if (gid < n) x[gid] = fma(s, v[gid], x[gid]);   /* dev52: activation steering */\n"
+"}\n"
 "kernel void rl_scale_add(device uint *rl_abort [[buffer(30)]], device const float *resid [[buffer(0)]], device const float *routed [[buffer(1)]], device const float *shared [[buffer(2)]],\n"
 "    device const float *scalar [[buffer(3)]], device float *out [[buffer(4)]], constant uint &n [[buffer(5)]], uint gid [[thread_position_in_grid]]) {\n"
 "    if (rl_abort[0] != 0u) return;\n"
@@ -1077,7 +1082,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             rl_metal_engine_destroy(m); return NULL;
         }
         struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
-            {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"}, {&m->p_moe_tail, @"rl_moe_tail"},
+            {&m->p_rms, @"rl_rms"}, {&m->p_resid_rms, @"rl_resid_rms"}, {&m->p_scale_add, @"rl_scale_add"}, {&m->p_steer, @"rl_steer_add"}, {&m->p_moe_tail, @"rl_moe_tail"},
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
             {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
@@ -1344,6 +1349,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
     m->p_moe_tail = nil;
+    m->steer = nil; m->p_steer = nil;
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
     m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
@@ -1595,6 +1601,25 @@ static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
     em_stage(em, 11);
 }
 
+/* dev52: x += strength * steering vector at the input of layer l, when that layer is steered */
+static void emit_steer(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> x) {
+    rl_metal_engine *m = em->m;
+    if (!rl_engine_steers(e, l) || !m->steer) return;
+    const uint32_t hidden = e->info.hidden; const float s = e->steer_strength;
+    id<MTLComputeCommandEncoder> enc = em_enc(em);
+    [enc setComputePipelineState:m->p_steer];
+    [enc setBuffer:x offset:0 atIndex:0]; [enc setBuffer:m->steer offset:0 atIndex:1];
+    [enc setBytes:&s length:4 atIndex:2]; [enc setBytes:&hidden length:4 atIndex:3];
+    enc_1d(enc, m->p_steer, hidden, 256u);
+}
+
+int rl_metal_engine_set_steering(rl_metal_engine *m, const float *vector, uint32_t hidden, char *error, size_t cap) {
+    id<MTLBuffer> b = [m->dev newBufferWithBytes:vector length:(NSUInteger)hidden * sizeof(float) options:MTLResourceStorageModeShared];
+    if (!b) { snprintf(error, cap, "steering buffer allocation failed"); return 0; }
+    m->steer = b;
+    return 1;
+}
+
 static void emit_scale_add(rl_engine *e, emitter *em) {
     rl_metal_engine *m = em->m;
     const uint32_t hidden = e->info.hidden;
@@ -1664,6 +1689,7 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
     for (uint32_t l = first; l < in->n_layer; ++l) {
         const rl_layer_tensors *t = &e->layers[l];
         const mlayer *w = &m->layers[l];
+        emit_steer(e, em, l, m->x);
         emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
         if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, em, t, w);
         else emit_attention(e, em, t, w, position);
@@ -1835,6 +1861,7 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
     for (uint32_t l = 0; l < in->n_layer; ++l) {
         const rl_layer_tensors *t = &e->layers[l];
         const mlayer *w = &m->layers[l];
+        emit_steer(e, em, l, m->x); emit_steer(e, em, l, ALT(x));
         em_group(em, 1);   /* the two rows' independent kernels share one barrier */
         emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
         emit_rms(m, em_enc(em), ALT(x), &w->attn_norm, ALT(normed), hidden, eps);
@@ -2142,6 +2169,7 @@ int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, 
             const mlayer *w = &m->layers[l];
             const double l0 = rl_engine_now_ms();
             emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
+            emit_steer(e, &em, l, m->x);
             emit_rms(m, em_enc(&em), m->x, &w->attn_norm, m->normed, hidden, eps);
             em_stage(&em, 0);
             if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, &em, t, w);

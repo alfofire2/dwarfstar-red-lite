@@ -71,7 +71,14 @@ struct rl_engine {
     const rl_gguf_tensor *mtp_eh_proj, *mtp_enorm, *mtp_hnorm, *mtp_head_norm, *mtp_head, *mtp_embd;
     rl_expert_map mtp_expert_map;
     uint32_t mtp_layer;                   /* block index in the MTP file (== trunk n_layer) */
+    float *steer_vec;                     /* dev52: hidden floats, NULL = no steering */
+    uint32_t steer_first, steer_last;
+    float steer_strength;
 };
+/* dev52: 1 when layer l of a decoded token is steered */
+static inline int rl_engine_steers(const rl_engine *e, uint32_t l) {
+    return e->steer_vec && e->steer_strength != 0.0f && l >= e->steer_first && l <= e->steer_last;
+}
 
 /* CPU oracle (redlite_native_engine_cpu.c) */
 int rl_engine_cpu_step(rl_engine *e, uint32_t token, float *logits, rl_engine_step_stats *stats, char *error, size_t cap);
@@ -80,6 +87,7 @@ int rl_engine_cpu_step(rl_engine *e, uint32_t token, float *logits, rl_engine_st
 rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap);
 void rl_metal_engine_destroy(rl_metal_engine *m);
 int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap);
+int rl_metal_engine_set_steering(rl_metal_engine *m, const float *vector, uint32_t hidden, char *error, size_t cap);   /* dev52 */
 int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
 int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap);
 int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted, char *error, size_t cap);   /* dev45 */

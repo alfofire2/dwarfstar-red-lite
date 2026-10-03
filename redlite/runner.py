@@ -83,6 +83,7 @@ def run_native_chat(
     json_stats: bool = False,
     min_p: float | None = None,
     mtp: str | None = None,
+    steer: list[str] | None = None,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -110,6 +111,8 @@ def run_native_chat(
         cmd.extend(["--min-p", str(min_p)])
     if mtp:
         cmd.extend(["--mtp", mtp])
+    if steer:
+        cmd.extend(steer)
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

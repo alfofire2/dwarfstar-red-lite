@@ -52,7 +52,7 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
 ## Phase 4 — product
 
-- **Activation steering** (approved), as in ds4:
+- **Activation steering — done (dev52), except `--history`.** As in ds4:
   - a vector added to the residual stream at chosen layers;
   - strength adjustable during a chat (`/steer`);
   - an "only the first N tokens of the answer" mode;

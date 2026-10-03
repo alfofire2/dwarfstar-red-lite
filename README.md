@@ -59,6 +59,18 @@ every expert resident and use MTP when its head is in `models/`:
 
 Details: `docs/REDLITE_DEV51_24GB_DECODE.md`.
 
+**Steering** (dev52). Turn the model's style or topic with a vector added to its residual stream:
+
+```bash
+python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 --out v.f32   # two prompt sets
+./bin/redlite chat --steer v.f32 --steer-layers 12-23 --steer-strength 0.3    # /steer S changes it during the chat
+```
+
+- `--steer-tokens N` steers only the start of each answer.
+- Typical strengths are 0.2–0.5 over 8–12 layers; more breaks the text.
+- Exact with MTP.
+- Details and an example: `docs/REDLITE_DEV52_STEERING.md`.
+
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored
 session is bit-identical to a cold one.
