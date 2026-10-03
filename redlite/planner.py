@@ -183,10 +183,15 @@ NATIVE_BOUNDED_CACHE_MIB = 4096
 # IQ3_XXS (63% of RAM) is stable there
 NATIVE_WORKING_SET_FRACTION = 0.70
 NATIVE_SLOT_ALIGNMENT = 4096
-# dev51: with a raised GPU limit (sysctl iogpu.wired_limit_mb > 0) full residency is allowed on any Mac when the expert
-# cache + dense weights + this margin (KV cache, scratch, Metal buffers) fit the limit. M4 Pro 24 GiB, IQ2_XXS:
-# footprint 18,358 MiB at full residency, 20,098 MiB with the MTP head; stable at limits of 20,480 / 22,016 MiB.
-NATIVE_GPU_MARGIN_MIB = 1024
+# dev51/dev55: with a raised GPU limit (sysctl iogpu.wired_limit_mb > 0) full residency is allowed on any Mac whose limit
+# holds what it needs. dev55 measured the need on the M4 Max (IQ2_XXS-size file, every expert resident; process footprint
+# plus the mapped dense weights, which the GPU holds but the footprint does not count): it explains every M4 Pro outcome
+# (limit 21,741: MTP + 32K context + 512-token chunks out of GPU memory at 22,302; no MTP + 32K + 2048 fine at 21,087;
+# MTP + 4K + 2048 fine at 21,530).
+NATIVE_GPU_BASE_MIB = 580                       # pool, scratch and buffers above slots + dense, at 512-token prefill chunks
+NATIVE_KV_MIB_PER_POS = 48.0 / 1024.0           # 12 attention layers x K,V x 512 floats per position
+NATIVE_BATCH_MIB_PER_TOKEN = 572.0 / 1536.0     # prefill scratch per token of chunk above 512 (2048: +572 MiB)
+NATIVE_MTP_MIB = 1787                           # the resident MTP block (Q8_0 head file)
 # dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
 # first one present whose full residency fits, else the 24 GiB reference file
 NATIVE_MODEL_PREFERENCE = (
@@ -228,15 +233,27 @@ def native_residency(model_path: str | Path) -> NativeResidency | None:
     return NativeResidency(-(-total // (1024 * 1024)), max(0, size - emap.total_routed_payload_bytes))
 
 
-def native_full_residency_mib(residency: NativeResidency, extra_bytes: int = 0) -> int:
-    """GPU budget full residency needs, margin included (dev51): the value to give iogpu.wired_limit_mb."""
-    return residency.cache_mib + -(-(residency.dense_bytes + extra_bytes) // (1024 * 1024)) + NATIVE_GPU_MARGIN_MIB
+def native_full_residency_mib(residency: NativeResidency, context: int = 4096, batch: int = 2048, mtp: bool = False) -> int:
+    """GPU memory full residency needs (dev55 model): the value to give iogpu.wired_limit_mb."""
+    need = (residency.cache_mib + residency.dense_bytes / (1024 * 1024) + NATIVE_GPU_BASE_MIB + context * NATIVE_KV_MIB_PER_POS
+            + max(0, batch - 512) * NATIVE_BATCH_MIB_PER_TOKEN + (NATIVE_MTP_MIB if mtp else 0))
+    return int(-(-need // 1))
 
 
-def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired_mib: int = 0, extra_bytes: int = 0) -> bool:
+def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired_mib: int = 0, context: int = 4096,
+                               batch: int = 512, mtp: bool = False) -> bool:
     if wired_mib > 0:
-        return native_full_residency_mib(residency, extra_bytes) <= wired_mib
-    return residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra_bytes <= ram_bytes * NATIVE_WORKING_SET_FRACTION
+        return native_full_residency_mib(residency, context, batch, mtp) <= wired_mib
+    extra = NATIVE_MTP_MIB * 1024 * 1024 if mtp else 0
+    return residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra <= ram_bytes * NATIVE_WORKING_SET_FRACTION
+
+
+def native_gpu_plan(residency: NativeResidency, wired_mib: int, context: int, mtp_available: bool) -> tuple[int, bool] | None:
+    """dev55: under a raised GPU limit, the (prefill chunk, MTP) that fits, preferring MTP, then 2048-token chunks."""
+    for batch, mtp in ((2048, True), (512, True), (2048, False), (512, False)):
+        if (mtp_available or not mtp) and native_full_residency_mib(residency, context, batch, mtp) <= wired_mib:
+            return batch, mtp
+    return None
 
 
 @dataclass(frozen=True)
@@ -246,7 +263,7 @@ class NativeDefaults:
     reason: str
 
 
-def native_defaults(ram_bytes: int, model_path: str | Path | None = None, wired_mib: int = 0) -> NativeDefaults:
+def native_defaults(ram_bytes: int, model_path: str | Path | None = None, wired_mib: int = 0, context: int = 4096) -> NativeDefaults:
     ram_gib = ram_bytes / GIB
     if (ram_gib >= NATIVE_FULL_RESIDENCY_MIN_RAM_GIB or wired_mib > 0) and model_path is not None:
         res = native_residency(model_path)
@@ -254,15 +271,15 @@ def native_defaults(ram_bytes: int, model_path: str | Path | None = None, wired_
                   else f"{ram_gib:.1f} GiB RAM >= {NATIVE_FULL_RESIDENCY_MIN_RAM_GIB:.0f} GiB")
         if res is None:
             reason = f"{budget}, but the expert payload of {Path(model_path).name} could not be read"
-        elif native_full_residency_fits(ram_bytes, res, wired_mib):
+        elif native_full_residency_fits(ram_bytes, res, wired_mib, context):
             return NativeDefaults(
                 res.cache_mib, True,
                 f"{budget}: full expert residency ({res.cache_mib} MiB from the file's expert payload), "
                 f"preloaded at open, GPU-routed decode",
             )
         elif wired_mib > 0:
-            reason = (f"{budget}: full residency of {Path(model_path).name} needs {native_full_residency_mib(res)} MiB "
-                      f"with its margin")
+            reason = (f"{budget}: full residency of {Path(model_path).name} at context {context} needs "
+                      f"{native_full_residency_mib(res, context, 512)} MiB")
         else:
             reason = (f"{ram_gib:.1f} GiB RAM: full residency of {Path(model_path).name} needs {res.cache_mib} MiB + "
                       f"{res.dense_bytes / GIB:.1f} GiB dense, above {NATIVE_WORKING_SET_FRACTION:.0%} of RAM")
@@ -320,6 +337,6 @@ def native_mtp_file(model_path: str | Path, cache_mib: int | str, disabled: bool
     if not full:
         return None
     # dev51: the head (2.26 GiB) must fit the GPU budget next to the resident experts (24 GiB Macs with a raised limit)
-    if ram_bytes is not None and not native_full_residency_fits(ram_bytes, res, wired_mib, head.stat().st_size):
+    if ram_bytes is not None and not native_full_residency_fits(ram_bytes, res, wired_mib, mtp=True):
         return None
     return head
