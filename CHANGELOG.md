@@ -2,6 +2,11 @@
 
 ## Unreleased (after 0.4.1)
 
+### Project
+
+- `docs/ROADMAP.md`: the agreed next steps.
+- GitHub CI removed (hosted runners are paid); `scripts/dev/local_ci.sh` runs the same model-free checks locally.
+
 ### dev50 — pipelined prefill expert decode (M4 Pro 24 GiB, M4 Max 48 GiB)
 
 - The prefill expert kernels decode step k+1's weights into registers while step k multiplies. Bit-identical.

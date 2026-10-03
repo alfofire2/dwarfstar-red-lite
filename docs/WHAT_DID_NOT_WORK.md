@@ -106,9 +106,9 @@ them.
 
 ## Not reached, blocked or not attempted
 
-- **GitHub CI green (dev28): not reached.** GitHub refuses to start hosted jobs on this account
-  ("recent account payments have failed or your spending limit needs to be increased"); the
-  same steps pass in a Linux container. Needs the account's billing fixed.
+- **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on
+  this account ("recent account payments have failed or your spending limit needs to be increased"). The
+  project does not pay for hosted runners. The same steps run locally with `scripts/dev/local_ci.sh`.
 - **IQ3_XXS prefill vs llama.cpp:** 837 vs 861 tok/s at 1100 tokens with full residency (dev33). Re-measured
   2026-10-01 at 547539f on an idle machine: native 859.4 (3 runs), 871.1 / 876.7 / 872.5 / 875.4 / 874.8 / 872.4
   (A/B baselines), llama.cpp 878.8 (3 runs) on the same ids: about 0.6 % behind, inside run-to-run spread.

@@ -91,8 +91,9 @@ bash scripts/dev/build_ref_sampler.sh && python3 scripts/dev/compare_sampler.py 
 .deps/redmetal/redlite-layer-audit     MODEL --tensors
 ```
 
-GitHub CI (`.github/workflows/ci.yml`, dev28) runs on every push and PR on Linux only:
-ruff, compileall, `make native` and `make sanitize` with warnings as failures, `make test`.
+There is no hosted CI: the GitHub CI of dev28 was removed on 2026-10-03 (hosted runners are paid). Before every
+merge run `scripts/dev/local_ci.sh` (ruff, compileall, `make native` and `make sanitize` with warnings as
+failures, `make test`; macOS or Linux), plus the model checks below for native changes.
 `scripts/package_release.sh` builds the arm64 release tarball (`-mcpu=apple-m1`,
 `REDLITE_MCPU` / `REDLITE_BUILD_OUT` select the CPU and the output directory of the
 build scripts). `scripts/dev/bench_m4.sh MODEL --only llama` measures the pinned llama.cpp

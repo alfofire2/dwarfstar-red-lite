@@ -164,8 +164,8 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   implementation of the same graph in the same process. Any router top-k divergence fails
   the gate.
 - **Model-free tests.** The GGUF readers are fuzzed. The model-free tests run under
-  ASan/UBSan (`make sanitize`), and so does a real chat turn. GitHub CI runs them on Linux
-  for every push (when the account's GitHub Actions billing allows hosted jobs).
+  ASan/UBSan (`make sanitize`), and so does a real chat turn. `scripts/dev/local_ci.sh` runs
+  every model-free check before a merge.
 - **What did not work:** `docs/WHAT_DID_NOT_WORK.md` lists every reverted attempt, trap and
   unreached target with its measurement.
 - **Details:** `docs/REDLITE_DEV18_ENGINE.md` (the engine); `docs/REDLITE_DEV22_*` to
@@ -415,8 +415,8 @@ Run tests:
 make test
 ```
 
-GitHub CI (`.github/workflows/ci.yml`) runs the model-free checks on Linux for every push
-and pull request: ruff, `make native`, `make sanitize`, `make test`. Everything that needs
+`scripts/dev/local_ci.sh` runs the model-free checks (ruff, `make native`, `make sanitize`,
+`make test`) on macOS or Linux; there is no hosted CI. Everything that needs
 Metal or the model runs locally with `scripts/regress_m4.sh MODEL`.
 
 Build a binary release tarball (Apple Silicon only; `-mcpu=apple-m1`, macOS ≥ 14):
