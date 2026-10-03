@@ -18,6 +18,8 @@
   - steered answers identical with and without MTP;
   - unchanged output with steering off.
 - No pre-made vectors are shipped. See `docs/REDLITE_DEV52_STEERING.md`.
+- dev52b: `--history FILE`, a prefilled conversation (`user:` / `assistant:` turns) read before the first message,
+  in `redlite chat` and `redlite-generate`.
 
 ## 0.5.1 — 2026-10-03
 
