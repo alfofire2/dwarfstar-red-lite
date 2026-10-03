@@ -85,8 +85,11 @@ static void usage(FILE *out) {
         "  --min-p M           drop candidates below M x the top probability (default 0 = off; llama.cpp uses 0.05)\n"
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
-        "  --cache-mib N|full  routed-expert cache budget in MiB (default 4096); full = every expert of the file,\n"
-        "                      computed from its expert payload (redlite-engine info prints it)\n"
+        "  --cache-mib N|full  routed-expert cache budget in MiB (default 4096); full = every expert of the file,\n"        "                      computed from its expert payload (redlite-engine info prints it)\n"
+"  --steer FILE        dev52: activation steering vector (hidden float32 values, scripts/dev/steer_extract.py)\n"
+"  --steer-layers A-B  layers whose input is steered (default 16-31)\n"
+"  --steer-strength S  x += S * vector at those layers for every generated token (default 1; /steer S in chat)\n"
+"  --steer-tokens N    steer only the first N tokens of each answer (default 0 = the whole answer)\n"
         "  --batch N           prompt tokens per batched Metal prefill chunk (default 2048; 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
@@ -157,6 +160,25 @@ static int parse_f32(const char *s, float *out) {
     return 1;
 }
 
+/* dev52: activation steering (--steer FILE). g_steer_base is the strength the user chose (/steer S changes it);
+ * with --steer-tokens N only the first N tokens of each answer are steered. */
+static const char *g_steer_path = NULL;
+static float g_steer_base = 1.0f;
+static uint32_t g_steer_tokens = 0u;
+static void steer_at(rl_engine *e, uint32_t generated) {
+    if (g_steer_path) rl_engine_set_steering_strength(e, g_steer_tokens && generated >= g_steer_tokens ? 0.0f : g_steer_base);
+}
+
+/* Batched prefill of ids; with steering on, the last prompt token goes through an ordinary (steered) step instead,
+ * so the first answer token is steered too (the batched prefill never is). */
+static int prefill_maybe_steered(rl_engine *e, const uint32_t *ids, uint32_t n, float *logits, rl_engine_step_stats *st,
+                                 char *error, size_t cap) {
+    if (!g_steer_path || g_steer_base == 0.0f || n < 2u) return rl_engine_prefill(e, RL_BACKEND_GPU, ids, n, logits, st, error, cap);
+    steer_at(e, 0u);
+    return rl_engine_prefill(e, RL_BACKEND_GPU, ids, n - 1u, NULL, st, error, cap) &&
+           rl_engine_step(e, RL_BACKEND_GPU, ids[n - 1u], logits, st, error, cap);
+}
+
 static int interactive_chat(
         rl_engine *engine,
         const rl_engine_info *info,
@@ -182,7 +204,7 @@ static int interactive_chat(
         return 0;
     }
 
-    printf("Red Lite chat ready. Commands: /reset, /help, /quit\n");
+    printf("Red Lite chat ready. Commands: /reset, /help, /quit%s\n", g_steer_path ? ", /steer S" : "");
     printf("The model stays loaded and the conversation is kept. Ctrl-C stops an answer; at the prompt it quits.\n\n");
     uint32_t turn = 0;
     for (;;) {
@@ -196,8 +218,14 @@ static int interactive_chat(
             while (len && (line[len - 1u] == '\n' || line[len - 1u] == '\r')) line[--len] = '\0';
             if (!len) continue;
             if (strcmp(line, "/quit") == 0 || strcmp(line, "/exit") == 0) break;
+            if (g_steer_path && strncmp(line, "/steer", 6) == 0 && (line[6] == '\0' || line[6] == ' ')) {
+                if (line[6] == ' ') { char *end = NULL; const float s = strtof(line + 7, &end); if (end != line + 7) g_steer_base = s; }
+                printf("steering strength %.3g%s\n\n", (double)g_steer_base, g_steer_tokens ? " (first tokens of each answer)" : "");
+                continue;
+            }
             if (strcmp(line, "/help") == 0) {
-                printf("/reset  clear the conversation and the model state\n/quit   leave the chat\n\n");
+                printf("/reset  clear the conversation and the model state\n/quit   leave the chat\n%s\n",
+                       g_steer_path ? "/steer S  steering strength (0 = off); /steer prints it\n" : "");
                 continue;
             }
             if (strcmp(line, "/reset") == 0) {
@@ -256,7 +284,7 @@ static int interactive_chat(
 
         rl_engine_step_stats step = {0};
         const double prefill_start = now_ms();
-        if (!rl_engine_prefill(engine, RL_BACKEND_GPU, ids, prompt_tokens, logits, &step, error, error_cap)) {
+        if (!prefill_maybe_steered(engine, ids, prompt_tokens, logits, &step, error, error_cap)) {
             free(ids); free(logits); free(answer); free(line); return 0;
         }
         const double prefill_ms = now_ms() - prefill_start;
@@ -278,7 +306,7 @@ static int interactive_chat(
         memcpy(answer + answer_len, piece_, (size_t)b_); answer_len += (size_t)b_; generated++; \
         if (stream && b_) { fwrite(piece_, 1, (size_t)b_, stdout); fflush(stdout); } \
     } while (0)
-#define IA_STEP(tok) do { if (!rl_engine_step(engine, RL_BACKEND_GPU, (tok), logits, &step, error, error_cap)) { \
+#define IA_STEP(tok) do { steer_at(engine, generated); if (!rl_engine_step(engine, RL_BACKEND_GPU, (tok), logits, &step, error, error_cap)) { \
         free(ids); free(logits); free(logits1); free(answer); free(line); return 0; } } while (0)
         float *logits1 = speculate ? (float *)malloc((size_t)info->vocab * sizeof(float)) : NULL;
         if (speculate && logits1) {
@@ -300,6 +328,7 @@ static int interactive_chat(
                     continue;
                 }
                 uint32_t d = 0;
+                steer_at(engine, generated);
                 if (!rl_engine_mtp_draft(engine, u, mtp_pos++, &d, NULL, error, error_cap) ||
                     !rl_engine_verify2(engine, u, d, logits, logits1, error, error_cap)) {
                     free(ids); free(logits); free(logits1); free(answer); free(line); return 0;
@@ -347,6 +376,7 @@ static int interactive_chat(
             answer_len += (size_t)bytes;
             generated++;
             if (stream && bytes) { fwrite(piece, 1, (size_t)bytes, stdout); fflush(stdout); }
+            steer_at(engine, generated);
             if (generated == max_tokens) {
                 if (!rl_engine_step(engine, RL_BACKEND_GPU, next, NULL, &step, error, error_cap)) {
                     free(ids); free(logits); free(answer); free(line); return 0;
@@ -395,6 +425,7 @@ int main(int argc, char **argv) {
     uint32_t state_max_mib = 8192u;
     int raw = 0, stream = 1, stats = 0, interactive = 0, json = 0;
     uint32_t max_tokens = 256u;
+    uint32_t steer_first = 16u, steer_last = 31u;   /* dev52: default steered layers: the middle third */
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
     rl_sampler_params sp;
@@ -412,6 +443,12 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--tokens-out") == 0) tokens_out = argv[++i];
         else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
         else if (strcmp(argv[i], "--mtp") == 0) cfg.mtp_path = argv[++i];
+        else if (strcmp(argv[i], "--steer") == 0) g_steer_path = argv[++i];
+        else if (strcmp(argv[i], "--steer-strength") == 0) { if (!parse_f32(argv[++i], &g_steer_base)) return 2; }
+        else if (strcmp(argv[i], "--steer-tokens") == 0) { if (!parse_u32(argv[++i], &g_steer_tokens)) return 2; }
+        else if (strcmp(argv[i], "--steer-layers") == 0) {
+            if (sscanf(argv[++i], "%u-%u", &steer_first, &steer_last) != 2) { fprintf(stderr, "--steer-layers wants A-B\n"); return 2; }
+        }
         else if (strcmp(argv[i], "--state-max-mib") == 0) { if (!parse_u32(argv[++i], &state_max_mib)) return 2; }
         else if (strcmp(argv[i], "--max-tokens") == 0) { if (!parse_u32(argv[++i], &max_tokens)) return 2; }
         else if (strcmp(argv[i], "--temperature") == 0) { if (!parse_f32(argv[++i], &sp.temperature)) return 2; }
@@ -443,6 +480,9 @@ int main(int argc, char **argv) {
     rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
     if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
     const rl_engine_info *in = rl_engine_info_get(e);
+    if (g_steer_path && !rl_engine_load_steering(e, g_steer_path, steer_first, steer_last, g_steer_base, error, sizeof(error))) {
+        fprintf(stderr, "steering: %s\n", error); return 1;
+    }
     rl_gguf_model g;
     if (!rl_gguf_model_open(model, &g, error, sizeof(error))) { fprintf(stderr, "tokenizer model open failed: %s\n", error); return 1; }
     rl_tokenizer *tk = rl_tokenizer_create(&g, error, sizeof(error));
@@ -490,7 +530,12 @@ int main(int argc, char **argv) {
     if (mtp_measure_mode) return mtp_measure(e, ids, prompt_len, max_tokens, in->vocab);
     uint32_t state_loaded = 0, state_saved = 0;
     const rl_statecache scache = {state_dir, (uint64_t)state_max_mib * 1024u * 1024u};
-    if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len, logits, &st, &state_loaded, &state_saved, error, sizeof(error))) {
+    if (g_steer_path && g_steer_base != 0.0f && prompt_len >= 2u) {   /* dev52: the last prompt token is steered */
+        if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len - 1u, logits, &st, &state_loaded, &state_saved, error, sizeof(error)) ||
+            (steer_at(e, 0u), !rl_engine_step(e, RL_BACKEND_GPU, ids[prompt_len - 1u], logits, &st, error, sizeof(error)))) {
+            fprintf(stderr, "prefill failed: %s\n", error); return 1;
+        }
+    } else if (!rl_statecache_prefill(e, RL_BACKEND_GPU, &scache, ids, prompt_len, logits, &st, &state_loaded, &state_saved, error, sizeof(error))) {
         fprintf(stderr, "prefill failed: %s\n", error); return 1;
     }
     const double prefill_ms = now_ms() - t_prefill;
@@ -537,6 +582,7 @@ int main(int argc, char **argv) {
                 const uint32_t t0 = rl_sampler_sample(&sampler, logits);
                 GEN_EMIT(t0);
                 if (stopped_on_eog || generated >= max_tokens) break;
+                steer_at(e, generated);
                 if (!rl_engine_step(e, RL_BACKEND_GPU, t0, logits, &st, error, sizeof(error))) { fprintf(stderr, "\ndecode failed: %s\n", error); return 1; }
                 u = rl_sampler_sample(&sampler, logits);
                 GEN_EMIT(u);
@@ -547,6 +593,7 @@ int main(int argc, char **argv) {
             if (rl_engine_position(e, RL_BACKEND_GPU) + 2u > in->context) break;
             uint32_t d = 0;
             const double c0 = now_ms();
+            steer_at(e, generated);
             if (!rl_engine_mtp_draft(e, u, mtp_pos++, &d, NULL, error, sizeof(error))) { fprintf(stderr, "\nMTP draft failed: %s\n", error); return 1; }
             const double c1 = now_ms();
             if (!rl_engine_verify2(e, u, d, logits, logits1, error, sizeof(error))) { fprintf(stderr, "\nspeculative decode failed: %s\n", error); return 1; }
@@ -582,6 +629,7 @@ int main(int argc, char **argv) {
             if (stream) { fwrite(piece, 1, (size_t)n, stdout); fflush(stdout); }
         }
         if (generated >= max_tokens) break;
+        steer_at(e, generated);
         if (!rl_engine_step(e, RL_BACKEND_GPU, next, logits, &st, error, sizeof(error))) {
             fprintf(stderr, "\ndecode failed: %s\n", error); return 1;
         }

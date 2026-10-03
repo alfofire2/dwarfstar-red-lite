@@ -28,7 +28,8 @@ struct rl_metal_engine {
     id<MTLDevice> dev;
     id<MTLCommandQueue> queue;
     id<MTLLibrary> lib;
-    id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
+    id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add, p_steer;
+    id<MTLBuffer> steer;                                        /* dev52: steering vector (hidden floats) */
     id<MTLComputePipelineState> p_moe_tail;                    /* dev39: fused end of a GPU-routed layer */
     /* dev45: MTP block (kcache/vcache[n_attention] hold its KV rows) */
     int mtp;

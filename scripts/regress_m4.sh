@@ -120,6 +120,10 @@ fi
 echo "== persistent engine =="
 expect_line engine.info "recurrent=36 full-attention=12" "$BIN/redlite-engine" info "$MODEL"
 expect_line engine.parity "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib 1024 --context 64
+# dev52: the same with activation steering on both backends (a fixed random vector, layers 10-30, strength 3)
+python3 -c "import random,struct; random.seed(7); open('$LOG/steer.f32','wb').write(struct.pack('<2048f',*[random.gauss(0,0.05) for _ in range(2048)]))"
+expect_line engine.parity.steered "MULTI-TOKEN ENGINE PARITY: YES" env RL_STEER_FILE="$LOG/steer.f32" RL_STEER_LAYERS=10-30 RL_STEER_STRENGTH=3 \
+  "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879 --cache-mib 1024 --context 64
 
 if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   echo "== GPU-routed decode (dev21, full residency; >= 40 GiB) =="

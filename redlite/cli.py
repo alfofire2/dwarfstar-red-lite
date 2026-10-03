@@ -208,6 +208,16 @@ def _print_gpu_advice(hw, wired: int) -> None:
         print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}   (docs/REDLITE_DEV51_24GB_DECODE.md)")
 
 
+def _steer_args(args) -> list[str]:
+    """dev52: redlite-generate steering options from `redlite chat`"""
+    out: list[str] = []
+    for flag, value in (("--steer", args.steer), ("--steer-layers", args.steer_layers),
+                        ("--steer-strength", args.steer_strength), ("--steer-tokens", args.steer_tokens)):
+        if value is not None:
+            out += [flag, str(value)]
+    return out
+
+
 def cmd_chat(args) -> int:
     hw = detect(Path(args.model).parent if args.model else NATIVE_MODELS_DIR)
     _require_apple(hw)
@@ -233,7 +243,7 @@ def cmd_chat(args) -> int:
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
             batch=args.batch, json_stats=args.json, min_p=args.min_p,
-            mtp=_mtp_for(model, cache_mib, args),
+            mtp=_mtp_for(model, cache_mib, args), steer=_steer_args(args),
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -368,6 +378,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
     s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
     s.add_argument("--no-mtp", action="store_true", help="Do not use the MTP head for speculative decoding even when it applies")
+    s.add_argument("--steer", default=None, help="Activation steering vector (scripts/dev/steer_extract.py); /steer S in the chat changes the strength")
+    s.add_argument("--steer-layers", default=None, help="Steered layers A-B (default 16-31)")
+    s.add_argument("--steer-strength", type=float, default=None, help="Steering strength (default 1; typical 0.2-0.5 over 8-12 layers)")
+    s.add_argument("--steer-tokens", type=int, default=None, help="Steer only the first N tokens of each answer")
     s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
     s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
     s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")

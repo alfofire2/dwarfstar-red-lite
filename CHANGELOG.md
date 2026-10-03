@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (after 0.5.1)
+
+### dev52 — activation steering (M4 Max 48 GiB)
+
+- **Mechanism:** `strength × vector` is added to the residual stream at the input of chosen layers, on every decode
+  path: bounded cache, GPU-routed, the 2-row MTP verify, and the CPU oracle.
+  - The batched prefill is not steered; the last prompt token takes a steered step instead.
+  - `--steer-tokens N` steers only the start of each answer.
+- **Use:**
+  - `redlite chat --steer FILE --steer-layers A-B --steer-strength S`, and `/steer S` during the chat;
+  - `redlite-generate` takes the same options;
+  - `scripts/dev/steer_extract.py` builds a vector from two prompt sets (difference of means).
+- **Validation:**
+  - CPU vs Metal parity with steering on: YES on the bounded and GPU-routed paths (new regress check
+    `engine.parity.steered`);
+  - steered answers identical with and without MTP;
+  - unchanged output with steering off.
+- No pre-made vectors are shipped. See `docs/REDLITE_DEV52_STEERING.md`.
+
 ## 0.5.1 — 2026-10-03
 
 24 GiB Macs can now hold every expert. With the GPU limit raised, the M4 Pro 24 GiB decodes at 46.0 tok/s, and

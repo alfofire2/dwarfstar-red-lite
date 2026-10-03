@@ -460,6 +460,13 @@ int main(int argc, char **argv) {
     rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
     if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
     const rl_engine_info *in = rl_engine_info_get(e);
+    if (getenv("RL_STEER_FILE")) {   /* dev52: parity with steering on (RL_STEER_LAYERS=A-B, RL_STEER_STRENGTH=S) */
+        unsigned a = 16u, b = 31u; float s = 1.0f;
+        if (getenv("RL_STEER_LAYERS")) sscanf(getenv("RL_STEER_LAYERS"), "%u-%u", &a, &b);
+        if (getenv("RL_STEER_STRENGTH")) s = strtof(getenv("RL_STEER_STRENGTH"), NULL);
+        if (!rl_engine_load_steering(e, getenv("RL_STEER_FILE"), a, b, s, error, sizeof(error))) { fprintf(stderr, "steering: %s\n", error); return 1; }
+        printf("steering             : layers %u-%u, strength %g\n", a, b, (double)s);
+    }
     printf("runtime              : native Qwen3-Next engine CPU-vs-Metal multi-token parity\n");
     print_info(in);
     printf("tokens               : %u\n", token_count);

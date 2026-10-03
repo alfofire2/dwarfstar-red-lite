@@ -161,6 +161,18 @@ int rl_engine_verify2(rl_engine *engine, uint32_t t0, uint32_t d, float *logits0
 int rl_engine_verify_commit(rl_engine *engine, int accepted, char *error, size_t error_cap);
 int rl_engine_mtp_draft(rl_engine *engine, uint32_t next_token, uint32_t mtp_position, uint32_t *draft, float *logits,
                         char *error, size_t error_cap);
+/*
+ * dev52: activation steering. While strength != 0, every decoded token (rl_engine_step on either backend,
+ * rl_engine_verify2) adds strength * vector to the residual stream at the input of layers first..last (inclusive).
+ * The batched prefill is never steered. vector holds `hidden` floats and is copied; NULL clears it. The strength
+ * can change between tokens (rl_engine_set_steering_strength), e.g. to steer only the start of an answer.
+ */
+int rl_engine_set_steering(rl_engine *engine, const float *vector, uint32_t first_layer, uint32_t last_layer, float strength,
+                           char *error, size_t error_cap);
+void rl_engine_set_steering_strength(rl_engine *engine, float strength);
+/* dev52: rl_engine_set_steering from a file of `hidden` little-endian float32 values (scripts/dev/steer_extract.py). */
+int rl_engine_load_steering(rl_engine *engine, const char *path, uint32_t first_layer, uint32_t last_layer, float strength,
+                            char *error, size_t error_cap);
 /* Monotonic milliseconds (same clock as the step statistics). */
 double rl_engine_now_ms_public(void);
 
