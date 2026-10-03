@@ -2,6 +2,14 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev50 — pipelined prefill expert decode (M4 Pro 24 GiB, M4 Max 48 GiB)
+
+- The prefill expert kernels decode step k+1's weights into registers while step k multiplies. Bit-identical.
+  Experts −2.7 % / −4.4 %, prefill 922 → 936 tok/s (M4 Max) and 353 → 360 tok/s (M4 Pro).
+- Measured: the decode **arithmetic** costs ~1.1 s of the experts' 3.86 s; reading the weights costs ~0.36 s.
+- Four 32-pair-tile kernels, which halve the decodes per pair, were all slower (4.2–9.6 s vs 3.9 s) and were
+  reverted. See `docs/REDLITE_DEV49_PREFILL_24GB.md`.
+
 ### dev49 — prompt ingestion on the 24 GiB Mac (M4 Pro 24 GiB, M4 Max 48 GiB)
 
 - The M4 Pro's 348 tok/s on 8192 tokens is GPU compute: dense 10.9 s + experts 10.3 s. The 12.4 s of expert loading
