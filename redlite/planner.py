@@ -191,9 +191,12 @@ NATIVE_GPU_MARGIN_MIB = 1024
 # first one present whose full residency fits, else the 24 GiB reference file
 NATIVE_MODEL_PREFERENCE = (
     "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+    "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
     "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
 )
 NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
+# dev54: the 24 GiB files in preference order: the Red Lite E3 mix (same size and types, better quality), then Bartowski's
+NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf", NATIVE_REFERENCE_MODEL)
 
 
 @dataclass(frozen=True)
@@ -287,8 +290,10 @@ def select_native_model(models_dir: str | Path, ram_bytes: int, wired_mib: int =
             res = native_residency(p)
             if res is not None and native_full_residency_fits(ram_bytes, res, wired_mib):
                 return p
-    ref = d / NATIVE_REFERENCE_MODEL
-    return ref if ref.is_file() else present[-1]
+    for name in NATIVE_SMALL_MODELS:
+        if (d / name).is_file():
+            return d / name
+    return present[-1]
 
 
 NATIVE_MTP_FILE = "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf"
