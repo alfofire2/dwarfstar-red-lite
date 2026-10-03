@@ -2,6 +2,15 @@
 
 ## Unreleased (after 0.4.1)
 
+### dev49 — prompt ingestion on the 24 GiB Mac (M4 Pro 24 GiB, M4 Max 48 GiB)
+
+- The M4 Pro's 348 tok/s on 8192 tokens is GPU compute: dense 10.9 s + experts 10.3 s. The 12.4 s of expert loading
+  overlaps them on the prefetch thread. With 16 GPU cores against 40 it runs at the M4 Max's efficiency, so
+  500 tok/s would need kernels about 1.45× faster on every Mac.
+- About 44 % of the prefill expert time is decoding 2-bit weights (measured by removing the decode).
+- Kept: vector codebook loads and branch-free signs in `rm_group8`. Bit-identical; experts −3.4 %, prefill +1.4 %
+  on both Macs (M4 Pro 348 → 353, M4 Max 912 → 925 tok/s). See `docs/REDLITE_DEV49_PREFILL_24GB.md`.
+
 ### dev48 — answers compared with Qwen's own API (M4 Max 48 GiB)
 
 - `scripts/dev/api_compare.py` compares greedy answers word for word with Alibaba Cloud's

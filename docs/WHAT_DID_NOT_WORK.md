@@ -93,6 +93,12 @@ them.
 - **The Qwen API as a greedy reference (dev48).** `temperature: 0` alone gave a different text in one run of
   three; `top_k: 1` is needed. Its logprobs are misaligned: the chosen token was missing from its own top 5 at
   23 of 30 positions. Only text is compared.
+- **A first single run overstated a gain (dev49).** The vectorized expert decode measured −10 % expert time in one
+  run against an earlier baseline run (4.40 → 3.94 s); alternated pairs gave −3.4 % (4.105 → 3.968 s). The
+  baseline had been measured in a hotter state. Only alternated pairs are reported.
+- **Removing the multiplications to bound a kernel (dev49).** With the simdgroup MACs deleted, the expert time
+  fell to 266 ms because the compiler also dropped the now-unused weight decode. Only the "decode replaced by
+  constants" variant (2.45 s of 4.40 s) is a valid bound.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

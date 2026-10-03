@@ -1,0 +1,20 @@
+{
+  "milestone": "dev49",
+  "commit": "613c788 (vectorized rm_group8) vs main 00e1dc5",
+  "date": "2026-10-03",
+  "command": "redlite-engine logits IQ2_XXS --tokens <8193 fixture ids> --backend gpu --dump-from 8192 --context 8448 --cache-mib full|4096 (default 2048-token chunks); base and new builds alternated, 45-60 s cooling",
+  "m4pro_24gb_cache_4096": {
+    "gpu_cores": 16,
+    "split_ms": {"total": 23524, "dense_gpu": 10929, "experts_gpu": 10301, "expert_load": 12378, "expert_wait": 10418, "prefetch": 11614, "expert_bytes_read_mib": 48897, "expert_loads": 69071},
+    "stage_profile_ms": {"rec qkv/z/ba": 3610.5, "rec conv/state/tail": 1487.4, "rec ssm_out": 1252.9, "attn q/k/v": 901.4, "attn rope+gqa": 2067.9, "attn o": 420.3, "router(+pred)": 403.3, "shared expert": 627.0, "norm": 22.0, "resid+norm": 47.9},
+    "ab_tok_s": {"base": [348.1, 348.0], "dev49": [353.1, 353.2]},
+    "ab_experts_gpu_ms": {"base": [10290.9, 10301.4], "dev49": [9939.5, 9944.2]}
+  },
+  "m4max_48gb_full_residency": {
+    "gpu_cores": 40,
+    "ab_tok_s": {"base": [907.8, 912.6, 912.3], "dev49": [925.7, 924.9, 922.3]},
+    "ab_experts_gpu_ms": {"base": [4109.6, 4103.4, 4104.0], "dev49": [3968.7, 3972.3, 3964.8]},
+    "decode_share_experiment": {"experts_gpu_ms_baseline": 4402.9, "experts_gpu_ms_weights_not_decoded": 2450.6, "note": "rm_group8 replaced by constants (wrong output, measurement only); a run without the multiplications (265.6 ms) is not usable: the compiler drops the decode too"}
+  },
+  "parity": "logits bit-identical to the base build (1000-token prefill + 100 positions); quick_parity.sh PASS on IQ2_XXS and IQ3_XXS"
+}
