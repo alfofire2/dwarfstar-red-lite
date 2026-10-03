@@ -90,8 +90,25 @@ them.
   MacOSX26.5.
 - **Chunk-parallel DeltaNet prefill (dev44): not built.** Measured ceiling: the recurrence is at most 6.7 % of an
   8387-token prefill, so the published 1.3–1.45× would give about 2 %.
-- **Float16 KV cache (dev47): not built.** The prefill attention `attn_fa_b` loads K/V straight into
-  `simdgroup_float8x8` tiles; half storage needs a staged rewrite of that kernel.
+- **Float16 KV cache (dev53): built, measured, not kept.** Every Metal attention kernel was switched to float16 storage
+  (`attn_fa_b` with `simdgroup_half8x8` K/V tiles, mixed-precision multiply-accumulate), and the CPU oracle rounded K/V
+  to float16 (identical to the hardware conversion on 4.3 M bit patterns). Model-free self-test, `quick_parity.sh`
+  IQ2_XXS and the 4K/8K/16K comparisons with llama.cpp passed. The median KL vs llama.cpp was slightly better
+  (16K: 6.9e-9 vs 9.0e-9); single-logit outliers moved (16K: 9.66 vs 6.21, at positions with KL ~1e-7).
+  - **Gain:** half the KV memory (64K context: footprint 21,567 → 20,030 MiB on the M4 Max). On the M4 Pro 24 GiB
+    with every expert resident, MTP + a 32K context fit only with float16 (20.4 GiB; float32 ran out of GPU memory).
+    But MTP there decoded 32.6 tok/s against 37.2 without it, and float32 without MTP already fit (19.9 GiB).
+  - **No speed gain:** M4 Max 33.5K-token prompt, decode 56.1 / 56.8 vs 54.5 / 57.4 tok/s; prefill 465* / 620 vs
+    566 / 587 tok/s (*disturbed run).
+  - **Gates failed:**
+    - `engine.parity.steered`: 2 router id mismatches CPU vs Metal; logits 1.5e-4 vs 5.7e-6. The unsteered parity
+      passed but its logits diff rose from ~1.5e-5 to 1.0e-4.
+    - IQ3_XXS: `prefill.parity.96` (6 router mismatches), and `logits.long_context_vs_llama` /
+      `long_context_full_residency` (argmax disagreement; KL 2.9e-3 within its bound).
+  - **Why:** CPU (double) and Metal (float) compute nearly equal K/V values. Float16 storage turns a tiny difference
+    that straddles a rounding boundary into one float16 step (~1e-3 relative). Next to the router near-ties of these
+    fixtures, that flips expert choices. A CPU/Metal router divergence is a hard failure, and the gain is memory
+    alone, so it was reverted.
 - **The Qwen API as a greedy reference (dev48).** `temperature: 0` alone gave a different text in one run of
   three; `top_k: 1` is needed. Its logprobs are misaligned: the chosen token was missing from its own top 5 at
   23 of 30 positions. Only text is compared.
