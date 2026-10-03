@@ -43,7 +43,7 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 - **2c — done (dev51c):** on by default in `redlite chat` / `serve` with a bounded cache. **Cache-aware routing as the bounded-cache default.** It gains +5 % on the M4 Pro but changes outputs. Decide
   with the Qwen API comparison (dev48) and perplexity, both run on the M4 Pro.
 
-## Phase 3 — long context
+## Phase 3 — long context (float16 KV built and not kept, dev53: see WHAT_DID_NOT_WORK)
 
 - **Float16 KV cache.** It halves the attention cache's memory and traffic: at 33.5K tokens decode is 25.7 tok/s,
   mostly attention, and 64K positions would take 1.5 GiB instead of 3.
