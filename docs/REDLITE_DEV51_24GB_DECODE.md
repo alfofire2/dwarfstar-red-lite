@@ -1,6 +1,6 @@
 # Red Lite dev51 — decode on the 24 GiB Mac
 
-Status: 2a and 2b done, 2c open (roadmap Phase 2). Measured on the Apple M4 Pro 24 GiB, 2026-10-03, AC power, IQ2_XXS.
+Status: done (roadmap Phase 2: 2a, 2b, 2c). Measured on the Apple M4 Pro 24 GiB, 2026-10-03, AC power, IQ2_XXS.
 
 ## 2a. Expert cache size sweep
 
@@ -70,6 +70,29 @@ sudo sysctl iogpu.wired_limit_mb=21741     # IQ2_XXS + MTP head (19429 without M
 
 To make it permanent, put `iogpu.wired_limit_mb=21741` in `/etc/sysctl.conf`. Not tested here.
 
+## 2c. Cache-aware routing as the bounded-cache default
+
+`RL_ROUTE_CACHE_BIAS=0.5` (dev46) prefers experts that are already loaded when the router's scores are close.
+On the M4 Pro with a 4 GiB cache it decodes +5 % (32.68 → 34.31 tok/s) and cuts misses from 29.5 to 22.9 per token.
+It changes outputs, so dev46 left it opt-in until its quality could be measured.
+
+**Quality**, measured now against Qwen's own API (`api_compare.py`, 235 prompts, M4 Pro, 4 GiB cache):
+
+| routing | identical answers | median share of words matching from the start | mean | first word differs |
+|---|---:|---:|---:|---:|
+| exact | 2 | 7.8 % | 13.1 % | 32 |
+| cache-aware, λ = 0.5 | 1 | 8.1 % | 12.7 % | 32 |
+
+The difference is inside what the measurement can resolve. Perplexity on the frozen corpus was 17.586 → 17.583 on the
+M4 Max (dev46). The exact-routing numbers equal the M4 Max's full-residency ones (2 / 7.8 %), as they should: routing
+does not depend on the cache size.
+
+**Decision.** `redlite chat` and `redlite serve --native` set `RL_ROUTE_CACHE_BIAS=0.5` when the expert cache is
+bounded:
+- `--exact-routing` turns it off, and a value already in the environment is respected;
+- with every expert resident there are no misses, and it is not set;
+- the binaries stay exact by default, so the llama.cpp parity checks are unchanged.
+
 ## Scope boundary
 
 - Only the M4 Pro 24 GiB and the IQ2_XXS file were measured.
@@ -79,4 +102,4 @@ To make it permanent, put `iogpu.wired_limit_mb=21741` in `/etc/sysctl.conf`. No
   Long contexts add 48 KiB per position to the footprint.
 - The 1 GiB margin was measured, not derived: footprints were 18,358 and 20,098 MiB against limits of 20,480 and
   22,016.
-- **2c** (cache-aware routing as the bounded-cache default) is not done yet.
+- **2c** relies on agreement with the API and perplexity. No task-level quality benchmark was run.

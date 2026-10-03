@@ -179,3 +179,29 @@ class GpuLimitTests(unittest.TestCase):
                 self.assertIsNone(native_mtp_file(model, "full", ram_bytes=24 * GIB, wired_mib=20480))
                 self.assertIsNotNone(native_mtp_file(model, "full", ram_bytes=24 * GIB, wired_mib=22016))
                 self.assertIsNotNone(native_mtp_file(model, "full"))   # no budget given: unchanged dev45 behaviour
+
+
+class RouteBiasDefaultTests(unittest.TestCase):
+    """dev51 2c: cache-aware routing (lambda 0.5) by default only with a bounded cache, never over a user setting."""
+
+    def _run(self, cache_mib, exact=False, env=None):
+        import argparse
+        import os
+        from redlite.cli import _route_bias_env
+        with patch.dict(os.environ, env or {}, clear=False):
+            os.environ.pop("RL_ROUTE_CACHE_BIAS", None) if env is None else None
+            with patch("redlite.planner.native_residency", return_value=NativeResidency(17316, GIB)), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                _route_bias_env("/m/x.gguf", cache_mib, argparse.Namespace(exact_routing=exact))
+            return os.environ.get("RL_ROUTE_CACHE_BIAS")
+
+    def test_bounded_cache_gets_the_bias(self):
+        self.assertEqual(self._run(4096), "0.5")
+
+    def test_full_residency_does_not(self):
+        self.assertIsNone(self._run(17316))
+        self.assertIsNone(self._run("full"))
+
+    def test_exact_routing_and_user_setting_win(self):
+        self.assertIsNone(self._run(4096, exact=True))
+        self.assertEqual(self._run(4096, env={"RL_ROUTE_CACHE_BIAS": "0"}), "0")

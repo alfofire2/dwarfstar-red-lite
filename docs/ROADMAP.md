@@ -40,7 +40,7 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
   Estimate, not measured: about 40 tok/s plain, since the M4 Pro has half the M4 Max's memory bandwidth.
   Needs a clear guide for users and planner support.
-- **2c. Cache-aware routing as the bounded-cache default.** It gains +5 % on the M4 Pro but changes outputs. Decide
+- **2c — done (dev51c):** on by default in `redlite chat` / `serve` with a bounded cache. **Cache-aware routing as the bounded-cache default.** It gains +5 % on the M4 Pro but changes outputs. Decide
   with the Qwen API comparison (dev48) and perplexity, both run on the M4 Pro.
 
 ## Phase 3 — long context
