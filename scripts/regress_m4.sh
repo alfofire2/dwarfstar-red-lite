@@ -188,6 +188,10 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
   run build.ref_sampler env REDLITE_LLAMA_DIR="$LLAMA_DIR" bash "$ROOT/scripts/dev/build_ref_sampler.sh"
   expect_line sampler.vs_llama "SAMPLER PARITY: YES" python3 "$ROOT/scripts/dev/compare_sampler.py" --bin "$BIN" --draws 20000
   if [[ -x "$BIN/redlite-ref-llama" ]]; then
+    # dev51: below ~40 GiB the oracle (whole model on Metal) can exceed the GPU working set; such checks are SKIPs
+    # with the reason, not engine failures. Raising iogpu.wired_limit_mb (docs/REDLITE_DEV51_24GB_DECODE.md) lets them run.
+    OOM_WHY="llama.cpp oracle out of GPU memory: raise iogpu.wired_limit_mb, or compare the native dumps with a 48 GiB Mac's"
+    oom() { grep -qE "OutOfMemory|Insufficient Memory" "$1" 2>/dev/null; }
     REF_TOK="$("$BIN/redlite-ref-llama" "$MODEL" tokenize --text "$PROMPT" 2>/dev/null | head -1)"
     NAT_TOK="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" | head -1)"
     if [[ -n "$REF_TOK" && "$REF_TOK" == "$NAT_TOK" ]]; then echo "PASS  tokenize.vs_llama"; PASS=$((PASS + 1)); else echo "FAIL  tokenize.vs_llama ($NAT_TOK vs $REF_TOK)"; FAIL=$((FAIL + 1)); FAILED+=(tokenize.vs_llama); fi
@@ -205,15 +209,17 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
     "$BIN/redlite-ref-llama" "$MODEL" logits --tokens 9707,11,1879 --out "$LOG/ref.bin" --ctx 64 >"$LOG/logits.ref.log" 2>&1
     # dev31: CPU dequantization of one tensor of every quant type of the file vs ggml's to_float, bit for bit
     expect_line dequant.vs_llama "DEQUANT PARITY: YES" bash "$ROOT/scripts/dev/dequant_check.sh" "$MODEL"
-    expect_line logits.vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.bin" "$LOG/ref.bin"
+    if oom "$LOG/logits.ref.log"; then skip logits.vs_llama "$OOM_WHY"; else
+    expect_line logits.vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.bin" "$LOG/ref.bin"; fi
     CHAT_IDS="$("$BIN/redlite-engine" tokenize "$MODEL" --text "$PROMPT" --chat | head -1)"
     CHAT_N="$(echo "$CHAT_IDS" | tr ',' '\n' | wc -l | tr -d ' ')"
     "$BIN/redlite-generate" "$MODEL" --prompt "$PROMPT" --max-tokens 24 --cache-mib 2048 --no-stream --tokens-out "$LOG/gen.native.txt" >"$LOG/gen.native.log" 2>&1
     NAT_GEN="$(tail -n +$((CHAT_N + 1)) "$LOG/gen.native.txt" | tr '\n' ' ' | sed 's/ *$//')"
-    REF_GEN="$("$BIN/redlite-ref-llama" "$MODEL" greedy --tokens "$CHAT_IDS" --max 24 --ctx 128 2>/dev/null | grep '^generated:' | sed 's/^generated: //' | cut -d' ' -f1-24)"
+    REF_GEN="$("$BIN/redlite-ref-llama" "$MODEL" greedy --tokens "$CHAT_IDS" --max 24 --ctx 128 2>"$LOG/gen.ref.log" | grep '^generated:' | sed 's/^generated: //' | cut -d' ' -f1-24)"
     NAT_N=$(echo "$NAT_GEN" | wc -w | tr -d ' ')
     REF_HEAD="$(echo "$REF_GEN" | cut -d' ' -f1-"$NAT_N")"
-    if [[ "$NAT_N" -gt 0 && "$NAT_GEN" == "$REF_HEAD" ]]; then echo "PASS  generate.vs_llama ($NAT_N tokens identical)"; PASS=$((PASS + 1)); else echo "FAIL  generate.vs_llama"; echo "  native: $NAT_GEN"; echo "  ref   : $REF_GEN"; FAIL=$((FAIL + 1)); FAILED+=(generate.vs_llama); fi
+    if oom "$LOG/gen.ref.log"; then skip generate.vs_llama "$OOM_WHY"
+    elif [[ "$NAT_N" -gt 0 && "$NAT_GEN" == "$REF_HEAD" ]]; then echo "PASS  generate.vs_llama ($NAT_N tokens identical)"; PASS=$((PASS + 1)); else echo "FAIL  generate.vs_llama"; echo "  native: $NAT_GEN"; echo "  ref   : $REF_GEN"; FAIL=$((FAIL + 1)); FAILED+=(generate.vs_llama); fi
     if [[ $QUICK -eq 0 ]]; then
       # >1024 positions: the GQA kernel switches to its multi-chunk online-softmax path past 1024 keys,
       # which the short prompts above never reach. The prompt is the frozen fixture
@@ -228,7 +234,8 @@ if [[ -f "$LLAMA_DIR/build/bin/libllama.dylib" ]]; then
         # the first 1100 positions are ingested by the batched prefill (one chunk), the compared positions token by token
         "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.bin" --dump-from 1100 --batch 1100 --cache-mib 4096 --context 1536 >"$LOG/logits.long.native.log" 2>&1
         "$BIN/redlite-ref-llama" "$MODEL" logits --tokens "$LONG_IDS" --out "$LOG/ref.long.bin" --dump-from 1100 --ctx 1536 >"$LOG/logits.long.ref.log" 2>&1
-        expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2
+        if oom "$LOG/logits.long.ref.log"; then skip logits.long_context_vs_llama "$OOM_WHY"; else
+        expect_line logits.long_context_vs_llama "ORACLE LOGITS PARITY: YES" python3 "$ROOT/scripts/dev/compare_dumps.py" "$LOG/native.long.bin" "$LOG/ref.long.bin" --max-logit-abs 2.0 --max-kl 2e-2; fi
         if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
           # dev30: full residency uses the engine's default chunk (2048 tokens, one chunk here) and the preloaded pool
           "$BIN/redlite-engine" logits "$MODEL" --tokens "$LONG_IDS" --backend gpu --out "$LOG/native.long.full.bin" --dump-from 1100 --cache-mib full --context 1536 >"$LOG/logits.long.full.native.log" 2>&1
