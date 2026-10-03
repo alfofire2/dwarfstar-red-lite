@@ -314,6 +314,13 @@ def select_native_model(models_dir: str | Path, ram_bytes: int, wired_mib: int =
 
 
 NATIVE_MTP_FILE = "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf"
+# dev55: below 40 GiB (M4 Pro: half the M4 Max's bandwidth) MTP stops paying at long context: +24 % at 20 prompt tokens,
+# +4 % at 5.6K, 0 % at 11.2K, -12 % at 16.8K. The M4 Max still gains at 16.8K (+2 %), so it has no limit.
+NATIVE_MTP_MAX_CONTEXT_SMALL = 8192
+
+
+def native_mtp_max_context(ram_bytes: int) -> int | None:
+    return NATIVE_MTP_MAX_CONTEXT_SMALL if ram_bytes / GIB < NATIVE_FULL_RESIDENCY_MIN_RAM_GIB else None
 
 
 def native_mtp_file(model_path: str | Path, cache_mib: int | str, disabled: bool = False,

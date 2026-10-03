@@ -11,7 +11,7 @@ import sys
 from . import __version__
 from .hardware import GIB, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import native_defaults, plan_for, select_native_model
+from .planner import native_defaults, native_mtp_max_context, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
@@ -291,7 +291,7 @@ def cmd_chat(args) -> int:
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
             batch=batch, json_stats=args.json, min_p=args.min_p,
-            mtp=mtp, steer=_steer_args(args),
+            mtp=mtp, steer=_steer_args(args), mtp_max_context=native_mtp_max_context(hw.ram_bytes),
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -325,7 +325,8 @@ def _serve_native(args) -> int:
     try:
         return run_native_server(
             str(model), args.host, args.port, args.context or 4096, cache_mib,
-            batch=batch, dry_run=args.dry_run, mtp=mtp,
+            batch=batch, dry_run=args.dry_run, mtp=mtp, mtp_max_context=native_mtp_max_context(hw.ram_bytes),
+            steer=_steer_args(args),
         )
     except FileNotFoundError:
         _die("Native Red Lite server not built. Run: make native")
@@ -453,6 +454,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
     s.add_argument("--no-mtp", action="store_true", help="--native: do not use the MTP head for speculative decoding")
     s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
+    s.add_argument("--steer", default=None, help="--native: activation steering vector for the generated tokens")
+    s.add_argument("--steer-layers", default=None, help="--native: steered layers A-B (default 16-31)")
+    s.add_argument("--steer-strength", type=float, default=None, help="--native: steering strength (default 1)")
+    s.add_argument("--steer-tokens", type=int, default=None, help="--native: steer only the first N tokens of each answer")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

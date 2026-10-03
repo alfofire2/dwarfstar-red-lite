@@ -83,6 +83,7 @@ def run_native_chat(
     json_stats: bool = False,
     min_p: float | None = None,
     mtp: str | None = None,
+    mtp_max_context: int | None = None,
     steer: list[str] | None = None,
 ) -> int:
     cmd = [
@@ -111,6 +112,8 @@ def run_native_chat(
         cmd.extend(["--min-p", str(min_p)])
     if mtp:
         cmd.extend(["--mtp", mtp])
+        if mtp_max_context:
+            cmd.extend(["--mtp-max-context", str(mtp_max_context)])
     if steer:
         cmd.extend(steer)
     print("[redlite]", " ".join(_quote(x) for x in cmd))
@@ -128,6 +131,8 @@ def run_native_server(
     batch: int | None = None,
     dry_run: bool = False,
     mtp: str | None = None,
+    mtp_max_context: int | None = None,
+    steer: list[str] | None = None,
 ) -> int:
     cmd = [
         str(native_server()), model,
@@ -140,6 +145,10 @@ def run_native_server(
         cmd.extend(["--batch", str(batch)])
     if mtp:
         cmd.extend(["--mtp", mtp])
+        if mtp_max_context:
+            cmd.extend(["--mtp-max-context", str(mtp_max_context)])
+    if steer:
+        cmd.extend(steer)
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

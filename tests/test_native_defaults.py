@@ -248,3 +248,10 @@ class GpuPlanTests(unittest.TestCase):
         self.assertEqual(native_gpu_plan(self.RES, 21741, 32768, True), (2048, False))   # MTP dropped at 32K
         self.assertEqual(native_gpu_plan(self.RES, 21741, 16384, True), (512, True))     # smaller chunks keep MTP
         self.assertIsNone(native_gpu_plan(self.RES, 19000, 4096, True))
+
+
+class MtpMaxContextTests(unittest.TestCase):
+    def test_limit_only_below_40gb(self):
+        from redlite.planner import native_mtp_max_context
+        self.assertEqual(native_mtp_max_context(24 * GIB), 8192)
+        self.assertIsNone(native_mtp_max_context(48 * GIB))
