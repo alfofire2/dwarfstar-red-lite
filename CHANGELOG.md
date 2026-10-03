@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased (after 0.5.2)
+
+### dev54 — a better expert mix at the same size (M4 Max 48 GiB)
+
+- From Bartowski's Q8_0 and imatrix, with every non-expert tensor typed as in his IQ2_XXS, the 11 IQ2_XS expert
+  layers were moved to 37–47 (the highest expert input energy in the imatrix) instead of 0–5 and 43–47.
+- **Same size (19.30 GB):** perplexity 16.370 → 16.216 (paired t = −3.91, better on 72/111 chunks); against Qwen's API
+  4 vs 2 identical answers, 13.6 vs 12.6 % mean words matching.
+- Passes `regress_m4.sh` 52/0/0 and `quick_parity.sh`.
+- `scripts/dev/quant_mix.py` reproduces it. Not distributed yet. See `docs/REDLITE_DEV54_QUANT_MIX.md`.
+
 ## 0.5.2 — 2026-10-03
 
 Steering, prefilled conversations, and a faster bounded cache by default.

@@ -121,6 +121,15 @@ them.
 - **Steering doses (dev52).** A difference-of-means vector at strength 1 over 16 layers, or 0.6+ over 8 layers,
   breaks the text into repeated tokens: the vector (|v| 4.35) is added at every steered layer, against a residual
   norm of about 10. Usable doses were 0.2–0.5 over 8–12 layers.
+- **Two GPU jobs at once (dev54).** An API comparison at full residency (17 GiB) started while llama-perplexity held
+  another 19 GB file on the GPU. Request 8 failed with `kIOGPUCommandBufferCallbackErrorOutOfMemory`. GPU-heavy runs
+  are chained, never overlapped.
+- **The pinned llama.cpp's IQ2_XXS recipe is not Bartowski's (dev54).** It makes IQ2_XXS experts (not runnable in the
+  engine) and Q4_K attention. Custom mixes copy every tensor type from Bartowski's file
+  (`scripts/dev/quant_mix.py --like`).
+- **Expert mixes that did not help (dev54).** IQ2_XS down projections on every layer with IQ1_M gate/up: +3 % size
+  and perplexity 16.423 vs 16.370 (t = +1.13), and the engine cannot run it (type word 0x111d). Keeping layers 0–2
+  precise (E3b): no measurable gain (t = −1.28).
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 
