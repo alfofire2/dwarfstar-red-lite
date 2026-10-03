@@ -188,7 +188,10 @@ int main(int argc, char **argv) {
     llama_log_set([](ggml_log_level level, const char *msg, void *) { if (level >= GGML_LOG_LEVEL_ERROR) fputs(msg, stderr); }, nullptr);
     llama_backend_init();
     llama_model_params mp = llama_model_default_params();
-    mp.n_gpu_layers = 999;
+    /* REDLITE_REF_NGL: layers offloaded to Metal (default all). On a 24 GiB Mac the whole 18 GiB model does not fit
+     * the GPU working set (kIOGPUCommandBufferCallbackErrorOutOfMemory); regress_m4.sh offloads part of it (dev51). */
+    const char *ngl = getenv("REDLITE_REF_NGL");
+    mp.n_gpu_layers = ngl ? atoi(ngl) : 999;
     llama_model *model = llama_model_load_from_file(model_path, mp);
     if (!model) { fprintf(stderr, "model load failed\n"); return 1; }
     const llama_vocab *vocab = llama_model_get_vocab(model);
