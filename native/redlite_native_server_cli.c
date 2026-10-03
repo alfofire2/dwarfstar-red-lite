@@ -35,6 +35,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef REDLITE_VERSION
+#define REDLITE_VERSION "dev"   /* the build scripts pass the VERSION file */
+#endif
+
 static volatile sig_atomic_t g_stop = 0;
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
@@ -196,7 +200,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-server 0.4.0 - OpenAI-compatible HTTP server on the native Red Lite engine\n\n"
+        "redlite-server " REDLITE_VERSION " - OpenAI-compatible HTTP server on the native Red Lite engine\n\n"
         "Usage: redlite-server MODEL [options]\n\n"
         "  --host H            bind address (default 127.0.0.1)\n"
         "  --port P            TCP port (default 8080; 0 = ephemeral)\n"

@@ -17,6 +17,12 @@ def _sysctl(key: str) -> str | None:
         return None
 
 
+def gpu_wired_limit_mib() -> int:
+    """dev51: `sysctl iogpu.wired_limit_mb` (the GPU working-set limit an admin can raise until reboot); 0 = macOS default."""
+    raw = _sysctl("iogpu.wired_limit_mb") if platform.system() == "Darwin" else None
+    return int(raw) if raw and raw.isdigit() else 0
+
+
 @dataclass(frozen=True)
 class HardwareInfo:
     system: str

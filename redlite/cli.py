@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from . import __version__
-from .hardware import GIB, detect
+from .hardware import GIB, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
 from .planner import native_defaults, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
@@ -67,6 +67,9 @@ def cmd_doctor(args) -> int:
             sw = f"{mem.swap_used_gib:.2f} GiB" if mem.swap_used_gib is not None else "unknown"
             print(f"Memory free % : {fp}")
             print(f"Swap used     : {sw}")
+        wired = gpu_wired_limit_mib()
+        print(f"GPU limit     : {f'{wired} MiB (iogpu.wired_limit_mb, until reboot)' if wired else 'macOS default'}")
+        _print_gpu_advice(hw, wired)
         for k, v in out["dependencies"].items():
             print(f"{k:13}: {'OK' if v else 'MISSING'}")
         for k, v in status.items():
@@ -177,10 +180,32 @@ def cmd_run(args) -> int:
 def _mtp_for(model, cache_mib, args) -> str | None:
     """dev45: pass the MTP head when it applies (full residency, Instruct file, head present); --no-mtp disables"""
     from .planner import native_mtp_file
-    head = native_mtp_file(model, cache_mib, disabled=getattr(args, "no_mtp", False))
+    head = native_mtp_file(model, cache_mib, disabled=getattr(args, "no_mtp", False),
+                           ram_bytes=detect(Path(model).parent).ram_bytes, wired_mib=gpu_wired_limit_mib())
     if head:
         print(f"[redlite] MTP speculative decoding with {head.name} (same output as plain decoding; --no-mtp disables)")
     return str(head) if head else None
+
+
+def _print_gpu_advice(hw, wired: int) -> None:
+    """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
+    from .planner import NATIVE_MTP_FILE, NATIVE_REFERENCE_MODEL, native_full_residency_mib, native_residency
+    model = NATIVE_MODELS_DIR / NATIVE_REFERENCE_MODEL
+    if hw.ram_gib >= 40 or not model.is_file():
+        return
+    res = native_residency(model)
+    if res is None:
+        return
+    need = native_full_residency_mib(res)
+    head = NATIVE_MODELS_DIR / NATIVE_MTP_FILE
+    need_mtp = native_full_residency_mib(res, head.stat().st_size) if head.is_file() else None
+    if need > hw.ram_bytes / (1024 * 1024) - 2048:
+        return
+    print(f"Full residency: needs a GPU limit of {need} MiB"
+          + (f" ({need_mtp} MiB with MTP)" if need_mtp else "")
+          + f"; now {'OK' if wired >= need else 'not enabled'}")
+    if wired < need:
+        print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}   (docs/REDLITE_DEV51_24GB_DECODE.md)")
 
 
 def cmd_chat(args) -> int:
@@ -190,7 +215,7 @@ def cmd_chat(args) -> int:
         model = Path(args.model).expanduser()
     else:
         # dev31: the best model present in models/ that this machine can hold
-        picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes)
+        picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
         if picked is None:
             _die(f"No native model found in {NATIVE_MODELS_DIR} (expected {DEFAULT_NATIVE_MODEL.name})")
         model = picked
@@ -199,7 +224,7 @@ def cmd_chat(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes, model)
+        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     try:
@@ -234,7 +259,7 @@ def _serve_native(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes, model)
+        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     try:

@@ -9,7 +9,7 @@ OUT="${REDLITE_BUILD_OUT:-$ROOT/.deps/redmetal}"   # REDLITE_BUILD_OUT: release 
 N="$ROOT/native"
 mkdir -p "$OUT"
 
-FLAGS=(-std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic -I"$N")
+FLAGS=(-std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic -I"$N" -DREDLITE_VERSION="\"$(cat "$N/../VERSION")\"")
 ENGINE=(
   "$N/redlite_native_engine.c"
   "$N/redlite_native_engine_cpu.c"

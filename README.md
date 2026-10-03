@@ -50,6 +50,15 @@ multi-token-prediction head. When it sits in `models/` and every expert is resid
 answer is **exactly** the one plain decoding gives, with any sampler. Typical gain: +8 % (creative prose) to
 +30 % (code, arithmetic). `--no-mtp` turns it off.
 
+**24 GiB Macs: raise the GPU limit for +42 % (+60 % with MTP).** macOS lets the GPU use 17.76 GiB on a 24 GiB
+Mac, just under what every IQ2_XXS expert needs. `./bin/redlite doctor` prints the limit to set. After
+`sudo sysctl iogpu.wired_limit_mb=21741` (until the next reboot), `redlite chat` and `redlite serve --native` keep
+every expert resident and use MTP when its head is in `models/`:
+- 32.5 → 46 tok/s, 52.7 with MTP, on an M4 Pro 24 GiB;
+- footprint about 18–20 GiB, so close other heavy apps.
+
+Details: `docs/REDLITE_DEV51_24GB_DECODE.md`.
+
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored
 session is bit-identical to a cold one.
@@ -92,8 +101,10 @@ an 1185-token conversation); any other request resets. `stop` sequences are supp
 In short:
 - **48 GiB, every expert resident:** decode is 19 % faster than the pinned llama.cpp (86.2 vs 72.5 tok/s, 0.5.0),
   97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4× slower than llama.cpp (0.3.0) to on par.
-- **24 GiB:** the native runtime needs about 5 GiB where the llama.cpp launcher keeps the whole 18 GiB model
-  resident. It decodes 33 tok/s, still below the launcher's 36–38, and ingests prompts at 280–350 tok/s.
+- **24 GiB:** with the 4 GiB cache the native runtime uses about 5 GiB and decodes 32–33 tok/s. With the GPU
+  limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
+  52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about
+  360 tok/s.
 - Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from
   `benchmarks/charts.json` by `scripts/dev/make_charts.py`.
 

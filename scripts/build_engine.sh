@@ -6,6 +6,7 @@ OUT="${REDLITE_BUILD_OUT:-$ROOT/.deps/redmetal}"   # REDLITE_BUILD_OUT: release 
 mkdir -p "$OUT"
 
 CC_BIN="${CC:-cc}"
+VERSION_FLAG=(-DREDLITE_VERSION="\"$(cat "$ROOT/VERSION")\"")   # dev51: printed by --help / --version
 FLAGS=(-O2 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Wpedantic -I"$ROOT/native")
 OFFLINE=(
   "$ROOT/native/redlite_native_engine_offline_test.c"
@@ -43,7 +44,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk "${REDLITE_SDK:-macosx}" clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" "${VERSION_FLAG[@]}" \
     "${ENGINE[@]}" \
     "$ROOT/native/redmetal_topk.m" \
     "$ROOT/native/redmetal_router.m" \
@@ -58,7 +59,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   xcrun --sdk "${REDLITE_SDK:-macosx}" clang \
     -O3 -std=c11 -D_FILE_OFFSET_BITS=64 -D_POSIX_C_SOURCE=200809L \
     -Wall -Wextra -Wpedantic -Wno-overlength-strings -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
-    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" \
+    -mcpu="${REDLITE_MCPU:-native}" -fobjc-arc -I"$ROOT/native" "${VERSION_FLAG[@]}" \
     "$ROOT/native/redlite_native_generate_cli.c" \
     "$ROOT/native/redlite_native_sampler.c" \
     "${GEN[@]}" \
