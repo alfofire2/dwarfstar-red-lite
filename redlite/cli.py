@@ -209,10 +209,11 @@ def _print_gpu_advice(hw, wired: int) -> None:
 
 
 def _steer_args(args) -> list[str]:
-    """dev52: redlite-generate steering options from `redlite chat`"""
+    """dev52: redlite-generate steering options (and dev52b --history) from `redlite chat`"""
     out: list[str] = []
     for flag, value in (("--steer", args.steer), ("--steer-layers", args.steer_layers),
-                        ("--steer-strength", args.steer_strength), ("--steer-tokens", args.steer_tokens)):
+                        ("--steer-strength", args.steer_strength), ("--steer-tokens", args.steer_tokens),
+                        ("--history", getattr(args, "history", None))):
         if value is not None:
             out += [flag, str(value)]
     return out
@@ -382,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--steer-layers", default=None, help="Steered layers A-B (default 16-31)")
     s.add_argument("--steer-strength", type=float, default=None, help="Steering strength (default 1; typical 0.2-0.5 over 8-12 layers)")
     s.add_argument("--steer-tokens", type=int, default=None, help="Steer only the first N tokens of each answer")
+    s.add_argument("--history", default=None, help="Prefilled conversation: a text file of 'user: ...' / 'assistant: ...' turns read before the first message")
     s.add_argument("--seed", type=int, default=0, help="Sampling seed (default: fixed native seed)")
     s.add_argument("--stats", action="store_true", help="Print per-turn runtime statistics")
     s.add_argument("--json", action="store_true", help="Write per-turn statistics as JSON lines on stderr")

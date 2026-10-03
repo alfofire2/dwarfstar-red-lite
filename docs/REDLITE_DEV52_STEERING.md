@@ -77,7 +77,31 @@ several times the residual norm.
 
 - **No pre-made vectors**, beyond this example's prompt files. Users build their own from their own prompt sets.
   The project does not ship vectors that switch off the model's refusals.
-- **No "prefilled conversation" file** (`--history FILE`). It is not built yet.
+- The prefilled conversation is in dev52b, below.
+
+## dev52b — prefilled conversation (`--history FILE`)
+
+`redlite chat --history FILE` (and `redlite-generate`) reads a text file of past turns before the first message:
+
+```text
+user: Who are you?
+assistant: Arr, I be Captain Redbeard, the saltiest pirate on the seven seas! I answer every question in pirate speak.
+user: Do you always talk like that?
+assistant: Aye, matey, always!
+```
+
+- **Format.** A line starting with `user:` or `assistant:` opens a turn; the lines after it continue it. The turns
+  are rendered in ChatML between the system prompt and the new message, so the model takes them as its own past.
+  The steering vector is not touched.
+- **After `/reset`** the history is read again.
+- **Bad files are refused** with the reason: text before the first turn, or no turns at all.
+
+**Example** (IQ2_XXS, greedy):
+- "Hi, how are you today?" with this history: the prompt is 80 tokens instead of 15, and the answer starts "Ahoy,
+  friend! I be Captain Redbeard, freshly returned from a nap on the Jolly Roger…".
+- Without the history: "Hi! I'm doing great—thanks for asking!…"
+- On a plain task ("Explain in two sentences how a bicycle works.") the same history did not change the answer's
+  style: the task wins over the persona.
 
 ## Scope boundary
 

@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
@@ -90,6 +91,7 @@ static void usage(FILE *out) {
 "  --steer-layers A-B  layers whose input is steered (default 16-31)\n"
 "  --steer-strength S  x += S * vector at those layers for every generated token (default 1; /steer S in chat)\n"
 "  --steer-tokens N    steer only the first N tokens of each answer (default 0 = the whole answer)\n"
+"  --history FILE      dev52b: prefilled conversation (lines \"user: ...\" / \"assistant: ...\") read before the first message\n"
         "  --batch N           prompt tokens per batched Metal prefill chunk (default 2048; 1 = token by token)\n"
         "  --no-stream         print the completion only when finished\n"
         "  --stats             print timing, memory and cache statistics\n"
@@ -179,6 +181,49 @@ static int prefill_maybe_steered(rl_engine *e, const uint32_t *ids, uint32_t n, 
            rl_engine_step(e, RL_BACKEND_GPU, ids[n - 1u], logits, st, error, cap);
 }
 
+/* dev52b: --history FILE, a prefilled conversation. Lines starting with "user:" or "assistant:" open a turn; the
+ * lines after it continue it. The turns are rendered in ChatML and placed before the first user message, so the model
+ * reads them as its own past (ds4's "prefilled chat"). */
+static char *g_history = NULL;
+static int load_history(const char *path, char *error, size_t cap) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { snprintf(error, cap, "cannot open history file %s", path); return 0; }
+    fseek(f, 0, SEEK_END); const long size = ftell(f); fseek(f, 0, SEEK_SET);
+    char *text = (char *)malloc((size_t)size + 1u);
+    char *out = (char *)malloc((size_t)size * 6u + 4096u);   /* a 6-byte "user:" line becomes ~30 bytes of ChatML */
+    if (!text || !out || fread(text, 1, (size_t)size, f) != (size_t)size) { fclose(f); free(text); free(out); snprintf(error, cap, "cannot read %s", path); return 0; }
+    fclose(f); text[size] = '\0';
+    size_t len = 0; int open_turn = 0, turns = 0;
+    for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+        const char *role = NULL; const char *body = line;
+        if (strncasecmp(line, "user:", 5) == 0) { role = "user"; body = line + 5; }
+        else if (strncasecmp(line, "assistant:", 10) == 0) { role = "assistant"; body = line + 10; }
+        while (role && *body == ' ') body++;
+        if (role) {
+            len += (size_t)sprintf(out + len, "%s<|im_start|>%s\n%s", open_turn ? "<|im_end|>\n" : "", role, body);
+            open_turn = 1; turns++;
+        } else if (open_turn) {
+            len += (size_t)sprintf(out + len, "\n%s", line);
+        } else if (*line) {
+            free(text); free(out); snprintf(error, cap, "%s: text before the first \"user:\" or \"assistant:\" line", path); return 0;
+        }
+    }
+    if (open_turn) len += (size_t)sprintf(out + len, "<|im_end|>\n");
+    free(text);
+    if (!turns) { free(out); snprintf(error, cap, "%s has no \"user:\" / \"assistant:\" turns", path); return 0; }
+    out[len] = '\0'; g_history = out;
+    return 1;
+}
+
+/* First-turn ChatML with the --history turns between the system prompt and the new message. */
+static int chat_prompt_with_history(const char *system_prompt, const char *message, char *out, size_t cap) {
+    if (!g_history) return rl_tokenizer_chat_prompt(system_prompt, message, out, cap);
+    const int n = system_prompt && *system_prompt
+        ? snprintf(out, cap, "<|im_start|>system\n%s<|im_end|>\n%s<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", system_prompt, g_history, message)
+        : snprintf(out, cap, "%s<|im_start|>user\n%s<|im_end|>\n<|im_start|>assistant\n", g_history, message);
+    return n > 0 && (size_t)n < cap;
+}
+
 static int interactive_chat(
         rl_engine *engine,
         const rl_engine_info *info,
@@ -244,11 +289,11 @@ static int interactive_chat(
             printf("you> %s\n", message);
         }
 
-        const size_t template_cap = strlen(message) + (system_prompt ? strlen(system_prompt) : 0u) + 256u;
+        const size_t template_cap = strlen(message) + (system_prompt ? strlen(system_prompt) : 0u) + (g_history ? strlen(g_history) : 0u) + 256u;
         char *templated = (char *)malloc(template_cap);
         if (!templated) { snprintf(error, error_cap, "chat template allocation failed"); free(line); return 0; }
         const int template_ok = first_turn
-            ? rl_tokenizer_chat_prompt(system_prompt, message, templated, template_cap)
+            ? chat_prompt_with_history(system_prompt, message, templated, template_cap)
             : rl_tokenizer_chat_continuation(message, templated, template_cap);
         if (!template_ok) {
             snprintf(error, error_cap, "chat prompt is too long"); free(templated); free(line); return 0;
@@ -426,6 +471,7 @@ int main(int argc, char **argv) {
     int raw = 0, stream = 1, stats = 0, interactive = 0, json = 0;
     uint32_t max_tokens = 256u;
     uint32_t steer_first = 16u, steer_last = 31u;   /* dev52: default steered layers: the middle third */
+    char error_h[512];
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
     rl_sampler_params sp;
@@ -444,6 +490,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
         else if (strcmp(argv[i], "--mtp") == 0) cfg.mtp_path = argv[++i];
         else if (strcmp(argv[i], "--steer") == 0) g_steer_path = argv[++i];
+        else if (strcmp(argv[i], "--history") == 0) { if (!load_history(argv[++i], error_h, sizeof(error_h))) { fprintf(stderr, "%s\n", error_h); return 2; } }
         else if (strcmp(argv[i], "--steer-strength") == 0) { if (!parse_f32(argv[++i], &g_steer_base)) return 2; }
         else if (strcmp(argv[i], "--steer-tokens") == 0) { if (!parse_u32(argv[++i], &g_steer_tokens)) return 2; }
         else if (strcmp(argv[i], "--steer-layers") == 0) {
@@ -505,10 +552,11 @@ int main(int argc, char **argv) {
         return ok ? 0 : 1;
     }
 
-    char *templated = (char *)malloc(strlen(prompt) + (system_prompt ? strlen(system_prompt) : 0u) + 256u);
+    const size_t tcap = strlen(prompt) + (system_prompt ? strlen(system_prompt) : 0u) + (g_history ? strlen(g_history) : 0u) + 256u;
+    char *templated = (char *)malloc(tcap);
     if (!templated) return 1;
     if (raw) strcpy(templated, prompt);
-    else if (!rl_tokenizer_chat_prompt(system_prompt, prompt, templated, strlen(prompt) + (system_prompt ? strlen(system_prompt) : 0u) + 256u)) { fprintf(stderr, "prompt too long\n"); return 1; }
+    else if (!chat_prompt_with_history(system_prompt, prompt, templated, tcap)) { fprintf(stderr, "prompt too long\n"); return 1; }
     const int32_t needed = rl_tokenizer_encode(tk, templated, strlen(templated), 1, NULL, 0, error, sizeof(error));
     if (needed < 0) { fprintf(stderr, "tokenize failed: %s\n", error); return 1; }
     if (needed == 0) { fprintf(stderr, "prompt produced no tokens; nothing to prefill\n"); return 1; }
