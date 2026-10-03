@@ -14,8 +14,8 @@ machine). "Tested synthetically" means model-free tests only.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Design goal and architecture of the v0.2 launcher (sparse 80B on a 24 GiB Mac) |
 | [MEMORY.md](MEMORY.md) | Memory policy and headroom formula for 24 GiB Macs |
 | [BENCHMARK.md](BENCHMARK.md) | v0.2 benchmark protocol and context-depth sweep |
-| [../README.md](../README.md) | Release 0.4.1: the two runtimes, the two supported GGUFs, measured performance per model and cache, correctness, limits, tool status |
-| [../CHANGELOG.md](../CHANGELOG.md) | 0.4.1, 0.4.0 and 0.3.0 release summaries with milestone targets, then every dev milestone |
+| [../README.md](../README.md) | Release 0.5.0: the two runtimes, the two supported GGUFs, measured performance per model and cache, correctness, limits, tool status |
+| [../CHANGELOG.md](../CHANGELOG.md) | 0.5.0, 0.4.1, 0.4.0 and 0.3.0 release summaries with milestone targets, then every dev milestone |
 | [REDLITE_DEV18_ENGINE.md](REDLITE_DEV18_ENGINE.md) | The native end-to-end engine: design, validation, limits |
 | [FIELD_VALIDATION_M4PRO_24GB.md](FIELD_VALIDATION_M4PRO_24GB.md) | v0.2 launcher field validation on the M4 Pro 24 GiB |
 | [RESEARCH_2026_10.md](RESEARCH_2026_10.md) | October 2026 survey: current DwarfStar, Qwen3-Coder-Next, Qwen3-Next MTP GGUFs, llama.cpp/MLX/Metal techniques, ranked options |

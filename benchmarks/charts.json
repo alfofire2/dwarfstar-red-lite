@@ -12,9 +12,10 @@
         {"label": "0.3.0", "values": [71.5]},
         {"label": "0.4.0", "values": [71.15]},
         {"label": "0.4.1", "values": [81.15]},
-        {"label": "dev45 + MTP (6-prompt median)", "values": [97.07]}
+        {"label": "0.5.0", "values": [86.24]},
+        {"label": "0.5.0 + MTP (dev45, 6-prompt median)", "values": [97.07]}
       ],
-      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json", "benchmarks/m4max-48gb-dev45-mtp.json"]
+      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json", "benchmarks/m4max-48gb-0.5.0.json", "benchmarks/m4max-48gb-dev45-mtp.json"]
     },
     {
       "id": "prefill_m4max",

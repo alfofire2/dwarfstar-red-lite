@@ -41,7 +41,7 @@ why speeding up encoders and barriers alone gained little (see section 7).
 The reference is the same llama.cpp commit that Red Lite uses as its correctness oracle, measured on the same
 token ids.
 
-- **Decode:** level with llama.cpp in 0.3.0. 12 % ahead in 0.4.1 (81.2 vs 72.5 tok/s), mostly from GEMV kernels
+- **Decode:** level with llama.cpp in 0.3.0, 12 % ahead in 0.4.1 and 19 % in 0.5.0 (86.2 vs 72.5 tok/s), mostly from GEMV kernels
   written for the exact quant types of this file, and from concurrent encoders with barriers only between
   dependent dispatches.
 - **Prompt ingestion:** 4× slower than llama.cpp in 0.3.0. Now on par (899 vs 894 tok/s at 8192 tokens) even
