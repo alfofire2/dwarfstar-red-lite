@@ -93,6 +93,20 @@ bounded:
 - with every expert resident there are no misses, and it is not set;
 - the binaries stay exact by default, so the llama.cpp parity checks are unchanged.
 
+## Low-power mode (roadmap Phase 4)
+
+`sudo pmset -a lowpowermode 1` on the M4 Pro, decode of 256 tokens, alternated with normal mode:
+
+| configuration | normal | low power |
+|---|---:|---:|
+| every expert resident + MTP | 54.7 / 54.3 tok/s | 42.5 / 42.5 tok/s (−22 %) |
+| 4 GiB cache | 29.0 / 34.1 tok/s | 29.1 / 29.3 tok/s (0 to −14 %) |
+
+- With every expert resident, decode is GPU-bound, and low-power mode costs about a fifth of the speed.
+- With the bounded cache, the per-layer round trip dominates, and it costs less.
+- How much energy or heat it saves was not measured: no power readings were available.
+- Record: `benchmarks/m4pro-24gb-lowpower.json`.
+
 ## Scope boundary
 
 - Only the M4 Pro 24 GiB and the IQ2_XXS file were measured.

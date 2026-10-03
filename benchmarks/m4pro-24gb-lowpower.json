@@ -1,0 +1,12 @@
+{
+  "machine": "Apple M4 Pro, 24 GiB (AC power)",
+  "milestone": "roadmap Phase 4: low-power mode",
+  "date": "2026-10-03",
+  "binary": "main 1d054d6",
+  "command": "sudo pmset -a lowpowermode 0|1; redlite-generate IQ2_XXS --prompt <transformer explanation> --max-tokens 256 --temperature 0 --json; 45 s pause after each switch; pairs alternated",
+  "decode_tok_s": {
+    "full_residency_mtp_limit_22016": {"normal": [54.70, 54.31], "low_power": [42.50, 42.50]},
+    "bounded_4096": {"normal": [29.02, 34.12], "low_power": [29.14, 29.29]}
+  },
+  "note": "No power or temperature reading: powermetrics is outside the sudo rule. Only the speed cost is measured."
+}
