@@ -30,9 +30,9 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
 ## Phase 2 — decode on 24 GiB Macs
 
-- **2a. Expert cache size sweep on the M4 Pro**, 4 → 14 GiB. Measure decode, misses, footprint, swap and memory
+- **2a — done (dev51).** Larger caches cut misses but not decode time. **Expert cache size sweep on the M4 Pro**, 4 → 14 GiB. Measure decode, misses, footprint, swap and memory
   pressure. The 4 GiB default was a cautious choice, never tested at the limit.
-- **2b. Every expert resident on 24 GiB.** IQ2_XXS needs 16.9 GiB of expert slots + 1.06 GiB of dense weights; the
+- **2b — done (dev51):** 46.0 tok/s, 52.7 with MTP, on the M4 Pro. **Every expert resident on 24 GiB.** IQ2_XXS needs 16.9 GiB of expert slots + 1.06 GiB of dense weights; the
   M4 Pro's default GPU working set is 17.76 GiB. With `iogpu.wired_limit_mb` raised (sudo, reset at reboot) the
   M4 Pro would get:
   - GPU-routed decode;

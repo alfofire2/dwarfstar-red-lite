@@ -1,0 +1,19 @@
+{
+  "machine": "Apple M4 Pro, 24 GiB (AC power)",
+  "milestone": "dev51 (roadmap 2b)",
+  "date": "2026-10-03",
+  "binary": "main 0eb33cf (release 0.5.0)",
+  "model": "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
+  "gpu_limit": {"command": "sudo sysctl iogpu.wired_limit_mb=<MiB> (until reboot)", "default_recommended_max_working_set_gib": 17.76, "plain_run_mib": 20480, "mtp_run_mib": 22016},
+  "first_run": {"command": "redlite-generate MODEL --prompt <transformer> --max-tokens 256 --cache-mib full --temperature 0", "open_ms": 13727.7, "preload_ms": 13600.7, "decode_tok_s": 45.72, "gpu_routed_tokens": 255, "footprint_mib": 18357.9, "swap_used_mib_before_after": [0, 1365.7]},
+  "six_prompts_full_residency": {"command": "CACHE=full COOL=30 scripts/dev/small_mac_ab.sh MODEL default", "decode_tok_s": [45.66, 46.07, 45.96, 45.54, 46.00, 46.02], "median": 45.98, "swap_used_mib_after": 1493.1, "memory_free_percent_after": 92},
+  "mtp_vs_plain_six_prompts": {
+    "command": "redlite-generate MODEL [--mtp MTP-ONLY-Q8_0.gguf] --prompt <cache_trace_prompts.txt line> --max-tokens 256 --cache-mib full --temperature 0 --json; plain and --mtp alternated, 30 s cooling",
+    "plain": [46.06, 45.96, 45.95, 45.71, 45.93, 45.89], "mtp": [50.89, 55.65, 54.94, 46.68, 48.67, 54.41],
+    "median": {"plain": 45.94, "mtp": 52.65}, "output": "identical in all six pairs",
+    "code_prompt_single_run": {"decode_tok_s": 57.44, "acceptance": 0.910, "verify_ms": 30.28, "draft_ms": 2.46, "footprint_mib": 20097.8},
+    "swap_used_mib_after": 1281.3
+  },
+  "bounded_4096_for_comparison": {"median": 32.48, "source": "benchmarks/m4pro-24gb-dev51-cache-sweep.json"},
+  "llama_cpp_launcher_for_comparison": {"decode_tok_s": "36.4-38.0", "source": "benchmarks/m4pro-24gb-sweep-2026-09-02.json"}
+}

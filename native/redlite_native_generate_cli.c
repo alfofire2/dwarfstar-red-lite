@@ -37,6 +37,10 @@
 #include <libproc.h>
 #endif
 
+#ifndef REDLITE_VERSION
+#define REDLITE_VERSION "dev"   /* the build scripts pass the VERSION file */
+#endif
+
 static volatile sig_atomic_t g_interrupt = 0;
 static void on_sigint(int sig) { (void)sig; g_interrupt = 1; }
 
@@ -66,7 +70,7 @@ static uint64_t phys_footprint_bytes(void) {
 
 static void usage(FILE *out) {
     fprintf(out,
-        "redlite-generate 0.4.0 - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
+        "redlite-generate " REDLITE_VERSION " - native Qwen3-Next generation (no llama.cpp, no Python)\n\n"
         "Usage:\n"
         "  redlite-generate MODEL --prompt \"...\" [options]\n"
         "  redlite-generate MODEL --interactive [--prompt \"first message\"] [options]\n\n"

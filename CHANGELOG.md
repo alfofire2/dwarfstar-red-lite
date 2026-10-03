@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased (after 0.5.0)
+
+### dev51 — every expert resident on a 24 GiB Mac (M4 Pro 24 GiB)
+
+- **Cache size sweep, 4–14 GiB:** misses fall from 29.5 to 12.6 per token, but decode stays at 31–32 tok/s. The
+  bounded path is limited by its per-layer GPU round trip; the 4 GiB default stays.
+- **With `sudo sysctl iogpu.wired_limit_mb` raised** (until reboot), every IQ2_XXS expert is resident:
+  - decode 32.5 → **46.0 tok/s** (six-prompt median), every token GPU-routed;
+  - with MTP **52.7 tok/s** (up to 55.7), identical output;
+  - footprint 18–20 GiB; ~1.3 GB of other processes go to swap and stay steady.
+- `redlite chat` / `serve --native` use full residency (and MTP) on any Mac whose GPU limit fits experts + dense +
+  1 GiB (+ the MTP head). `redlite doctor` prints the needed limit and the command.
+- Native binaries print the version from `VERSION` (0.5.0 still printed 0.4.0).
+- `regress_m4.sh`: llama.cpp oracle out of GPU memory → SKIP with the reason; `REDLITE_REF_NGL` for the oracle.
+  See `docs/REDLITE_DEV51_24GB_DECODE.md`.
+
 ## 0.5.0 — 2026-10-03
 
 Faster answers with identical output, sessions that survive restarts, a second model family, and the first native

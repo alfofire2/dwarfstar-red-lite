@@ -51,14 +51,16 @@
       "id": "decode_m4pro",
       "title": "Decode speed, M4 Pro 24 GiB, IQ2_XXS",
       "unit": "tok/s",
-      "note": "Native: 4 GiB expert cache (about 5 GiB in use). llama.cpp launcher: whole 18 GiB model resident, 2K/4K context, range of the sweep.",
+      "note": "4 GiB cache: about 5 GiB in use. All resident: GPU limit raised with sudo sysctl iogpu.wired_limit_mb (18-20 GiB in use). llama.cpp launcher: whole model resident, range of its sweep. Six-prompt medians except dev18 and llama.cpp.",
       "series": ["decode"],
       "bars": [
         {"label": "native dev18 (Sep 2026)", "values": [27.77]},
-        {"label": "native 0.4.1 + dev47 (Oct 2026)", "values": [33.0]},
+        {"label": "native, 4 GiB cache (0.5.0)", "values": [32.48]},
+        {"label": "native, all experts resident (dev51)", "values": [45.98]},
+        {"label": "all resident + MTP (dev51)", "values": [52.65]},
         {"label": "llama.cpp launcher 0.2", "values": [36.4], "text": "36.4-38.0", "muted": true}
       ],
-      "sources": ["benchmarks/m4pro-24gb-native-dev18.json", "benchmarks/m4pro-24gb-2026-10-02.json", "benchmarks/m4pro-24gb-sweep-2026-09-02.json"]
+      "sources": ["benchmarks/m4pro-24gb-native-dev18.json", "benchmarks/m4pro-24gb-dev51-cache-sweep.json", "benchmarks/m4pro-24gb-dev51-full-residency.json", "benchmarks/m4pro-24gb-sweep-2026-09-02.json"]
     },
     {
       "id": "cache_ab_m4pro",

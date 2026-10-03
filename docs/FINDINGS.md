@@ -76,8 +76,9 @@ Three details made the paired pass cheap:
 - the two tokens' experts merged into one dispatch.
 
 MTP is on by default in `redlite chat` and `redlite serve --native` when the head file is present and every
-expert is resident. On a 24 GiB Mac it does not apply: checking two tokens loads the union of their experts,
-and expert loading is already that machine's bottleneck.
+expert is resident. On a 24 GiB Mac that needs a raised GPU limit (section 5): there it gains +15 % median
+(46 → 52.7 tok/s, up to 55.7 on code). With the bounded cache it does not apply: checking two tokens loads the
+union of their experts.
 
 ## 5. 24 GiB Macs: what the expert cache needs
 
@@ -105,12 +106,26 @@ Measured on the M4 Pro 24 GiB, 4 GiB expert cache, six prompts:
 save at most 5 % of misses. Even a clairvoyant policy, which knows the future, would only halve them (34.7 vs
 64.1 misses per token in simulation).
 
-**The honest comparison.** When the whole 18 GiB model fits in memory, the llama.cpp launcher decodes faster
-on the same Mac: 36–38 tok/s against 33.0. The native runtime's advantage is memory: it runs in about 5 GiB,
-so a 24 GiB Mac stays usable for other work.
+**A bigger cache does not help either** (dev51). From 4 to 14 GiB, misses fell from 29.5 to 12.6 per token, but
+decode stayed at 31–32 tok/s. With a bounded cache the engine waits for the GPU once per layer, 48 times per
+token, and that round trip is the bound, not the loading.
+
+**What does help: every expert resident.** macOS lets the GPU use 17.76 GiB on a 24 GiB Mac, just under the
+18.4 GiB of IQ2_XXS's experts plus dense weights. With the limit raised (`sudo sysctl iogpu.wired_limit_mb`,
+until reboot), the whole token runs on the GPU in one command buffer:
+
+| M4 Pro 24 GiB, IQ2_XXS | decode | memory in use |
+|---|---:|---:|
+| 4 GiB expert cache | 32.5 tok/s | ~5 GiB |
+| llama.cpp launcher (whole model resident) | 36–38 tok/s | ~18 GiB |
+| every expert resident | **46.0 tok/s** | ~18 GiB |
+| every expert resident + MTP | **52.7 tok/s** | ~20 GiB |
+
+The trade-off is memory: about 1.3 GB of other apps went to swap and stayed there. `redlite doctor` prints the
+limit to set; `redlite chat` picks full residency (and MTP) on its own once the limit allows it.
 
 Since the dev18 build of September (27.8 tok/s decode; prompts ingested one token at a time at 16 tok/s), the
-24 GiB numbers rose to 33.0 tok/s decode and 280–350 tok/s ingestion.
+24 GiB numbers rose to 46–53 tok/s decode and about 360 tok/s ingestion.
 
 ## 6. Long context
 
