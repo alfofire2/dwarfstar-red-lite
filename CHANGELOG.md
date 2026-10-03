@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased (after 0.5.2)
+## 0.5.3 — 2026-10-04
+
+**A better 24 GiB file.** The Red Lite E3 expert mix: the same 19.30 GB and tensor types as Bartowski's IQ2_XXS, with
+perplexity 16.370 → 16.216 (paired t = −3.9) and more answers identical to Qwen's API (4 vs 2 of 235).
+- Published on Hugging Face (`alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF`); `redlite download 24gb` fetches
+  it, and `redlite chat` prefers it. Bartowski's file stays available as `bartowski-24gb`.
+- Validation:
+  - E3 on the M4 Max: `regress_m4.sh` 52/0/0 and `quick_parity.sh` PASS;
+  - on the M4 Pro 24 GiB: download (SHA-256 checked), automatic choice by `redlite chat`, a correct answer;
+  - local CI PASS.
+
 
 ### dev54 — a better expert mix at the same size (M4 Max 48 GiB)
 

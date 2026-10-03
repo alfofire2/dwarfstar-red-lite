@@ -205,3 +205,27 @@ class RouteBiasDefaultTests(unittest.TestCase):
     def test_exact_routing_and_user_setting_win(self):
         self.assertIsNone(self._run(4096, exact=True))
         self.assertEqual(self._run(4096, env={"RL_ROUTE_CACHE_BIAS": "0"}), "0")
+
+
+class RedLiteMixPreferenceTests(unittest.TestCase):
+    """dev54: the E3 mix is preferred over Bartowski's IQ2_XXS of the same size; IQ3_XXS still wins on 48 GiB."""
+
+    def test_24gb_prefers_e3(self):
+        from redlite.planner import select_native_model
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf"):
+                (Path(d) / n).write_bytes(b"")
+            self.assertEqual(select_native_model(d, 24 * GIB).name, "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf")
+
+    def test_48gb_still_prefers_iq3_when_it_fits(self):
+        from redlite.planner import select_native_model
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf"):
+                (Path(d) / n).write_bytes(b"")
+            with patch("redlite.planner.native_residency", return_value=NativeResidency(28800, GIB)):
+                self.assertEqual(select_native_model(d, 48 * GIB).name, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
+
+    def test_24gb_alias_downloads_e3(self):
+        from redlite.model_catalog import resolve_variant
+        self.assertEqual(resolve_variant("24gb").repo, "alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF")
+        self.assertEqual(resolve_variant("bartowski-24gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")

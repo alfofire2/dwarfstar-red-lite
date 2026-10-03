@@ -189,9 +189,9 @@ def _mtp_for(model, cache_mib, args) -> str | None:
 
 def _print_gpu_advice(hw, wired: int) -> None:
     """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
-    from .planner import NATIVE_MTP_FILE, NATIVE_REFERENCE_MODEL, native_full_residency_mib, native_residency
-    model = NATIVE_MODELS_DIR / NATIVE_REFERENCE_MODEL
-    if hw.ram_gib >= 40 or not model.is_file():
+    from .planner import NATIVE_MTP_FILE, NATIVE_SMALL_MODELS, native_full_residency_mib, native_residency
+    model = next((NATIVE_MODELS_DIR / n for n in NATIVE_SMALL_MODELS if (NATIVE_MODELS_DIR / n).is_file()), None)
+    if hw.ram_gib >= 40 or model is None:
         return
     res = native_residency(model)
     if res is None:

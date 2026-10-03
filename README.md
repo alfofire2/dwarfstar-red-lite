@@ -35,9 +35,9 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 
 ```bash
 make native                     # builds .deps/redmetal/ and runs the model-free self-tests
-python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models
+python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models   # the Red Lite E3 mix (dev54)
 
-M=models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
+M=models/Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf   # or Bartowski's: redlite download bartowski-24gb
 .deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
 ./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
 ./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
@@ -70,6 +70,13 @@ python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 -
 - Typical strengths are 0.2–0.5 over 8–12 layers; more breaks the text.
 - Exact with MTP.
 - Details and an example: `docs/REDLITE_DEV52_STEERING.md`.
+
+**A better 24 GiB file** (dev54): [alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF).
+- Same size (19.30 GB) and tensor types as Bartowski's IQ2_XXS, but IQ2_XS experts on layers 37–47, where the
+  importance matrix puts most of the expert input energy.
+- Perplexity 16.370 → 16.216 (paired t = −3.9), and more answers identical to Qwen's API (4 vs 2 of 235).
+- `redlite download 24gb` fetches it and `redlite chat` prefers it.
+- Details: `docs/REDLITE_DEV54_QUANT_MIX.md`.
 
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored

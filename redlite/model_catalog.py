@@ -20,6 +20,15 @@ VARIANTS = {
         quality="very-low",
         recommended_mode="metal-resident",
     ),
+    # dev54: same size and tensor types as iq2_xxs, IQ2_XS experts on layers 37-47 (perplexity 16.370 -> 16.216)
+    "redlite_e3": ModelVariant(
+        key="redlite_e3",
+        repo="alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF",
+        filename="Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
+        nominal_gb=19.30,
+        quality="very-low",
+        recommended_mode="metal-resident",
+    ),
     "iq2_xs": ModelVariant(
         key="iq2_xs",
         repo="bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF",
@@ -82,7 +91,9 @@ VARIANTS["mtp_q8_0"] = ModelVariant(
 )
 
 ALIASES = {
-    "24gb": "iq2_xxs",
+    "24gb": "redlite_e3",
+    "e3": "redlite_e3",
+    "bartowski-24gb": "iq2_xxs",
     "small": "iq2_xxs",
     "balanced": "iq2_xs",
     "quality": "q4_k_m",

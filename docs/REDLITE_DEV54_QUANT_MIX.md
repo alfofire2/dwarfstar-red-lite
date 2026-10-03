@@ -74,4 +74,9 @@ It needs the Q8_0 (84.8 GB download), the imatrix, the pinned llama.cpp (`make b
 - Only one size (≈ 19.3 GB) and one model (Qwen3-Next-80B-A3B-Instruct) were studied. Four variants were compared;
   this is not a search over all layer sets.
 - Quality is measured by perplexity on one corpus and agreement with Qwen's API, not by task benchmarks.
-- E3 is not distributed: a 19.3 GB file needs hosting (e.g. Hugging Face), which is the project owner's decision.
+- E3 is published (dev54b) at
+  [alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF):
+  - SHA-256 `b62067d6f28c52c07f8fca55196e8a63916264e40c6641f6a8d2e710768d291c`;
+  - `redlite download 24gb` (alias `e3`) fetches it, and `redlite chat` prefers it over Bartowski's file;
+  - on the M4 Pro 24 GiB the download took 6 minutes and the hash matched; the sky-is-blue answer is right, at 26.7
+    tok/s with the 4 GiB cache.
