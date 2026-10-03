@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased (after 0.5.0)
+## 0.5.1 — 2026-10-03
+
+24 GiB Macs can now hold every expert. With the GPU limit raised, the M4 Pro 24 GiB decodes at 46.0 tok/s, and
+52.7 with MTP (0.5.0: 32.5). `redlite doctor` prints the command, and `redlite chat` / `serve --native` switch on
+their own. The native binaries print the right version. Validation: local CI PASS; `regress_m4.sh --quick` 49/49
+(M4 Max); end-to-end `redlite doctor` / `chat --dry-run` on the M4 Pro with the default and with a raised limit.
 
 ### dev51 — every expert resident on a 24 GiB Mac (M4 Pro 24 GiB)
 
