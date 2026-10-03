@@ -57,7 +57,7 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   - strength adjustable during a chat (`/steer`);
   - an "only the first N tokens of the answer" mode;
   - a `--history FILE` of prefilled turns.
-- **Low-power mode on the M4 Pro:** tok/s and temperature with `pmset lowpowermode`, for laptop users.
+- **Low-power mode — measured:** −22 % decode at full residency, little with a bounded cache; energy not measured. **Low-power mode on the M4 Pro:** tok/s and temperature with `pmset lowpowermode`, for laptop users.
 - **A Red Lite quantization:** search a mix of precisions that beats IQ2_XXS at the same size, judged by
   perplexity and the API comparison. After Phase 2.
 - **Concurrent server requests** sharing expert loads. Low priority for a single local user.
