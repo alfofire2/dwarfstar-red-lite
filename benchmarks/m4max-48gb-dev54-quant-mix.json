@@ -1,0 +1,17 @@
+{
+  "machine": "Apple M4 Max, 48 GiB",
+  "milestone": "dev54",
+  "date": "2026-10-04",
+  "source": "bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF: Q8_0 (3 splits, 84.8 GB) and imatrix.gguf",
+  "quantizer": "pinned llama.cpp llama-quantize --allow-requantize --imatrix --tensor-type-file (every non-expert tensor typed as in Bartowski's IQ2_XXS); scripts/dev/quant_mix.py",
+  "perplexity": "scripts/dev/perplexity.sh (frozen corpus, ctx 512, 111 chunks)",
+  "api": "scripts/dev/api_compare.py compare MODEL --cache-mib full (235 prompts vs Qwen's API)",
+  "variants": {
+    "R":   {"iq2xs_expert_layers": "0-5,43-47 (Bartowski's scheme)", "bytes": 19298972096, "quantize_s": 2561, "ppl": [16.3700, 0.29932], "api": {"identical": 2, "median_prefix": 0.077, "mean_prefix": 0.126, "first_word_differs": 38}},
+    "E3":  {"iq2xs_expert_layers": "37-47 (highest expert input energy in the imatrix)", "bytes": 19298972096, "quantize_s": 2459, "ppl": [16.2160, 0.29622], "api": {"identical": 4, "median_prefix": 0.077, "mean_prefix": 0.136, "first_word_differs": 36}, "paired_vs_R": {"mean_nll_diff": -0.00945, "se": 0.00242, "t": -3.91, "chunks_better": "72/111"}, "regress_m4": "52/0/0", "quick_parity": "PASS (vs its own llama.cpp references)"},
+    "E3b": {"iq2xs_expert_layers": "0-2,40-47", "bytes": 19298972096, "quantize_s": 2303, "ppl": [16.3260, 0.29879], "api": {"identical": 2, "median_prefix": 0.077, "mean_prefix": 0.132, "first_word_differs": 41}, "paired_vs_R": {"mean_nll_diff": -0.00269, "se": 0.00210, "t": -1.28, "chunks_better": "60/111"}},
+    "E1":  {"iq2xs_expert_layers": "down projections of every layer (gate/up IQ1_M)", "bytes": 19865203136, "quantize_s": 2213, "ppl": [16.4230, 0.30305], "paired_vs_R": {"mean_nll_diff": 0.00323, "se": 0.00286, "t": 1.13, "chunks_better": "50/111"}, "engine": "not runnable: mixed IQ1_M gate/up + IQ2_XS down (type word 0x111d) is unsupported by the expert kernels"}
+  },
+  "reference_bartowski_file_dev31": {"ppl": [16.4675, 0.30152]},
+  "imatrix_expert_input_energy": "grows with depth: down input 1.3 (layer 0) to 565 (layer 47); gate 156 to 2001"
+}
