@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased (after 0.5.5)
+## 0.5.6 — 2026-10-04
+
+**A better 24 GiB file: Red Lite F2.** Same size as Bartowski's IQ2_XXS (19.32 GB), perplexity 15.38 against 16.22
+for E3 and 16.37 for Bartowski's scheme. `redlite download 24gb` fetches it and `redlite chat` prefers it. Plain
+decode is 3 % slower than E3; with MTP on a 24 GiB Mac it is as fast or faster. Validation: `regress_m4.sh` 41/0/13
+and `quick_parity.sh` on the M4 Max; token-identical greedy output on the M4 Pro.
+
 
 - dev58: **dense weights with more precision, at the same size.** `quant_mix.py --dense-type` raises the 2-bit dense
   projections every token reads (about 290 MiB):
