@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7 — 2026-10-04
+
+**Fix:** in 0.5.6 `redlite chat` and `serve` did not see the F2 file on the full-residency path (a Mac with 40 GiB or
+more, or a raised GPU limit). With only F2 in the models folder they answered "No native model found"; with E3 there
+too, they picked E3. One preference list now serves both paths (`NATIVE_SMALL_MODELS` follows the 48 GiB file), with a
+test of the raised-limit path. Checked on the M4 Pro: F2, every expert resident, MTP.
+
 ## 0.5.6 — 2026-10-04
 
 **A better 24 GiB file: Red Lite F2.** Same size as Bartowski's IQ2_XXS (19.32 GB), perplexity 15.38 against 16.22

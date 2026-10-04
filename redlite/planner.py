@@ -194,15 +194,11 @@ NATIVE_BATCH_MIB_PER_TOKEN = 572.0 / 1536.0     # prefill scratch per token of c
 NATIVE_MTP_MIB = 1787                           # the resident MTP block (Q8_0 head file)
 # dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
 # first one present whose full residency fits, else the 24 GiB reference file
-NATIVE_MODEL_PREFERENCE = (
-    "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
-    "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
-    "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf",
-)
 NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
-# dev54: the 24 GiB files in preference order: the Red Lite E3 mix (same size and types, better quality), then Bartowski's
+# the 24 GiB files in preference order: Red Lite F2 (dev58), Red Lite E3 (dev54), then Bartowski's IQ2_XXS
 NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
-                       NATIVE_REFERENCE_MODEL)   # dev58 F2, dev54 E3, then Bartowski's IQ2_XXS
+                       NATIVE_REFERENCE_MODEL)
+NATIVE_MODEL_PREFERENCE = ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",) + NATIVE_SMALL_MODELS
 
 
 @dataclass(frozen=True)

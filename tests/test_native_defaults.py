@@ -285,3 +285,21 @@ class RedLiteF2PreferenceTests(unittest.TestCase):
         from redlite.model_catalog import resolve_variant
         self.assertEqual(resolve_variant("24gb").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
         self.assertEqual(resolve_variant("e3").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf")
+
+
+class PreferenceUnderGpuLimitTests(unittest.TestCase):
+    """dev58b: with a raised GPU limit (full-residency path) F2 is chosen too; 0.5.6 picked E3 there."""
+
+    def test_f2_under_raised_limit(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from redlite import planner
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            for n in planner.NATIVE_SMALL_MODELS:
+                (d / n).write_bytes(b"x")
+            with patch.object(planner, "native_residency", return_value=object()), \
+                 patch.object(planner, "native_full_residency_fits", return_value=True):
+                self.assertEqual(planner.select_native_model(d, 24 * GIB, 21741).name,
+                                 "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
