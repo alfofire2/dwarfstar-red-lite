@@ -1,0 +1,21 @@
+{
+  "milestone": "dev55",
+  "date": "2026-10-04",
+  "footprint_model_m4max": {
+    "command": "redlite-generate E3 [--mtp HEAD] --raw --prompt <6989 tokens> --max-tokens 8 --cache-mib full --context C --batch B --json (phys_footprint_mib)",
+    "no_mtp": {"ctx16384_b512": 18664, "ctx16384_b2048": 19236, "ctx32768_b512": 19440, "ctx32768_b2048": 20012},
+    "mtp": {"ctx16384_b512": 20451, "ctx16384_b2048": 21023, "ctx32768_b512": 21292, "ctx32768_b2048": 21864},
+    "fit": "need_mib = expert slots + dense + 580 + 0.046875 * context + 0.3724 * max(0, batch - 512) + 1787 (MTP)",
+    "m4pro_outcomes_at_21741": {"mtp_32k_b512": "OOM (model 22302)", "nomtp_32k_b2048": "ran, footprint 19918 (model 21087)", "mtp_4k_b2048": "ran (model 21530)"}
+  },
+  "mtp_crossover_decode_tok_s": {
+    "m4pro_24gb": {"command": "E3, --cache-mib full, limit 21741, --context 16384 --batch 512, 160 tokens", "20": [46.25, 57.51], "1407": [44.82, 49.69], "2805": [44.66, 48.12], "5601": [41.77, 43.61], "11193": [38.74, 38.97], "16775_dev53": [37.2, 32.6]},
+    "m4max_48gb": {"command": "E3, --cache-mib full, --context 20480, 160 tokens", "5601": [77.03, 81.39], "11193": [74.05, 76.74], "16785": [66.14, 67.59]},
+    "pairs": "[plain, mtp] by prompt tokens"
+  },
+  "m4pro_end_to_end_limit_21741": {
+    "ctx32768_planner_b2048_nomtp_16775_prompt": {"prefill_tok_s": 358.43, "decode_tok_s": 36.42, "footprint_mib": 19917.7},
+    "ctx16384_planner_b512_mtp_11183_prompt": {"prefill_tok_s": 322.07, "decode_tok_s": 38.86, "mtp": "not used (past --mtp-max-context 8192)"},
+    "ctx16384_planner_b512_mtp_short_prompt": {"decode_tok_s": 48.41, "mtp_acceptance": 0.590}
+  }
+}

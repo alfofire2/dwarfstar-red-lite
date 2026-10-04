@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (after 0.5.3)
+
+### dev55 — long contexts on a 24 GiB Mac with every expert resident (M4 Pro 24 GiB, M4 Max 48 GiB)
+
+- **A measured GPU-need model** (context, prefill chunk, MTP). Under a raised GPU limit, `redlite chat` / `serve`
+  pick the chunk and MTP that fit. M4 Pro at 21,741 MiB: 4K → 2048 + MTP, 16K → 512 + MTP, 32K → 2048 without MTP.
+  A 32K context with a 16.8K-token prompt now runs (it ran out of GPU memory with MTP).
+- **MTP and long contexts.** On the M4 Pro MTP stops paying at about 11K positions (+24 % at 20 tokens, 0 % at 11.2K,
+  −12 % at 16.8K); the M4 Max still gains at 16.8K. `--mtp-max-context N` (generate, server); `redlite chat` /
+  `serve` pass 8192 below 40 GiB.
+- **Steering in `redlite-server`** and `redlite serve --native` (`--steer*`).
+  See `docs/REDLITE_DEV55_LONG_CONTEXT_24GB.md`.
+
 ## 0.5.3 — 2026-10-04
 
 **A better 24 GiB file.** The Red Lite E3 expert mix: the same 19.30 GB and tensor types as Bartowski's IQ2_XXS, with
