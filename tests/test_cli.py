@@ -94,3 +94,9 @@ class InstalledLayoutTests(unittest.TestCase):
             exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
             with patch.object(runner, "REDMETAL_BIN", Path(d) / "missing"), patch.dict(os.environ, {"PATH": d}):
                 self.assertEqual(runner.native_generate(), exe)
+
+
+class DetectMissingDirTests(unittest.TestCase):
+    def test_detect_on_missing_nested_dir(self):
+        from redlite.hardware import detect
+        self.assertGreater(detect("/tmp/rl-missing-a/b/c").free_disk_bytes, 0)

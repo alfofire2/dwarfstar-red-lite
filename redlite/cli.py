@@ -142,7 +142,7 @@ def _hf_binary() -> list[str]:
         return ["hf", "download"]
     if shutil.which("huggingface-cli"):
         return ["huggingface-cli", "download"]
-    _die("Hugging Face CLI not found. Install: python3 -m pip install -U huggingface_hub")
+    _die("Hugging Face CLI not found. Install: brew install hf (or python3 -m pip install -U huggingface_hub)")
 
 
 def cmd_download(args) -> int:
@@ -281,7 +281,7 @@ def cmd_chat(args) -> int:
         # dev31: the best model present in models/ that this machine can hold
         picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
         if picked is None:
-            _die(f"No native model found in {NATIVE_MODELS_DIR} (expected {DEFAULT_NATIVE_MODEL.name})")
+            _die(f"No native model found in {NATIVE_MODELS_DIR}. Download one: redlite download 24gb (and redlite download mtp)")
         model = picked
         print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():

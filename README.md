@@ -33,6 +33,17 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 
 ## Native runtime: quick start
 
+**With Homebrew** (from release 0.5.5; no compiler, no source checkout):
+
+```bash
+brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
+brew install redlite
+redlite download 24gb && redlite download mtp     # into ~/.redlite/models (REDLITE_MODELS changes it)
+redlite doctor && redlite chat
+```
+
+**From source:**
+
 ```bash
 make native                     # builds .deps/redmetal/ and runs the model-free self-tests
 python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models   # the Red Lite E3 mix (dev54)
@@ -465,7 +476,8 @@ Metal or the model runs locally with `scripts/regress_m4.sh MODEL`.
 Build a binary release tarball (Apple Silicon only; `-mcpu=apple-m1`, macOS ≥ 14):
 
 ```bash
-scripts/package_release.sh          # dist/redlite-<version>-macos-arm64.tar.gz + .sha256
+scripts/package_release.sh          # dist/redlite-<version>-macos-arm64.tar.gz + .sha256 (binaries + python/redlite)
+python3 scripts/dev/brew_formula.py <version>   # Formula/redlite.rb for that tarball; commit it after the release
 ```
 
 Inspect the launch command without executing it:

@@ -12,7 +12,7 @@ GIB = 1024 ** 3
 
 def _sysctl(key: str) -> str | None:
     try:
-        return subprocess.check_output(["sysctl", "-n", key], text=True, stderr=subprocess.DEVNULL).strip()
+        return subprocess.check_output([shutil.which("sysctl") or "/usr/sbin/sysctl", "-n", key], text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         return None
 
@@ -78,7 +78,7 @@ def detect(path: str | os.PathLike[str] = ".") -> HardwareInfo:
             perf = max(1, int(raw_perf))
 
     target = Path(path).expanduser().resolve()
-    if not target.exists():
+    while not target.exists():   # dev57: ~/.redlite/models before the first download
         target = target.parent
     disk = shutil.disk_usage(target)
 
