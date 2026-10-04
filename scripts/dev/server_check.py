@@ -175,6 +175,36 @@ def parallel(bin_dir: Path, model: str, max_tokens: int) -> bool:
     return rc == 0 and alone == together and None not in alone and paired > 0
 
 
+def tools(bin_dir: Path, model: str, cache_mib: str) -> bool:
+    """dev59: a two-turn tool round trip. Turn 1 must call get_weather for Rome; turn 2, with the tool result, must
+    answer in words and reuse turn 1's state (the tool_calls render back exactly as the model wrote them)."""
+    srv, port = start_server(bin_dir, model, cache_mib)
+    if not srv:
+        return False
+    tools_ = [{"type": "function", "function": {"name": "get_weather", "description": "Current weather for a city.",
+               "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]
+    msgs = [{"role": "user", "content": "What's the weather like in Rome right now?"}]
+    ok = False
+    try:
+        status, data = post(port, {"messages": msgs, "tools": tools_, "temperature": 0, "max_tokens": 200})
+        first = json.loads(data)["choices"][0] if status == 200 else {}
+        calls = first.get("message", {}).get("tool_calls") or []
+        print(f"turn 1: finish={first.get('finish_reason')} calls={[(c['function']['name'], c['function']['arguments']) for c in calls]}")
+        if first.get("finish_reason") == "tool_calls" and calls and calls[0]["function"]["name"] == "get_weather" \
+                and "rome" in calls[0]["function"]["arguments"].lower():
+            msgs += [first["message"], {"role": "tool", "tool_call_id": calls[0]["id"], "content": '{"temperature_c": 19, "sky": "clear"}'}]
+            status, data = post(port, {"messages": msgs, "tools": tools_, "temperature": 0, "max_tokens": 200})
+            second = json.loads(data) if status == 200 else {}
+            choice, usage = second.get("choices", [{}])[0], second.get("usage", {})
+            cached = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            print(f"turn 2: finish={choice.get('finish_reason')} cached={cached}/{usage.get('prompt_tokens')} "
+                  f"answer={choice.get('message', {}).get('content')!r}")
+            ok = choice.get("finish_reason") == "stop" and "19" in (choice.get("message", {}).get("content") or "") and cached > 0
+    finally:
+        rc, _ = stop_server(srv)
+    return ok and rc == 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("model")
@@ -183,11 +213,16 @@ def main() -> int:
     ap.add_argument("--max-tokens", type=int, default=32)
     ap.add_argument("--state-restart", action="store_true", help="only the dev43 --state-dir restart check")
     ap.add_argument("--parallel", action="store_true", help="only the dev56 --parallel 2 check (full residency)")
+    ap.add_argument("--tools", action="store_true", help="only the dev59 tool-call round trip")
     ap.add_argument("--mtp", help="dev45: run every server with --mtp FILE (needs --cache-mib full); outputs must not change")
     args = ap.parse_args()
     bin_dir = Path(args.bin)
     if args.mtp:
         SERVER_EXTRA.extend(["--mtp", args.mtp])
+    if args.tools:
+        ok = tools(bin_dir, args.model, args.cache_mib)
+        print(f"SERVER TOOLS CHECK: {'YES' if ok else 'NO'}")
+        return 0 if ok else 1
     if args.parallel:
         ok = parallel(bin_dir, args.model, args.max_tokens)
         print(f"SERVER PARALLEL CHECK: {'YES' if ok else 'NO'}")

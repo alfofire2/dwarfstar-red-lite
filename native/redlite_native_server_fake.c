@@ -16,6 +16,9 @@
  *   "__fail_late__"    backend error after two tokens (SSE error event when streaming)
  *   "__too_long__"     request-level error (400), like a prompt exceeding the context
  *   "__params__"       replies with the effective sampling parameters
+ *   "__prompt__"       dev59: replies with the prompt as rendered for the model (--tool-format json|xml), in hex
+ *                      (the tools prompt contains <tool_call>, which would otherwise be read as a call)
+ *   "__emit__:TEXT"    dev59: replies with TEXT verbatim, as if the model had written it (tool-call outputs)
  */
 
 #include "redlite_native_server.h"
@@ -35,6 +38,7 @@ typedef struct {
     char *state;        /* bytes "ingested" by the previous request (NULL: reset) */
     size_t state_len;
     pthread_mutex_t mu; /* dev56: --workers N runs generations at the same time */
+    int tool_format;    /* dev59: --tool-format json|xml */
 } fake_ctx;
 
 static void state_append(fake_ctx *f, const char *p, size_t n) {
@@ -57,7 +61,7 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     const char *last = "";
     for (uint32_t i = 0; i < req->message_count; ++i)
         if (strcmp(req->messages[i].role, "user") == 0) last = req->messages[i].content;
-    char *prompt = rl_server_chatml(req);
+    char *prompt = rl_server_prompt(req, f->tool_format);
     if (!prompt) { snprintf(error, cap, "out of memory"); return 0; }
     const size_t prompt_len = strlen(prompt);
     result->prompt_tokens = (uint32_t)prompt_len;
@@ -78,13 +82,25 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
         snprintf(error, cap, "prompt (%u tokens) + max_tokens (%u) exceed the context", result->prompt_tokens, req->max_tokens);
         return 0;
     }
-    char reply[4096];
+    char buf[4096];
+    char *rendered = NULL;
+    const char *reply = buf;
     if (strcmp(last, "__params__") == 0) {
-        snprintf(reply, sizeof(reply), "temperature=%.2f top_p=%.2f top_k=%d min_p=%.2f max_tokens=%u seed=%s%llu",
+        snprintf(buf, sizeof(buf), "temperature=%.2f top_p=%.2f top_k=%d min_p=%.2f max_tokens=%u seed=%s%llu",
             (double)req->temperature, (double)req->top_p, (int)req->top_k, (double)req->min_p, req->max_tokens,
             req->has_seed ? "" : "none/", (unsigned long long)req->seed);
+    } else if (strcmp(last, "__prompt__") == 0) {
+        char *p = rl_server_prompt(req, f->tool_format);
+        rendered = p ? (char *)malloc(2u * strlen(p) + 1u) : NULL;
+        if (!rendered) { free(p); snprintf(error, cap, "out of memory"); return 0; }
+        for (size_t i = 0; p[i]; ++i) snprintf(rendered + 2u * i, 3u, "%02x", (unsigned char)p[i]);
+        if (!p[0]) rendered[0] = '\0';
+        free(p);
+        reply = rendered;
+    } else if (strncmp(last, "__emit__:", 9) == 0) {
+        reply = last + 9;
     } else {
-        snprintf(reply, sizeof(reply), "Echo: %s", last);
+        snprintf(buf, sizeof(buf), "Echo: %s", last);
     }
     const int fail_late = strcmp(last, "__fail_late__") == 0;
     const size_t n = strlen(reply);
@@ -97,16 +113,18 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
             free(f->state); f->state = NULL; f->state_len = 0;   /* a failed request leaves no reusable state */
             pthread_mutex_unlock(&f->mu);
             snprintf(error, cap, "fake backend failure mid-stream");
+            free(rendered);
             return 0;
         }
         const size_t len = n - off < 3u ? n - off : 3u;
         result->completion_tokens++;
-        if (!emit(sink, reply + off, len)) return 1; /* client gone, shutdown or stop sequence: stop cleanly */
+        if (!emit(sink, reply + off, len)) { free(rendered); return 1; } /* client gone, shutdown or stop sequence: stop cleanly */
         if (result->completion_tokens < req->max_tokens) {   /* the engine feeds it back */
             pthread_mutex_lock(&f->mu); state_append(f, reply + off, len); pthread_mutex_unlock(&f->mu);
         }
         sleep_ms(f->token_delay_ms);
     }
+    free(rendered);
     return 1;
 }
 
@@ -123,7 +141,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: redlite-server-fake [--host H] [--port P] [--token-delay-ms N] [--queue N] [--workers N] [--selftest]\n");
+            printf("Usage: redlite-server-fake [--host H] [--port P] [--token-delay-ms N] [--queue N] [--workers N] [--tool-format json|xml] [--selftest]\n");
             return 0;
         }
         if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", argv[i]); return 2; }
@@ -132,6 +150,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--token-delay-ms") == 0) ctx.token_delay_ms = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--queue") == 0) cfg.queue_max = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--workers") == 0) cfg.workers = (uint32_t)strtoul(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--tool-format") == 0) ctx.tool_format = strcmp(argv[++i], "xml") == 0 ? RL_TOOLS_XML : RL_TOOLS_JSON;
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     struct sigaction sa;
@@ -139,7 +158,7 @@ int main(int argc, char **argv) {
     sa.sa_handler = on_signal;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
-    rl_server_backend backend = {&ctx, "redlite-fake-echo", fake_generate};
+    rl_server_backend backend = {&ctx, "redlite-fake-echo", fake_generate, ctx.tool_format};
     char error[512] = {0};
     const int ok = rl_server_run(&cfg, &backend, &g_stop, error, sizeof(error));
     free(ctx.state);

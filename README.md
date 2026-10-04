@@ -37,7 +37,8 @@ weights resident, treats the experts as a cache, and on a raised GPU limit keeps
   6 % lower perplexity.
 - **Checked against llama.cpp** on every change: logits, greedy tokens and long contexts, with llama.cpp used as an
   oracle only, never linked.
-- **A local OpenAI-compatible server:** two requests at once, steering, and prompt states saved to disk.
+- **A local OpenAI-compatible server:** tool calling for agents, two requests at once, steering, and prompt
+  states saved to disk.
 
 <p align="center">
   <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB: 27.8 tok/s in September, 32.5 with the 4 GiB cache, 46.0 with every expert resident, 52.7 with MTP; llama.cpp launcher 36.4">
@@ -67,7 +68,7 @@ python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir m
 M=models/Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf   # or Bartowski's: redlite download bartowski-24gb
 .deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
 ./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
-./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
+./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE, tool calling) and /v1/models
 ./bin/redlite serve --native $M --parallel 2   # dev56: two requests at once, decoded in one pass (every expert resident)
 .deps/redmetal/redlite-engine info $M          # layout, and the cache that holds every expert of this file
 ```

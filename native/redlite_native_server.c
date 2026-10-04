@@ -133,7 +133,7 @@ static void json_escape(sb *b, const char *str, size_t n) {
                 case '\b': sb_puts(b, "\\b"); break;
                 case '\f': sb_puts(b, "\\f"); break;
                 default:
-                    if (c < 0x20 || c == 0x7F) sb_printf(b, "\\u%04x", (unsigned)c);
+                    if (c < 0x20) sb_printf(b, "\\u%04x", (unsigned)c);
                     else sb_put(b, (const char *)&s[i], 1u);
             }
             ++i;
@@ -368,11 +368,153 @@ static int jobject(jp *j, jmember_fn fn, void *user) {
 
 static int jis_null(jp *j) { return j->p < j->end && *j->p == 'n'; }
 
+/* ------------------------------------------------------------------ dev59: JSON values (tools, tool-call arguments) */
+
+struct rl_json {
+    char type;              /* 'o' object, 'a' array, 's' string, 'n' number, 't' true, 'f' false, 'z' null */
+    char *str;              /* the string (unescaped UTF-8) or the number as written */
+    uint32_t count;
+    char **keys;            /* object member names, in order */
+    struct rl_json *items;
+};
+
+static void rl_json_clear(struct rl_json *v) {
+    if (!v) return;
+    for (uint32_t i = 0; i < v->count; ++i) { if (v->keys) free(v->keys[i]); rl_json_clear(&v->items[i]); }
+    free(v->keys); free(v->items); free(v->str);
+    memset(v, 0, sizeof(*v));
+}
+
+static void rl_json_free(struct rl_json *v) { rl_json_clear(v); free(v); }
+
+static int jvalue(jp *j, struct rl_json *out) {
+    memset(out, 0, sizeof(*out));
+    jws(j);
+    if (j->p >= j->end) return jfail(j, "unexpected end of JSON");
+    const char c = *j->p;
+    if (c == '"') { out->type = 's'; return jstring(j, &out->str); }
+    if (c == 't') { out->type = 't'; return jliteral(j, "true"); }
+    if (c == 'f') { out->type = 'f'; return jliteral(j, "false"); }
+    if (c == 'n') { out->type = 'z'; return jliteral(j, "null"); }
+    if (c == '{' || c == '[') {
+        const char close = c == '{' ? '}' : ']';
+        out->type = c == '{' ? 'o' : 'a';
+        if (++j->depth > RL_JSON_MAX_DEPTH) return jfail(j, "JSON nesting too deep");
+        j->p++;
+        jws(j);
+        if (j->p < j->end && *j->p == close) { j->p++; j->depth--; return 1; }
+        for (;;) {
+            jws(j);
+            char *key = NULL;
+            if (out->type == 'o') {
+                if (!jstring(j, &key)) return 0;
+                jws(j);
+                if (j->p >= j->end || *j->p != ':') { free(key); return jfail(j, "expected ':' in JSON object"); }
+                j->p++;
+            }
+            struct rl_json *items = (struct rl_json *)realloc(out->items, (out->count + 1u) * sizeof(*items));
+            if (!items) { free(key); return jfail(j, "out of memory"); }
+            out->items = items;
+            if (out->type == 'o') {
+                char **keys = (char **)realloc(out->keys, (out->count + 1u) * sizeof(*keys));
+                if (!keys) { free(key); return jfail(j, "out of memory"); }
+                out->keys = keys;
+                keys[out->count] = key;
+            }
+            memset(&out->items[out->count], 0, sizeof(*items));
+            out->count++;
+            if (!jvalue(j, &out->items[out->count - 1u])) return 0;
+            jws(j);
+            if (j->p < j->end && *j->p == ',') { j->p++; continue; }
+            if (j->p < j->end && *j->p == close) { j->p++; j->depth--; return 1; }
+            return jfail(j, "expected ',' or closing bracket in JSON");
+        }
+    }
+    const char *s = j->p;
+    if (!jnumber(j, NULL)) return 0;
+    out->type = 'n';
+    out->str = strndup(s, (size_t)(j->p - s));
+    return out->str ? 1 : jfail(j, "out of memory");
+}
+
+/* A JSON value in a fresh allocation (NULL on failure). */
+static struct rl_json *jvalue_new(jp *j) {
+    struct rl_json *v = (struct rl_json *)calloc(1u, sizeof(*v));
+    if (!v) { jfail(j, "out of memory"); return NULL; }
+    if (!jvalue(j, v)) { rl_json_free(v); return NULL; }
+    return v;
+}
+
+/* Parses text as one JSON value (NULL when it is not exactly one). */
+static struct rl_json *jparse_text(const char *text, size_t len) {
+    char err[8] = {0};
+    jp j = {text, text + len, 0, err, sizeof(err)};
+    struct rl_json *v = jvalue_new(&j);
+    if (v) { jws(&j); if (j.p != j.end) { rl_json_free(v); v = NULL; } }
+    return v;
+}
+
+static const struct rl_json *jget(const struct rl_json *o, const char *key) {
+    if (!o || o->type != 'o') return NULL;
+    for (uint32_t i = 0; i < o->count; ++i) if (strcmp(o->keys[i], key) == 0) return &o->items[i];
+    return NULL;
+}
+
+/* Python's json.dumps(value, ensure_ascii=False) layout, as chat templates' tojson writes it. Numbers keep their
+ * written form (ponytail: json.dumps would print 1E5 as 100000.0; clients send plain numbers). */
+static void jdump(sb *b, const struct rl_json *v) {
+    switch (v->type) {
+        case 's': json_str(b, v->str, strlen(v->str)); break;
+        case 'n': sb_puts(b, v->str); break;
+        case 't': sb_puts(b, "true"); break;
+        case 'f': sb_puts(b, "false"); break;
+        case 'z': sb_puts(b, "null"); break;
+        default: {
+            const int obj = v->type == 'o';
+            sb_puts(b, obj ? "{" : "[");
+            for (uint32_t i = 0; i < v->count; ++i) {
+                if (i) sb_puts(b, ", ");
+                if (obj) { json_str(b, v->keys[i], strlen(v->keys[i])); sb_puts(b, ": "); }
+                jdump(b, &v->items[i]);
+            }
+            sb_puts(b, obj ? "}" : "]");
+        }
+    }
+}
+
 typedef struct {
     char *role;
     sb content;
     int have_content;
+    int content_null;
+    rl_tool_call calls[RL_SERVER_MAX_TOOL_CALLS];
+    uint32_t call_count;
 } msg_state;
+
+static void tool_call_clear(rl_tool_call *c) {
+    free(c->id); free(c->name); rl_json_free(c->arguments);
+    memset(c, 0, sizeof(*c));
+}
+
+static int tool_call_function_member(jp *j, const char *key, void *user) {
+    rl_tool_call *c = (rl_tool_call *)user;
+    if (strcmp(key, "name") == 0) { free(c->name); c->name = NULL; return jstring(j, &c->name); }
+    if (strcmp(key, "arguments") == 0) {
+        rl_json_free(c->arguments);
+        c->arguments = jvalue_new(j);
+        if (!c->arguments) return 0;
+        if (c->arguments->type != 's' && c->arguments->type != 'o') return jfail(j, "tool call arguments must be a string or an object");
+        return 1;
+    }
+    return jskip(j);
+}
+
+static int tool_call_member(jp *j, const char *key, void *user) {
+    rl_tool_call *c = (rl_tool_call *)user;
+    if (strcmp(key, "id") == 0) { free(c->id); c->id = NULL; return jis_null(j) ? jliteral(j, "null") : jstring(j, &c->id); }
+    if (strcmp(key, "function") == 0) return jobject(j, tool_call_function_member, c);
+    return jskip(j);   /* type ("function"), index */
+}
 
 static int content_part_member(jp *j, const char *key, void *user) {
     char **slot = (char **)user;
@@ -396,8 +538,8 @@ static int message_member(jp *j, const char *key, void *user) {
     msg_state *m = (msg_state *)user;
     if (strcmp(key, "role") == 0) { free(m->role); m->role = NULL; return jstring(j, &m->role); }
     if (strcmp(key, "content") == 0) {
-        if (jis_null(j)) return jfail(j, "message content must not be null (tool calls are not supported)");
         m->have_content = 1;
+        if (jis_null(j)) { m->content_null = 1; m->content.len = 0; return jliteral(j, "null"); }   /* checked below */
         m->content.len = 0;
         if (j->p < j->end && *j->p == '"') {
             char *s = NULL;
@@ -424,11 +566,34 @@ static int message_member(jp *j, const char *key, void *user) {
         }
         return jfail(j, "message content must be a string or an array of text parts");
     }
-    if (strcmp(key, "tool_calls") == 0 || strcmp(key, "function_call") == 0) {
-        if (jis_null(j)) return jskip(j);
-        return jfail(j, "tool calls are not supported");
+    if (strcmp(key, "tool_calls") == 0) {
+        if (jis_null(j)) return jliteral(j, "null");
+        if (j->p >= j->end || *j->p != '[') return jfail(j, "\"tool_calls\" must be an array");
+        if (++j->depth > RL_JSON_MAX_DEPTH) return jfail(j, "JSON nesting too deep");
+        j->p++;
+        jws(j);
+        if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
+        for (;;) {
+            if (m->call_count >= RL_SERVER_MAX_TOOL_CALLS) return jfail(j, "too many tool calls in one message");
+            rl_tool_call *c = &m->calls[m->call_count++];
+            if (!jobject(j, tool_call_member, c)) return 0;
+            if (!c->name || !c->name[0]) return jfail(j, "every tool call needs a function name");
+            jws(j);
+            if (j->p < j->end && *j->p == ',') { j->p++; jws(j); continue; }
+            if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
+            return jfail(j, "expected ',' or ']' in tool_calls");
+        }
     }
-    return jskip(j);
+    if (strcmp(key, "function_call") == 0) {
+        if (jis_null(j)) return jliteral(j, "null");
+        return jfail(j, "\"function_call\" is not supported; use \"tool_calls\"");
+    }
+    return jskip(j);   /* tool_call_id, name, ... */
+}
+
+static void msg_state_free(msg_state *m) {
+    free(m->role); sb_free(&m->content);
+    for (uint32_t i = 0; i < m->call_count; ++i) tool_call_clear(&m->calls[i]);
 }
 
 static int parse_messages(jp *j, rl_chat_request *req) {
@@ -441,17 +606,26 @@ static int parse_messages(jp *j, rl_chat_request *req) {
     for (;;) {
         if (req->message_count >= RL_SERVER_MAX_MESSAGES) return jfail(j, "too many messages");
         msg_state m = {0};
-        if (!jobject(j, message_member, &m)) { free(m.role); sb_free(&m.content); return 0; }
-        if (!m.role) { sb_free(&m.content); return jfail(j, "every message needs a \"role\""); }
+        if (!jobject(j, message_member, &m)) { msg_state_free(&m); return 0; }
+        if (!m.role) { msg_state_free(&m); return jfail(j, "every message needs a \"role\""); }
         if (strcmp(m.role, "developer") == 0) { free(m.role); m.role = strdup("system"); }
-        if (!m.role || (strcmp(m.role, "system") != 0 && strcmp(m.role, "user") != 0 && strcmp(m.role, "assistant") != 0)) {
-            free(m.role); sb_free(&m.content);
-            return jfail(j, "message role must be system, user or assistant");
+        if (!m.role || (strcmp(m.role, "system") != 0 && strcmp(m.role, "user") != 0 && strcmp(m.role, "assistant") != 0 &&
+                        strcmp(m.role, "tool") != 0)) {
+            msg_state_free(&m);
+            return jfail(j, "message role must be system, user, assistant or tool");
         }
-        if (!m.have_content) { free(m.role); sb_free(&m.content); return jfail(j, "every message needs \"content\""); }
-        if (!m.content.data) { m.content.data = (char *)calloc(1u, 1u); if (!m.content.data) { free(m.role); return jfail(j, "out of memory"); } }
-        req->messages[req->message_count].role = m.role;
-        req->messages[req->message_count].content = m.content.data;
+        const int assistant = strcmp(m.role, "assistant") == 0;
+        if (m.call_count && !assistant) { msg_state_free(&m); return jfail(j, "only assistant messages can have tool_calls"); }
+        if ((!m.have_content && !m.call_count) || (m.content_null && !assistant)) {
+            msg_state_free(&m);
+            return jfail(j, "every message needs \"content\" (null only for an assistant message)");
+        }
+        if (!m.content.data) { m.content.data = (char *)calloc(1u, 1u); if (!m.content.data) { msg_state_free(&m); return jfail(j, "out of memory"); } }
+        rl_chat_message *msg = &req->messages[req->message_count];
+        msg->role = m.role;
+        msg->content = m.content.data;
+        memcpy(msg->tool_calls, m.calls, sizeof(m.calls));
+        msg->tool_call_count = m.call_count;
         req->message_count++;
         jws(j);
         if (j->p < j->end && *j->p == ',') { j->p++; jws(j); continue; }
@@ -558,9 +732,33 @@ static int request_member(jp *j, const char *key, void *user) {
             return jfail(j, "expected ',' or ']' in stop");
         }
     }
-    if (strcmp(key, "tools") == 0 || strcmp(key, "functions") == 0) {
+    if (strcmp(key, "tools") == 0) {
+        rl_json_free(req->tools);
+        req->tools = NULL;
         if (jis_null(j)) return jliteral(j, "null");
-        return jfail(j, "tools are not supported");
+        req->tools = jvalue_new(j);
+        if (!req->tools) return 0;
+        if (req->tools->type != 'a') return jfail(j, "\"tools\" must be an array");
+        for (uint32_t i = 0; i < req->tools->count; ++i) {
+            const struct rl_json *t = &req->tools->items[i], *f = jget(t, "function");
+            const struct rl_json *name = jget(f ? f : t, "name");
+            if (t->type != 'o' || !name || name->type != 's' || !name->str[0]) return jfail(j, "every tool needs a function with a name");
+        }
+        return 1;
+    }
+    if (strcmp(key, "tool_choice") == 0) {   /* "none" drops the tools; "auto", "required" and objects act as auto */
+        if (j->p < j->end && *j->p == '"') {
+            char *choice = NULL;
+            if (!jstring(j, &choice)) return 0;
+            if (strcmp(choice, "none") == 0) req->tool_choice_none = 1;
+            free(choice);
+            return 1;
+        }
+        return jskip(j);
+    }
+    if (strcmp(key, "functions") == 0) {
+        if (jis_null(j)) return jliteral(j, "null");
+        return jfail(j, "\"functions\" is not supported; use \"tools\"");
     }
     return jskip(j); /* model, user, stream_options, presence_penalty, ... are accepted and ignored */
 }
@@ -570,8 +768,11 @@ void rl_chat_request_free(rl_chat_request *req) {
     for (uint32_t i = 0; i < req->message_count; ++i) {
         free(req->messages[i].role);
         free(req->messages[i].content);
+        for (uint32_t k = 0; k < req->messages[i].tool_call_count; ++k) tool_call_clear(&req->messages[i].tool_calls[k]);
     }
     req->message_count = 0;
+    rl_json_free(req->tools);
+    req->tools = NULL;
     for (uint32_t i = 0; i < req->stop_count; ++i) { free(req->stop[i]); req->stop[i] = NULL; }
     req->stop_count = 0;
 }
@@ -613,6 +814,7 @@ int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, ch
     if (ok && out->message_count == 0) ok = jfail(&j, "\"messages\" must contain at least one message");
     if (ok && strcmp(out->messages[out->message_count - 1u].role, "assistant") == 0)
         ok = jfail(&j, "the last message must not be from the assistant (continuation is not supported)");
+    if (ok && out->tools && (out->tool_choice_none || out->tools->count == 0)) { rl_json_free(out->tools); out->tools = NULL; }
     if (!ok) {
         if (error && error_cap && !error[0]) set_error(error, error_cap, "invalid request body");
         rl_chat_request_free(out);
@@ -620,18 +822,181 @@ int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, ch
     return ok;
 }
 
-char *rl_server_chatml(const rl_chat_request *req) {
+/* ------------------------------------------------------------------ dev59: prompt rendering
+ * Each branch follows the model's own Jinja chat template line by line (tests/fixtures/chat_template_*.jinja; the
+ * protocol tests render both with Jinja and compare byte for byte). */
+
+static int is_role(const rl_chat_message *m, const char *role) { return strcmp(m->role, role) == 0; }
+
+static void put_trimmed(sb *b, const char *s) {   /* Python str.strip() */
+    size_t n = strlen(s);
+    while (n && strchr(" \t\n\r\f\v", s[n - 1u])) n--;
+    while (n && strchr(" \t\n\r\f\v", *s)) { s++; n--; }
+    sb_put(b, s, n);
+}
+
+static void put_msg(sb *b, const rl_chat_message *m) {
+    sb_puts(b, "<|im_start|>"); sb_puts(b, m->role); sb_puts(b, "\n"); sb_puts(b, m->content); sb_puts(b, "<|im_end|>\n");
+}
+
+/* Qwen3-Next Instruct: tools as JSON lines in the system message, calls as {"name": ..., "arguments": ...}. */
+static void render_json(sb *b, const rl_chat_request *req) {
+    const uint32_t n = req->message_count;
+    const rl_chat_message *ms = req->messages;
+    if (req->tools) {
+        sb_puts(b, "<|im_start|>system\n");
+        if (is_role(&ms[0], "system")) { sb_puts(b, ms[0].content); sb_puts(b, "\n\n"); }
+        sb_puts(b, "# Tools\n\nYou may call one or more functions to assist with the user query.\n\n"
+                   "You are provided with function signatures within <tools></tools> XML tags:\n<tools>");
+        for (uint32_t i = 0; i < req->tools->count; ++i) { sb_puts(b, "\n"); jdump(b, &req->tools->items[i]); }
+        sb_puts(b, "\n</tools>\n\nFor each function call, return a json object with function name and arguments within "
+                   "<tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n"
+                   "</tool_call><|im_end|>\n");
+    } else if (is_role(&ms[0], "system")) {
+        put_msg(b, &ms[0]);
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        const rl_chat_message *m = &ms[i];
+        if (is_role(m, "user") || (is_role(m, "system") && i > 0)) {
+            put_msg(b, m);
+        } else if (is_role(m, "assistant")) {
+            sb_puts(b, "<|im_start|>assistant\n"); sb_puts(b, m->content);
+            for (uint32_t k = 0; k < m->tool_call_count; ++k) {
+                const rl_tool_call *c = &m->tool_calls[k];
+                if (k || m->content[0]) sb_puts(b, "\n");
+                sb_puts(b, "<tool_call>\n{\"name\": \""); sb_puts(b, c->name); sb_puts(b, "\", \"arguments\": ");
+                if (!c->arguments) sb_puts(b, "{}");
+                else if (c->arguments->type == 's') sb_puts(b, c->arguments->str);
+                else jdump(b, c->arguments);
+                sb_puts(b, "}\n</tool_call>");
+            }
+            sb_puts(b, "<|im_end|>\n");
+        } else if (is_role(m, "tool")) {
+            if (i == 0 || !is_role(&ms[i - 1u], "tool")) sb_puts(b, "<|im_start|>user");
+            sb_puts(b, "\n<tool_response>\n"); sb_puts(b, m->content); sb_puts(b, "\n</tool_response>");
+            if (i + 1u == n || !is_role(&ms[i + 1u], "tool")) sb_puts(b, "<|im_end|>\n");
+        }
+    }
+}
+
+/* render_extra_keys of the Qwen3-Coder template: the members not in skip, as <key>value</key> lines. */
+static void xml_extra_keys(sb *b, const struct rl_json *o, const char *const *skip) {
+    if (!o || o->type != 'o') return;
+    for (uint32_t i = 0; i < o->count; ++i) {
+        int skipped = 0;
+        for (const char *const *s = skip; *s; ++s) if (strcmp(o->keys[i], *s) == 0) skipped = 1;
+        if (skipped) continue;
+        sb_puts(b, "\n<"); sb_puts(b, o->keys[i]); sb_puts(b, ">");
+        if (o->items[i].type == 's') sb_puts(b, o->items[i].str); else jdump(b, &o->items[i]);
+        sb_puts(b, "</"); sb_puts(b, o->keys[i]); sb_puts(b, ">");
+    }
+}
+
+/* Jinja's `string` filter on a scalar (ponytail: a list renders as JSON here, as a Python repr there). */
+static void put_jinja_string(sb *b, const struct rl_json *v) {
+    if (v->type == 's') sb_puts(b, v->str);
+    else if (v->type == 't') sb_puts(b, "True");
+    else if (v->type == 'f') sb_puts(b, "False");
+    else if (v->type == 'z') sb_puts(b, "None");
+    else jdump(b, v);
+}
+
+/* Qwen3-Coder: tools as XML in the system message, calls as <function=name><parameter=key>value</parameter>. */
+static void render_xml(sb *b, const rl_chat_request *req) {
+    const uint32_t n = req->message_count;
+    const rl_chat_message *ms = req->messages;
+    const int has_system = is_role(&ms[0], "system");
+    const uint32_t first = has_system ? 1u : 0u;
+    if (has_system) { sb_puts(b, "<|im_start|>system\n"); sb_puts(b, ms[0].content); }
+    else if (req->tools) sb_puts(b, "<|im_start|>system\nYou are Qwen, a helpful AI assistant that can interact with a computer to solve tasks.");
+    if (req->tools) {
+        static const char *const fn_skip[] = {"type", "name", "description", "parameters", NULL};
+        static const char *const params_skip[] = {"type", "properties", NULL};
+        static const char *const param_skip[] = {"name", "type", "description", NULL};
+        sb_puts(b, "\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>");
+        for (uint32_t i = 0; i < req->tools->count; ++i) {
+            const struct rl_json *t = &req->tools->items[i];
+            if (jget(t, "function")) t = jget(t, "function");
+            const struct rl_json *name = jget(t, "name"), *desc = jget(t, "description"), *params = jget(t, "parameters");
+            sb_puts(b, "\n<function>\n<name>"); if (name) put_jinja_string(b, name); sb_puts(b, "</name>");
+            if (desc) { sb_puts(b, "\n<description>"); if (desc->type == 's') put_trimmed(b, desc->str); else put_jinja_string(b, desc); sb_puts(b, "</description>"); }
+            sb_puts(b, "\n<parameters>");
+            const struct rl_json *props = jget(params, "properties");
+            if (props && props->type == 'o') {
+                for (uint32_t k = 0; k < props->count; ++k) {
+                    const struct rl_json *f = &props->items[k], *ty = jget(f, "type"), *pd = jget(f, "description");
+                    sb_puts(b, "\n<parameter>\n<name>"); sb_puts(b, props->keys[k]); sb_puts(b, "</name>");
+                    if (ty) { sb_puts(b, "\n<type>"); put_jinja_string(b, ty); sb_puts(b, "</type>"); }
+                    if (pd) { sb_puts(b, "\n<description>"); if (pd->type == 's') put_trimmed(b, pd->str); else put_jinja_string(b, pd); sb_puts(b, "</description>"); }
+                    xml_extra_keys(b, f, param_skip);
+                    sb_puts(b, "\n</parameter>");
+                }
+            }
+            xml_extra_keys(b, params, params_skip);
+            sb_puts(b, "\n</parameters>");
+            xml_extra_keys(b, t, fn_skip);
+            sb_puts(b, "\n</function>");
+        }
+        sb_puts(b, "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n"
+                   "<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n"
+                   "<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n"
+                   "</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified "
+                   "format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n"
+                   "- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in "
+                   "natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer "
+                   "the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>");
+    }
+    if (has_system || req->tools) sb_puts(b, "<|im_end|>\n");
+    for (uint32_t i = first; i < n; ++i) {
+        const rl_chat_message *m = &ms[i];
+        if (is_role(m, "assistant") && m->tool_call_count) {
+            sb_puts(b, "<|im_start|>assistant");
+            size_t len = strlen(m->content);
+            const char *c = m->content;
+            while (len && strchr(" \t\n\r\f\v", *c)) { c++; len--; }
+            if (len) { sb_puts(b, "\n"); put_trimmed(b, m->content); sb_puts(b, "\n"); }
+            for (uint32_t k = 0; k < m->tool_call_count; ++k) {
+                const rl_tool_call *tc = &m->tool_calls[k];
+                sb_puts(b, "\n<tool_call>\n<function="); sb_puts(b, tc->name); sb_puts(b, ">\n");
+                struct rl_json *parsed = NULL;
+                const struct rl_json *args = tc->arguments;
+                if (args && args->type == 's') { parsed = jparse_text(args->str, strlen(args->str)); args = parsed; }
+                if (args && args->type == 'o') {
+                    for (uint32_t a = 0; a < args->count; ++a) {
+                        sb_puts(b, "<parameter="); sb_puts(b, args->keys[a]); sb_puts(b, ">\n");
+                        if (args->items[a].type == 's') sb_puts(b, args->items[a].str); else jdump(b, &args->items[a]);
+                        sb_puts(b, "\n</parameter>\n");
+                    }
+                }
+                rl_json_free(parsed);
+                sb_puts(b, "</function>\n</tool_call>");
+            }
+            sb_puts(b, "<|im_end|>\n");
+        } else if (is_role(m, "tool")) {
+            if (i > first && !is_role(&ms[i - 1u], "tool")) sb_puts(b, "<|im_start|>user");   /* loop.previtem */
+            sb_puts(b, "\n<tool_response>\n"); sb_puts(b, m->content); sb_puts(b, "\n</tool_response>");
+            if (i + 1u == n || !is_role(&ms[i + 1u], "tool")) sb_puts(b, "<|im_end|>\n");
+        } else {
+            put_msg(b, m);
+        }
+    }
+}
+
+char *rl_server_prompt(const rl_chat_request *req, int tool_format) {
     sb b = {0};
-    for (uint32_t i = 0; i < req->message_count; ++i) {
-        sb_puts(&b, "<|im_start|>");
-        sb_puts(&b, req->messages[i].role);
-        sb_puts(&b, "\n");
-        sb_puts(&b, req->messages[i].content);
-        sb_puts(&b, "<|im_end|>\n");
+    if (req->message_count) {
+        if (tool_format == RL_TOOLS_XML) render_xml(&b, req);
+        else render_json(&b, req);
     }
     sb_puts(&b, "<|im_start|>assistant\n");
     if (b.oom) { sb_free(&b); return NULL; }
     return b.data;
+}
+
+char *rl_server_chatml(const rl_chat_request *req) { return rl_server_prompt(req, RL_TOOLS_JSON); }
+
+int rl_server_tool_format(const char *chat_template) {
+    return chat_template && strstr(chat_template, "<function=") ? RL_TOOLS_XML : RL_TOOLS_JSON;
 }
 
 /* ------------------------------------------------------------------ HTTP transport */
@@ -789,7 +1154,15 @@ typedef struct {
     char *const *stops;
     uint32_t stop_count;
     int stop_matched;  /* a stop sequence ended the completion */
+    int tools_on;      /* dev59: the request has tools: <tool_call> switches the rest of the output to capture */
+    int capturing;
+    sb calls;          /* the output from the first <tool_call> on */
 } sink_state;
+
+static const char RL_TOOL_OPEN[] = "<tool_call>";
+static const char RL_TOOL_CLOSE[] = "</tool_call>";
+
+static int is_space(char c) { return c == ' ' || c == '\n' || c == '\t' || c == '\r'; }
 
 static int sse_send(sink_state *s, sb *event) {
     if (event->oom) return 0;
@@ -843,9 +1216,27 @@ static int sink_emit(void *user, const char *bytes, size_t len) {
     sink_state *s = (sink_state *)user;
     if (s->stop_matched) return 0;
     if (s->client_gone || (s->stop && *s->stop)) { s->stopped = 1; return 0; }
+    if (s->capturing) { sb_put(&s->calls, bytes, len); return !s->calls.oom; }
     sb_put(&s->pending, bytes, len);
     if (s->pending.oom) return 0;
     size_t k = s->pending.len;
+    if (s->tools_on) {
+        char *marker[1] = {(char *)RL_TOOL_OPEN};
+        size_t tcut = 0, scut = SIZE_MAX;
+        const int found = rl_stop_scan(s->pending.data, s->pending.len, marker, 1u, &tcut);
+        const int stop_first = s->stop_count && rl_stop_scan(s->pending.data, s->pending.len, s->stops, s->stop_count, &scut) &&
+                               scut < tcut;
+        if (found && !stop_first) {
+            size_t c = tcut;   /* the content before the call, without the separator the template puts there */
+            while (c && is_space(s->pending.data[c - 1u])) c--;
+            const int ok = sink_out(s, s->pending.data, c);
+            s->capturing = 1;
+            sb_put(&s->calls, s->pending.data + tcut, s->pending.len - tcut);
+            s->pending.len = 0;
+            return ok && !s->calls.oom;
+        }
+        if (tcut < k) k = tcut;   /* a partial <tool_call> is held back */
+    }
     if (s->stop_count) {
         size_t cut = 0;
         if (rl_stop_scan(s->pending.data, s->pending.len, s->stops, s->stop_count, &cut)) {
@@ -856,14 +1247,143 @@ static int sink_emit(void *user, const char *bytes, size_t len) {
             (void)ok;
             return 0;
         }
-        k = cut;
+        if (cut < k) k = cut;
     }
+    if (s->tools_on) while (k && is_space(s->pending.data[k - 1u])) k--;   /* whitespace may precede a call */
     const size_t u = rl_utf8_complete_prefix(s->pending.data, k);
     if (!u) return 1;
     const int ok = sink_out(s, s->pending.data, u);
     memmove(s->pending.data, s->pending.data + u, s->pending.len - u);
     s->pending.len -= u;
     return ok;
+}
+
+/* ------------------------------------------------------------------ dev59: tool calls in the output */
+
+typedef struct {
+    char *name;
+    char *arguments;   /* JSON text, as the OpenAI API carries it */
+} out_call;
+
+typedef struct { char **name; char **arguments; } call_slots;
+
+static int out_call_member(jp *j, const char *key, void *user) {
+    call_slots *c = (call_slots *)user;
+    if (strcmp(key, "name") == 0) { free(*c->name); *c->name = NULL; return jstring(j, c->name); }
+    if (strcmp(key, "arguments") == 0) {
+        free(*c->arguments); *c->arguments = NULL;
+        if (j->p < j->end && *j->p == '"') return jstring(j, c->arguments);   /* arguments written as a JSON string */
+        const char *start = j->p;
+        if (!jskip(j)) return 0;
+        *c->arguments = strndup(start, (size_t)(j->p - start));   /* the model's own text: rendered back unchanged */
+        return *c->arguments ? 1 : jfail(j, "out of memory");
+    }
+    return jskip(j);
+}
+
+/* The schema type of parameter key of tool name ("string", "integer", ...), or NULL. */
+static const char *param_type(const struct rl_json *tools, const char *name, const char *key) {
+    for (uint32_t i = 0; tools && i < tools->count; ++i) {
+        const struct rl_json *t = &tools->items[i];
+        if (jget(t, "function")) t = jget(t, "function");
+        const struct rl_json *n = jget(t, "name");
+        if (!n || n->type != 's' || strcmp(n->str, name) != 0) continue;
+        const struct rl_json *ty = jget(jget(jget(jget(t, "parameters"), "properties"), key), "type");
+        return ty && ty->type == 's' ? ty->str : NULL;
+    }
+    return NULL;
+}
+
+static const char *find(const char *p, const char *end, const char *needle) {
+    const size_t n = strlen(needle);
+    for (; p + n <= end; ++p) if (memcmp(p, needle, n) == 0) return p;
+    return NULL;
+}
+
+/* <function=NAME>\n<parameter=KEY>\nVALUE\n</parameter>\n...</function> -> name and a JSON object of the values.
+ * A value is a JSON string unless the tool's schema gives it another type and it parses as JSON. */
+static int parse_xml_call(const char *p, const char *end, const struct rl_json *tools, out_call *c) {
+    while (p < end && is_space(*p)) p++;
+    if (!(end - p > 10 && memcmp(p, "<function=", 10) == 0)) return 0;
+    p += 10;
+    const char *gt = memchr(p, '>', (size_t)(end - p));
+    if (!gt || gt == p) return 0;
+    c->name = strndup(p, (size_t)(gt - p));
+    if (!c->name) return 0;
+    p = gt + 1;
+    sb a = {0};
+    sb_puts(&a, "{");
+    uint32_t count = 0;
+    for (;;) {
+        while (p < end && is_space(*p)) p++;
+        if (end - p >= 11 && memcmp(p, "</function>", 11) == 0) { p += 11; break; }
+        if (!(end - p > 11 && memcmp(p, "<parameter=", 11) == 0)) { sb_free(&a); return 0; }
+        p += 11;
+        const char *kgt = memchr(p, '>', (size_t)(end - p));
+        if (!kgt || kgt == p) { sb_free(&a); return 0; }
+        char *key = strndup(p, (size_t)(kgt - p));
+        const char *v = kgt + 1, *vend = find(v, end, "</parameter>");
+        if (!key || !vend) { free(key); sb_free(&a); return 0; }
+        p = vend + 12;
+        if (v < vend && *v == '\n') v++;
+        if (vend > v && vend[-1] == '\n') vend--;
+        if (count++) sb_puts(&a, ", ");
+        json_str(&a, key, strlen(key));
+        sb_puts(&a, ": ");
+        const char *ty = param_type(tools, c->name, key);
+        struct rl_json *parsed = ty && strcmp(ty, "string") != 0 ? jparse_text(v, (size_t)(vend - v)) : NULL;
+        if (parsed) jdump(&a, parsed); else json_str(&a, v, (size_t)(vend - v));
+        rl_json_free(parsed);
+        free(key);
+    }
+    while (p < end && is_space(*p)) p++;
+    sb_puts(&a, "}");
+    if (p != end || a.oom) { sb_free(&a); return 0; }
+    c->arguments = a.data;
+    return 1;
+}
+
+/* The captured output: one or more <tool_call>...</tool_call> blocks and nothing else. 0 when it is not that. */
+static int parse_tool_calls(const char *text, size_t len, int format, const struct rl_json *tools, out_call *calls, uint32_t *count) {
+    const char *p = text, *end = text + len;
+    *count = 0;
+    for (;;) {
+        while (p < end && is_space(*p)) p++;
+        if (p == end) return *count > 0;
+        const size_t ol = sizeof(RL_TOOL_OPEN) - 1u;
+        if ((size_t)(end - p) < ol || memcmp(p, RL_TOOL_OPEN, ol) != 0 || *count >= RL_SERVER_MAX_TOOL_CALLS) return 0;
+        p += ol;
+        const char *close = find(p, end, RL_TOOL_CLOSE);
+        if (!close) return 0;
+        out_call *c = &calls[(*count)++];
+        if (format == RL_TOOLS_XML) {
+            if (!parse_xml_call(p, close, tools, c)) return 0;
+        } else {
+            char err[8] = {0};
+            jp j = {p, close, 0, err, sizeof(err)};
+            call_slots slots = {&c->name, &c->arguments};
+            if (!jobject(&j, out_call_member, &slots)) return 0;
+            jws(&j);
+            if (j.p != close || !c->name || !c->name[0]) return 0;
+            if (!c->arguments && !(c->arguments = strdup("{}"))) return 0;
+        }
+        p = close + sizeof(RL_TOOL_CLOSE) - 1u;
+    }
+}
+
+static void put_tool_calls(sb *b, const out_call *calls, uint32_t count, const char *id, int with_index) {
+    sb_puts(b, "[");
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i) sb_puts(b, ",");
+        sb_puts(b, "{");
+        if (with_index) sb_printf(b, "\"index\":%u,", i);
+        sb_printf(b, "\"id\":\"call_%s_%u\",\"type\":\"function\",\"function\":{\"name\":", id, i);
+        json_str(b, calls[i].name, strlen(calls[i].name));
+        sb_puts(b, ",\"arguments\":");
+        json_str(b, calls[i].arguments, strlen(calls[i].arguments));
+        sb_puts(b, "}}");
+    }
+    sb_puts(b, "]");
 }
 
 /* Runs one parsed chat request (worker thread); frees it. */
@@ -883,18 +1403,31 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
     s.created = created;
     s.stops = req.stop;
     s.stop_count = req.stop_count;
+    s.tools_on = req.tools != NULL;
 
     rl_server_result result = {0};
     int status = 500;
     const int ok = backend->generate(backend->ctx, &req, sink_emit, &s, &result, &status, error, sizeof(error));
-    rl_chat_request_free(&req);
 
     /* flush a held-back tail: a partial stop-sequence prefix, or incomplete UTF-8 (escaped as U+FFFD) */
     if (ok && s.pending.len && !s.client_gone && !s.stop_matched) {
         sink_out(&s, s.pending.data, s.pending.len);
         s.pending.len = 0;
     }
-    const char *finish = result.finish_length && !s.stop_matched ? "length" : "stop";
+    /* dev59: the captured calls; output that is not a well-formed call goes out as text, nothing is lost */
+    out_call calls[RL_SERVER_MAX_TOOL_CALLS];
+    memset(calls, 0, sizeof(calls));
+    uint32_t call_count = 0;
+    if (ok && s.capturing && !s.client_gone) {
+        if (!parse_tool_calls(s.calls.data, s.calls.len, backend->tool_format, req.tools, calls, &call_count)) {
+            for (uint32_t i = 0; i < RL_SERVER_MAX_TOOL_CALLS; ++i) { free(calls[i].name); free(calls[i].arguments); }
+            memset(calls, 0, sizeof(calls));
+            call_count = 0;
+            sink_out(&s, s.calls.data, s.calls.len);
+        }
+    }
+    rl_chat_request_free(&req);
+    const char *finish = call_count ? "tool_calls" : result.finish_length && !s.stop_matched ? "length" : "stop";
 
     if (!ok) {
         if (!error[0]) snprintf(error, sizeof(error), "generation failed");
@@ -912,6 +1445,15 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
     } else if (s.client_gone) {
         fprintf(stderr, "[redlite-server] request %lu: client disconnected after %u tokens\n", request_no, result.completion_tokens);
     } else if (s.stream) {
+        if (call_count && sse_headers(&s)) {
+            sb b = {0};
+            chunk_prefix(&s, &b);
+            sb_puts(&b, "{\"tool_calls\":");
+            put_tool_calls(&b, calls, call_count, id, 1);
+            sb_puts(&b, "},\"logprobs\":null,\"finish_reason\":null}]}\n\n");
+            sse_send(&s, &b);
+            sb_free(&b);
+        }
         if (sse_headers(&s)) {
             sb b = {0};
             chunk_prefix(&s, &b);
@@ -928,7 +1470,9 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
         sb_printf(&b, ",\"object\":\"chat.completion\",\"created\":%ld,\"model\":", created);
         json_str(&b, backend->model_id, strlen(backend->model_id));
         sb_puts(&b, ",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":");
-        json_str(&b, s.text.data ? s.text.data : "", s.text.len);
+        if (call_count && !s.text.len) sb_puts(&b, "null");
+        else json_str(&b, s.text.data ? s.text.data : "", s.text.len);
+        if (call_count) { sb_puts(&b, ",\"tool_calls\":"); put_tool_calls(&b, calls, call_count, id, 0); }
         sb_printf(&b, "},\"logprobs\":null,\"finish_reason\":\"%s\"}],\"usage\":{\"prompt_tokens\":%u,\"completion_tokens\":%u,\"total_tokens\":%u,"
             "\"prompt_tokens_details\":{\"cached_tokens\":%u}}}",
             finish, result.prompt_tokens, result.completion_tokens, result.prompt_tokens + result.completion_tokens, result.cached_tokens);
@@ -941,8 +1485,10 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
             result.prompt_tokens, result.cached_tokens, result.completion_tokens, finish,
             s.stop_matched ? " (stop sequence)" : "", s.stopped ? " (shutdown)" : "");
     }
+    for (uint32_t i = 0; i < RL_SERVER_MAX_TOOL_CALLS; ++i) { free(calls[i].name); free(calls[i].arguments); }
     sb_free(&s.pending);
     sb_free(&s.text);
+    sb_free(&s.calls);
 }
 
 /* ------------------------------------------------------------------ FIFO request queue (dev29) */
@@ -1223,7 +1769,9 @@ int rl_server_selftest(char *error, size_t cap) {
 
     if (!expect_parse_error("", NULL, error, cap) ||
         !expect_parse_error("{\"messages\":[]}", "at least one", error, cap) ||
-        !expect_parse_error("{\"messages\":[{\"role\":\"tool\",\"content\":\"x\"}]}", "role", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"function\",\"content\":\"x\"}]}", "role", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":null}]}", "null", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\",\"tool_calls\":[{\"function\":{\"name\":\"f\"}}]}]}", "assistant", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\"}]}", "content", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}", "at most 4", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stop\":\"\"}", "1 to 256", error, cap) ||
@@ -1236,7 +1784,7 @@ int rl_server_selftest(char *error, size_t cap) {
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"},{\"role\":\"assistant\",\"content\":\"y\"}]}", "assistant", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"a\\u0000\"}]}", "NUL", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]} x", "trailing", error, cap) ||
-        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"tools\":[{}]}", "tools", error, cap) ||
+        !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"tools\":[{}]}", "tool", error, cap) ||
         !expect_parse_error("{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\"}]}]}", "text", error, cap)) {
         return 0;
     }

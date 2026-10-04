@@ -69,6 +69,7 @@ typedef struct {
     int steering;               /* dev55: --steer loaded */
     float steer_base;
     uint32_t steer_tokens;      /* steer only the first N generated tokens (0 = all) */
+    int tool_format;            /* dev59: RL_TOOLS_JSON (Qwen3-Next Instruct) or RL_TOOLS_XML (Qwen3-Coder) */
     /* dev56 --parallel 2: two slots, one per worker. The engine runs one call at a time (engine_busy); a decode
      * step posts its token (want) and, when the other slot is decoding too, waits up to SRV_PAIR_WAIT_MS for it so
      * that both run as one rl_engine_step_pair. */
@@ -181,7 +182,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
                            rl_server_result *result, int *status, char *error, size_t cap) {
     engine_ctx *c = (engine_ctx *)user;
     const double t_request = now_ms();
-    char *prompt = rl_server_chatml(req);
+    char *prompt = rl_server_prompt(req, c->tool_format);
     if (!prompt) { snprintf(error, cap, "out of memory"); return 0; }
     const int32_t needed = rl_tokenizer_encode(c->tokenizer, prompt, strlen(prompt), 1, NULL, 0, error, cap);
     if (needed <= 0) { free(prompt); if (needed == 0) { *status = 400; snprintf(error, cap, "empty prompt"); } return 0; }
@@ -487,6 +488,8 @@ int main(int argc, char **argv) {
     ctx.tokenizer = tk;
     ctx.backend = use_cpu ? RL_BACKEND_CPU : RL_BACKEND_GPU;
     ctx.reuse = reuse;
+    ctx.tool_format = rl_server_tool_format(g.chat_template);
+    fprintf(stderr, "[redlite-server] tool calls: %s format\n", ctx.tool_format == RL_TOOLS_XML ? "Qwen3-Coder XML" : "Qwen3 JSON");
     pthread_mutex_init(&ctx.mu, NULL);
     pthread_cond_init(&ctx.cv, NULL);
     ctx.states.dir = state_dir;
@@ -523,7 +526,7 @@ int main(int argc, char **argv) {
     }
     int rc = 1;
     {
-        rl_server_backend backend = {&ctx, "qwen3-next-80b-a3b-redlite", engine_generate};
+        rl_server_backend backend = {&ctx, "qwen3-next-80b-a3b-redlite", engine_generate, ctx.tool_format};
         if (rl_server_run(&scfg, &backend, &g_stop, error, sizeof(error))) rc = 0;
         else fprintf(stderr, "server failed: %s\n", error);
     }

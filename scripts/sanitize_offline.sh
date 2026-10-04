@@ -82,6 +82,6 @@ if [[ "$(uname -s)" == "Darwin" ]]; then ASAN_OPTIONS="${ASAN_OPTIONS/detect_lea
 if [[ "$(uname -s)" == "Darwin" ]]; then "$OUT/redlite-engine" kernel-selftest; fi
 # OpenAI protocol tests against the sanitized HTTP server core (any report aborts the server and fails a test).
 (cd "$ROOT" && REDLITE_SERVER_FAKE_BIN="$OUT/redlite-server-fake" PYTHONPATH="$ROOT" \
-  python3 -m unittest discover -s tests -p test_native_server.py)
+  python3 -m unittest discover -s tests -p 'test_native_server*.py')
 
 echo "Sanitized offline tests: OK ($OUT)"

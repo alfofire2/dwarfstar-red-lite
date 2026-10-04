@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (after 0.5.7)
+
+- dev59: **OpenAI tool calling in `redlite-server`.** It accepts `tools` (with `tool_choice`), assistant
+  `tool_calls` and `tool` messages, and renders them as the model's own chat template does: Qwen3-Next JSON or
+  Qwen3-Coder XML, chosen from the GGUF.
+  - The calls the model writes come back as `tool_calls` with `finish_reason: "tool_calls"`, streaming included.
+  - Prompts are byte-identical to the Jinja templates (tests against both).
+  - An agent's next turn reuses the engine state: 203 of 230 prompt tokens with F2, 350 of 377 with
+    Qwen3-Coder-Next.
+  - New regress check `server.tool_call`. `docs/REDLITE_DEV59_TOOL_CALLS.md`.
+- ci: hosted CI restored now that the repository is public (Linux as before, plus macOS running
+  `scripts/dev/local_ci.sh`). It caught unused parameters in the non-Metal branches of `rl_engine_verify2` and
+  `rl_engine_mtp_draft`, now fixed.
+
 ## 0.5.7 — 2026-10-04
 
 **Fix:** in 0.5.6 `redlite chat` and `serve` did not see the F2 file on the full-residency path (a Mac with 40 GiB or
