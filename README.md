@@ -55,9 +55,12 @@ Mac, just under what every IQ2_XXS expert needs. `./bin/redlite doctor` prints t
 `sudo sysctl iogpu.wired_limit_mb=21741` (until the next reboot), `redlite chat` and `redlite serve --native` keep
 every expert resident and use MTP when its head is in `models/`:
 - 32.5 → 46 tok/s, 52.7 with MTP, on an M4 Pro 24 GiB;
-- footprint about 18–20 GiB, so close other heavy apps.
+- footprint about 18–20 GiB, so close other heavy apps;
+- **long contexts** (dev55): the prefill chunk and MTP are sized to the limit, so a 32K context runs (without MTP).
+  Below 40 GiB, MTP is skipped for answers starting past 8,192 positions, where it stops paying;
+- **for good:** a LaunchDaemon sets the limit at every boot, and `redlite doctor` recognizes it.
 
-Details: `docs/REDLITE_DEV51_24GB_DECODE.md`.
+Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_24GB.md`.
 
 **Steering** (dev52). Turn the model's style or topic with a vector added to its residual stream:
 
@@ -69,6 +72,7 @@ python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 -
 - `--steer-tokens N` steers only the start of each answer.
 - Typical strengths are 0.2–0.5 over 8–12 layers; more breaks the text.
 - Exact with MTP.
+- The server takes it too: `redlite serve --native $M --steer v.f32 …` (dev55).
 - Details and an example: `docs/REDLITE_DEV52_STEERING.md`.
 
 **A better 24 GiB file** (dev54): [alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF).
