@@ -22,6 +22,7 @@ TEMPLATE = '''class Redlite < Formula
   desc "Native Metal runtime for Qwen3-Next-80B-A3B on Apple Silicon Macs"
   homepage "https://github.com/{repo}"
   url "{url}"
+  version "{version}"
   sha256 "{sha}"
   license "MIT"
 
@@ -74,8 +75,9 @@ def main() -> int:
     a = ap.parse_args()
     tarball = Path(a.tarball or ROOT / "dist" / f"redlite-{a.version}-macos-arm64.tar.gz")
     base = a.url_base or f"https://github.com/{REPO}/releases/download/v{a.version}"
+    # the version is explicit: from "redlite-X-macos-arm64.tar.gz" Homebrew guesses "64" (seen on the M4 Pro, dev57c)
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(a.out).write_text(TEMPLATE.format(repo=REPO, url=f"{base}/{tarball.name}", sha=sha256(tarball)))
+    Path(a.out).write_text(TEMPLATE.format(repo=REPO, url=f"{base}/{tarball.name}", version=a.version, sha=sha256(tarball)))
     print(f"wrote {a.out}")
     return 0
 

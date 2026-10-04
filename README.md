@@ -5,7 +5,13 @@
 Red Lite is an independent project, named after and inspired by [DwarfStar](https://dwarfstar.sh/)
 ([antirez/ds4](https://github.com/antirez/ds4)) by Salvatore Sanfilippo (antirez): its narrow, hardware-aware
 philosophy, and several of its ideas (MTP verify, steering, checking answers against the model maker's API). It shares
-no code with it and is not affiliated with it. It is not a generic model runner. It targets one architecture and one
+no code with it and is not affiliated with it. It is not a generic model runner.
+
+**Why "Red Lite".**
+- **The star:** red dwarfs are the smallest and coolest true stars, still burning hydrogen. They are also the most
+  common.
+- **The fit:** DwarfStar Red Lite is the small red dwarf of the family: the same idea, made to fit the smallest
+  Apple Silicon Mac that can hold an 80B model, 24 GiB. It targets one architecture and one
 hardware family:
 
 - **Model:** Qwen3-Next-80B-A3B-Instruct, two of Bartowski's GGUFs: the reference
