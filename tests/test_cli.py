@@ -100,3 +100,25 @@ class DetectMissingDirTests(unittest.TestCase):
     def test_detect_on_missing_nested_dir(self):
         from redlite.hardware import detect
         self.assertGreater(detect("/tmp/rl-missing-a/b/c").free_disk_bytes, 0)
+
+
+class SetupPiTests(unittest.TestCase):
+    """dev61: redlite setup-pi adds the provider and keeps the others."""
+
+    def test_merges_into_existing_models_json(self):
+        import json
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "models.json").write_text(json.dumps({"providers": {"ollama": {"baseUrl": "x"}}}))
+            out = subprocess.run([sys.executable, "-m", "redlite.cli", "setup-pi", "--port", "8091", "--context", "16384"],
+                                 env={**os.environ, "PI_CODING_AGENT_DIR": d}, capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            cfg = json.loads((Path(d) / "models.json").read_text())
+            self.assertEqual(set(cfg["providers"]), {"ollama", "redlite"})
+            red = cfg["providers"]["redlite"]
+            self.assertEqual(red["baseUrl"], "http://127.0.0.1:8091/v1")
+            self.assertEqual(red["models"][0]["contextWindow"], 16384)
