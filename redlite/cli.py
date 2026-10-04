@@ -16,7 +16,10 @@ from .runner import engine_status, run_completion, run_server, run_bench, run_na
 from .telemetry import snapshot
 from .benchmark import run_sweep
 
-NATIVE_MODELS_DIR = ROOT / "models"
+# dev57: models next to the code in a source checkout, else in ~/.redlite/models (Homebrew / pip installs);
+# REDLITE_MODELS overrides both
+NATIVE_MODELS_DIR = Path(os.environ.get("REDLITE_MODELS") or (
+    ROOT / "models" if (ROOT / "pyproject.toml").is_file() else Path.home() / ".redlite" / "models")).expanduser()
 DEFAULT_NATIVE_MODEL = NATIVE_MODELS_DIR / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 
 
@@ -398,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("download", help="Download a curated GGUF from Hugging Face")
     s.add_argument("variant", nargs="?", default="24gb")
-    s.add_argument("--dir", default="models")
+    s.add_argument("--dir", default=str(NATIVE_MODELS_DIR), help=f"Destination (default: {NATIVE_MODELS_DIR})")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_download)
 
