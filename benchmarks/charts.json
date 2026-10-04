@@ -149,6 +149,21 @@
         {"label": "F2 (dev58)", "values": [15.379]}
       ],
       "sources": ["benchmarks/m4max-48gb-dev54-quant-mix.json", "benchmarks/m4max-48gb-dev58-dense-precision.json"]
+    },
+    {
+      "id": "coding_agent",
+      "title": "Coding-agent tasks passed (pi agent, 5 tasks x 3 runs)",
+      "unit": "of 15",
+      "note": "Scripted grading, every expert resident, 32K context. F2 before dev59b/dev60: arguments re-serialized by the agent broke the state reuse, and wrong closing brackets were not repaired.",
+      "series": ["passed"],
+      "bars": [
+        {"label": "F2, M4 Max, before the fixes", "values": [11]},
+        {"label": "F2, M4 Max", "values": [14]},
+        {"label": "Coder-Next, M4 Max", "values": [15]},
+        {"label": "F2, M4 Pro 24 GiB", "values": [15]},
+        {"label": "Coder-Next, M4 Pro 24 GiB", "values": [14]}
+      ],
+      "sources": ["benchmarks/m4-dev60-coding-agent.json"]
     }
   ]
 }

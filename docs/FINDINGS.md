@@ -229,7 +229,33 @@ Q4_K (F2), and paying with one or three expert layers back at IQ1_M, keeps the s
 
 <p align="center"><img src="img/quant_ppl.svg" alt="Perplexity of R, E3, F1 and F2"></p>
 
-## 9. What did not work
+## 9. A coding agent on a 24 GiB Mac
+
+The server speaks OpenAI tool calling (dev59), so a coding agent such as pi runs against it with a configuration
+file. Five scripted tasks were run three times each, every expert resident, 32K context:
+- write code and its tests;
+- fix a bug without touching the tests;
+- rename across files;
+- answer from a file;
+- add a command-line flag.
+
+| model, Mac | tasks passed | time per task (median) |
+|---|---:|---|
+| Qwen3-Coder-Next IQ2_XXS, M4 Max | 15 / 15 | 3–11 s |
+| Red Lite F2, M4 Max | 14 / 15 | 3–13 s |
+| Red Lite F2, M4 Pro 24 GiB | 15 / 15 | 6–29 s |
+| Qwen3-Coder-Next IQ2_XXS, M4 Pro 24 GiB | 14 / 15 | 6–21 s |
+
+The first measurement found three problems, all fixed:
+- **State lost between turns.** An agent repeats the whole conversation on every turn; the engine keeps its state
+  only when the new prompt extends the old one byte for byte. With F2, re-serialized call arguments and one extra
+  newline broke that, and most turns re-read the whole prompt. Now 57–83 % of each task's prompt is reused.
+- **Wrong closing brackets.** The 2-bit model wrote the right edit with the wrong closing brackets. They are now
+  repaired, and F2 went from 11 to 14 of 15.
+
+<p align="center"><img src="img/coding_agent.svg" alt="Coding-agent tasks passed per model and Mac"></p>
+
+## 10. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:
 
