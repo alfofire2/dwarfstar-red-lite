@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
 from . import __version__
-from .hardware import GIB, detect, gpu_wired_limit_mib
+from .hardware import GIB, _sysctl, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
 from .planner import native_defaults, native_mtp_max_context, native_plan_context, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
@@ -62,6 +63,8 @@ def cmd_doctor(args) -> int:
         print(f"DwarfStar Red Lite {__version__}")
         print(f"Apple Silicon : {'YES' if hw.is_apple_silicon else 'NO'}")
         print(f"Chip          : {hw.chip}")
+        if platform.system() == "Darwin":   # for bug reports (the macOS 27.0.1 GPU-driver panics, docs/WHAT_DID_NOT_WORK.md)
+            print(f"macOS         : {platform.mac_ver()[0]} ({_sysctl('hw.model') or 'unknown model'})")
         print(f"RAM           : {hw.ram_gib:.2f} GiB")
         print(f"Perf CPUs     : {hw.perf_cpus}")
         print(f"Free SSD      : {hw.free_disk_gib:.1f} GiB")
