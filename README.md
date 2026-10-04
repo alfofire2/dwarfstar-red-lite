@@ -234,9 +234,12 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   tensors F32, Q8_0, Q2_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ2_S, IQ3_XXS, IQ3_S or IQ4_XS. Other
   files of the same model use more types and are not supported natively (the launcher
   handles them).
-- **One sequence.** No multi-sequence batching. The server runs one request at a time
-  (others wait in a FIFO queue) and keeps the state of the last conversation only: a request
-  that extends it exactly reuses it, any other request resets the engine.
+- **One or two sequences.** By default the server runs one request at a time (others wait in a FIFO queue) and
+  keeps the state of the last conversation only: a request that extends it exactly reuses it, any other request
+  resets the engine. With every expert resident, `--parallel 2` serves two at once (dev56).
+- **macOS 27.0.1 GPU driver.** On an M4 Max with macOS 27.0.1, the Mac kernel-panicked twice in Apple's GPU driver
+  (`IOGPUFamily`) while Red Lite ran Metal work; never on macOS 26. The cause is in the driver, not in Red Lite;
+  avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
 - **Full residency** (`--cache-mib 22528`, GPU-routed decode) needs a Mac with at least
   40 GiB of RAM.
 - **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
