@@ -68,7 +68,8 @@ def cmd_doctor(args) -> int:
             print(f"Memory free % : {fp}")
             print(f"Swap used     : {sw}")
         wired = gpu_wired_limit_mib()
-        print(f"GPU limit     : {f'{wired} MiB (iogpu.wired_limit_mb, until reboot)' if wired else 'macOS default'}")
+        boot = GPU_LIMIT_DAEMON.is_file()
+        print(f"GPU limit     : {f'{wired} MiB (iogpu.wired_limit_mb, ' + ('set at every boot by ' + str(GPU_LIMIT_DAEMON) if boot else 'until reboot') + ')' if wired else 'macOS default'}")
         _print_gpu_advice(hw, wired)
         for k, v in out["dependencies"].items():
             print(f"{k:13}: {'OK' if v else 'MISSING'}")
@@ -187,6 +188,9 @@ def _mtp_for(model, cache_mib, args, quiet: bool = False) -> str | None:
     return str(head) if head else None
 
 
+GPU_LIMIT_DAEMON = Path("/Library/LaunchDaemons/com.redlite.gpulimit.plist")   # dev55b: sets the limit at boot
+
+
 def _print_gpu_advice(hw, wired: int) -> None:
     """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
     from .planner import NATIVE_MTP_FILE, NATIVE_SMALL_MODELS, native_full_residency_mib, native_residency
@@ -205,7 +209,8 @@ def _print_gpu_advice(hw, wired: int) -> None:
           + (f" ({need_mtp} MiB with MTP)" if need_mtp else "")
           + f"; now {'OK' if wired >= need else 'not enabled'}")
     if wired < need:
-        print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}   (docs/REDLITE_DEV51_24GB_DECODE.md)")
+        print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}")
+        print("  enable at every boot: the LaunchDaemon in docs/REDLITE_DEV51_24GB_DECODE.md")
 
 
 ROUTE_CACHE_BIAS_DEFAULT = "0.5"
