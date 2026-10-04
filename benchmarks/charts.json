@@ -135,6 +135,20 @@
         {"label": "with MTP", "values": [51.0, 56.0]}
       ],
       "sources": ["benchmarks/m4pro-dev56-parallel-server.json"]
+    },
+    {
+      "id": "quant_ppl",
+      "title": "Perplexity of 19.3 GB files of the same model (lower is better)",
+      "unit": "perplexity",
+      "note": "Frozen corpus, ctx 512, 111 chunks, M4 Max. R: Bartowski's IQ2_XXS scheme rebuilt; E3: precise expert layers moved to 37-47 (dev54); F1/F2: dense weights at IQ3_XXS / Q4_K (dev58).",
+      "series": ["perplexity"],
+      "bars": [
+        {"label": "R (Bartowski scheme)", "values": [16.370]},
+        {"label": "E3 (dev54)", "values": [16.216]},
+        {"label": "F1 (dev58)", "values": [15.419]},
+        {"label": "F2 (dev58)", "values": [15.379]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-dev54-quant-mix.json", "benchmarks/m4max-48gb-dev58-dense-precision.json"]
     }
   ]
 }

@@ -220,6 +220,15 @@ Bartowski's importance matrix shows that the experts' input energy grows steadil
 E3 is on Hugging Face ([alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF)),
 and `redlite download 24gb` fetches it.
 
+**The dense weights matter more** (dev58). In E3 the projections that every token reads (DeltaNet and attention
+inputs, part of the shared expert) are still 2-bit: about 290 MiB of a 19.3 GB file. Raising them to IQ3_XXS (F1) or
+Q4_K (F2), and paying with one or three expert layers back at IQ1_M, keeps the size:
+- **perplexity −5 % against E3:** 15.42 (F1) and 15.38 (F2) against 16.22, better on 103–105 of 111 chunks;
+- **API agreement:** F2 reaches 5 identical answers and 15.2 % mean matching words (E3: 4, 13.6 %);
+- **speed:** plain decode 1–3 % slower; with MTP on the M4 Pro as fast as E3 or faster.
+
+<p align="center"><img src="img/quant_ppl.svg" alt="Perplexity of R, E3, F1 and F2"></p>
+
 ## 9. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:
