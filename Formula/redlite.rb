@@ -1,8 +1,8 @@
 class Redlite < Formula
   desc "Native Metal runtime for Qwen3-Next-80B-A3B on Apple Silicon Macs"
   homepage "https://github.com/alfofire2/dwarfstar-red-lite"
-  url "https://github.com/alfofire2/dwarfstar-red-lite/releases/download/v0.5.5/redlite-0.5.5-macos-arm64.tar.gz"
-  sha256 "43bcbbe8427a329815502c9a3b38f4e9dda4f639caa3e1efa8a08462b16543b3"
+  url "https://github.com/alfofire2/dwarfstar-red-lite/releases/download/v0.5.6/redlite-0.5.6-macos-arm64.tar.gz"
+  sha256 "3601750604f16cf7e085c79a31f81825eb81f4bd60ef82f16a419bd7afecadd0"
   license "MIT"
 
   depends_on arch: :arm64
@@ -22,7 +22,7 @@ class Redlite < Formula
   def caveats
     <<~EOS
       Models go to ~/.redlite/models (set REDLITE_MODELS to change it):
-        redlite download 24gb        # 19.3 GB, the Red Lite E3 file (48gb: IQ3_XXS for 48 GiB Macs)
+        redlite download 24gb        # 19.3 GB, the Red Lite F2 file (48gb: IQ3_XXS for 48 GiB Macs)
         redlite download mtp         # 2.4 GB, the MTP head (faster decode, same output)
         redlite chat
       On a 24 GiB Mac, `redlite doctor` prints the GPU limit that keeps every expert resident.
