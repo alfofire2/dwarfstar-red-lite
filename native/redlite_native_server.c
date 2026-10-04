@@ -865,9 +865,16 @@ static void render_json(sb *b, const rl_chat_request *req) {
                 const rl_tool_call *c = &m->tool_calls[k];
                 if (k || m->content[0]) sb_puts(b, "\n");
                 sb_puts(b, "<tool_call>\n{\"name\": \""); sb_puts(b, c->name); sb_puts(b, "\", \"arguments\": ");
+                /* arguments in json.dumps form whatever the client did to them: agents re-serialize the JSON they
+                 * got back (pi sends {"a":1} for the model's {"a": 1}), and a turn that differs from what the model
+                 * wrote loses the engine state (dev59b: F2 reused 0 % of the prompt in an agent loop) */
+                struct rl_json *parsed = c->arguments && c->arguments->type == 's' ?
+                    jparse_text(c->arguments->str, strlen(c->arguments->str)) : NULL;
                 if (!c->arguments) sb_puts(b, "{}");
+                else if (parsed) jdump(b, parsed);
                 else if (c->arguments->type == 's') sb_puts(b, c->arguments->str);
                 else jdump(b, c->arguments);
+                rl_json_free(parsed);
                 sb_puts(b, "}\n</tool_call>");
             }
             sb_puts(b, "<|im_end|>\n");
@@ -1227,8 +1234,11 @@ static int sink_emit(void *user, const char *bytes, size_t len) {
         const int stop_first = s->stop_count && rl_stop_scan(s->pending.data, s->pending.len, s->stops, s->stop_count, &scut) &&
                                scut < tcut;
         if (found && !stop_first) {
-            size_t c = tcut;   /* the content before the call, without the separator the template puts there */
-            while (c && is_space(s->pending.data[c - 1u])) c--;
+            /* the content before the call, without the one newline the template puts back between them: a model that
+             * leaves a blank line (".\n\n<tool_call>", Qwen3-Next does) keeps ".\n", so the turn renders back
+             * exactly as written and the next request reuses the state (dev59b) */
+            size_t c = tcut;
+            if (c && s->pending.data[c - 1u] == '\n') c--;
             const int ok = sink_out(s, s->pending.data, c);
             s->capturing = 1;
             sb_put(&s->calls, s->pending.data + tcut, s->pending.len - tcut);
@@ -1343,6 +1353,48 @@ static int parse_xml_call(const char *p, const char *end, const struct rl_json *
     return 1;
 }
 
+/* dev60: right content, wrong closing brackets. At 2 bits Qwen3-Next closes nested arguments as '...}}]}' or
+ * '...}}}}' instead of '...}]}' (pi's edit tool: 3 of 3 runs). When everything from the first bracket that does not
+ * match (or from the end of the value) is closers and whitespace, that tail is replaced by the closers the open
+ * brackets need. Returns a malloc'd repaired text, or NULL when the error is anything else. */
+static char *repair_closers(const char *p, const char *end) {
+    char stack[RL_JSON_MAX_DEPTH];
+    int depth = 0, in_str = 0, started = 0;
+    const char *q = p;
+    for (; q < end; ++q) {
+        const char c = *q;
+        if (in_str) {
+            if (c == '\\') { if (++q >= end) return NULL; continue; }
+            if (c == '"') in_str = 0;
+            continue;
+        }
+        if (c == '"') { in_str = 1; continue; }
+        if (c == '{' || c == '[') { if (depth == RL_JSON_MAX_DEPTH) return NULL; stack[depth++] = c; started = 1; continue; }
+        if (c == '}' || c == ']') {
+            if (!depth || stack[depth - 1] != (c == '}' ? '{' : '[')) break;
+            if (--depth == 0) { ++q; break; }
+        }
+    }
+    if (in_str || !started) return NULL;
+    for (const char *r = q; r < end; ++r) if (!is_space(*r) && *r != '}' && *r != ']') return NULL;
+    sb b = {0};
+    sb_put(&b, p, (size_t)(q - p));
+    while (depth > 0) sb_put(&b, stack[--depth] == '{' ? "}" : "]", 1u);
+    if (b.oom) { sb_free(&b); return NULL; }
+    return b.data;
+}
+
+static int parse_json_call(const char *p, const char *end, out_call *c) {
+    char err[8] = {0};
+    jp j = {p, end, 0, err, sizeof(err)};
+    call_slots slots = {&c->name, &c->arguments};
+    if (!jobject(&j, out_call_member, &slots)) return 0;
+    jws(&j);
+    if (j.p != end || !c->name || !c->name[0]) return 0;
+    if (!c->arguments && !(c->arguments = strdup("{}"))) return 0;
+    return 1;
+}
+
 /* The captured output: one or more <tool_call>...</tool_call> blocks and nothing else. 0 when it is not that. */
 static int parse_tool_calls(const char *text, size_t len, int format, const struct rl_json *tools, out_call *calls, uint32_t *count) {
     const char *p = text, *end = text + len;
@@ -1358,14 +1410,14 @@ static int parse_tool_calls(const char *text, size_t len, int format, const stru
         out_call *c = &calls[(*count)++];
         if (format == RL_TOOLS_XML) {
             if (!parse_xml_call(p, close, tools, c)) return 0;
-        } else {
-            char err[8] = {0};
-            jp j = {p, close, 0, err, sizeof(err)};
-            call_slots slots = {&c->name, &c->arguments};
-            if (!jobject(&j, out_call_member, &slots)) return 0;
-            jws(&j);
-            if (j.p != close || !c->name || !c->name[0]) return 0;
-            if (!c->arguments && !(c->arguments = strdup("{}"))) return 0;
+        } else if (!parse_json_call(p, close, c)) {
+            free(c->name); free(c->arguments); c->name = c->arguments = NULL;
+            const char *s = p;
+            while (s < close && is_space(*s)) s++;
+            char *fixed = repair_closers(s, close);
+            const int ok = fixed && parse_json_call(fixed, fixed + strlen(fixed), c);
+            free(fixed);
+            if (!ok) return 0;
         }
         p = close + sizeof(RL_TOOL_CLOSE) - 1u;
     }
