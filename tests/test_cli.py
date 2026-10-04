@@ -122,3 +122,20 @@ class SetupPiTests(unittest.TestCase):
             red = cfg["providers"]["redlite"]
             self.assertEqual(red["baseUrl"], "http://127.0.0.1:8091/v1")
             self.assertEqual(red["models"][0]["contextWindow"], 16384)
+
+    def test_permissions_are_kept_or_private(self):
+        import os
+        import stat
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            env = {**os.environ, "PI_CODING_AGENT_DIR": d}
+            cmd = [sys.executable, "-m", "redlite.cli", "setup-pi"]
+            subprocess.run(cmd, env=env, check=True, capture_output=True)
+            path = Path(d) / "models.json"
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)   # new file: private
+            path.chmod(0o640)
+            subprocess.run(cmd, env=env, check=True, capture_output=True)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)   # existing file: unchanged

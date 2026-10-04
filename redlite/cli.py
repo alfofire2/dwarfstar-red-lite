@@ -175,8 +175,14 @@ def cmd_setup_pi(args) -> int:
             _die(f"{path} is not valid JSON ({e}); fix or move it, then run redlite setup-pi again")
     config.setdefault("providers", {})["redlite"] = pi_provider(args.port, args.context)
     agent_dir.mkdir(parents=True, exist_ok=True)
+    # models.json may hold other providers' API keys: keep the file's permissions, and create it private (0600)
+    mode = path.stat().st_mode & 0o777 if path.is_file() else 0o600
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(config, indent=2) + "\n")
+    os.chmod(tmp, mode)   # the umask may have narrowed it
     tmp.replace(path)
     print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context})")
     print(f"start the server:  redlite serve --native --context {args.context} --port {args.port}")

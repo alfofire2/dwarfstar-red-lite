@@ -100,13 +100,9 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
 - Details: `docs/REDLITE_DEV60_CODING_AGENT.md`.
 
 ```bash
-redlite serve --native --context 32768 --port 8080   # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
-mkdir -p ~/.pi/agent && cat > ~/.pi/agent/models.json <<'EOF'
-{"providers": {"redlite": {"baseUrl": "http://127.0.0.1:8080/v1", "api": "openai-completions", "apiKey": "redlite",
-  "compat": {"supportsDeveloperRole": false, "supportsReasoningEffort": false, "supportsStore": false,
-             "supportsStrictMode": false, "maxTokensField": "max_tokens"},
-  "models": [{"id": "qwen3-next-80b-a3b-redlite", "name": "Red Lite (local)", "contextWindow": 32768, "maxTokens": 4096}]}}}
-EOF
+npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)
+redlite setup-pi --port 8080                          # adds a "redlite" provider to ~/.pi/agent/models.json
+redlite serve --native --context 32768 --port 8080    # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```
 
