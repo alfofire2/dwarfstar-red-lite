@@ -402,7 +402,7 @@ int rl_engine_verify2(rl_engine *e, uint32_t t0, uint32_t d, float *logits0, flo
 #ifdef __APPLE__
     return rl_metal_engine_verify2(e, e->metal, t0, d, logits0, logits1, error, cap);
 #else
-    set_error(error, cap, "verify needs Metal"); return 0;
+    (void)logits0; (void)logits1; set_error(error, cap, "verify needs Metal"); return 0;
 #endif
 }
 
@@ -462,6 +462,7 @@ int rl_engine_mtp_draft(rl_engine *e, uint32_t next_token, uint32_t mtp_position
 #ifdef __APPLE__
     ok = ok && rl_metal_engine_mtp_draft(e, e->metal, emb, mtp_position, draft, logits, error, cap);
 #else
+    (void)mtp_position; (void)logits;
     if (ok) { set_error(error, cap, "MTP needs Metal"); ok = 0; }
 #endif
     free(emb);

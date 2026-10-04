@@ -4,7 +4,8 @@
     python3 scripts/dev/brew_formula.py 0.5.5                  # hashes dist/redlite-0.5.5-macos-arm64.tar.gz
     python3 scripts/dev/brew_formula.py 0.5.5 --url-base file:///dir --out /tmp/redlite.rb   # local test
 
-The repository is its own tap: brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
+The repository is its own tap: brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite, then
+brew trust --tap alfofire2/redlite (Homebrew 7 refuses formulae from untrusted taps) and brew install redlite.
 The formula installs the three native binaries and the stdlib-only `redlite` CLI from the tarball, plus `hf`
 for `redlite download`.
 """
