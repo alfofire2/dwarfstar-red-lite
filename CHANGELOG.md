@@ -2,6 +2,17 @@
 
 ## Unreleased (after 0.5.4)
 
+- dev56: **two server requests at once.** `redlite-server --parallel 2` (and `redlite serve --native --parallel 2`)
+  decodes two requests in one pass over the weights, with every expert resident.
+  - **Engine:** slots (`rl_engine_slots_enable` / `rl_engine_select_slot`) and `rl_engine_step_pair`, the 2-row
+    verify with row 1 on the other slot's state.
+  - **Server core:** N worker threads.
+  - **M4 Pro 24 GiB, E3 file:** total throughput 43.5 → 55.9 tok/s without MTP, 51.0 → 56.0 against MTP; answers
+    identical to serving them in turn.
+  - **Checks:** `redlite-engine pair` (max logit difference 1.2e-5, no argmax mismatch); `server_check.py --parallel`;
+    both in `regress_m4.sh` (`engine.pair`, `server.parallel_greedy`).
+  - `docs/REDLITE_DEV56_PARALLEL_SERVER.md`.
+
 - dev57: **Homebrew.** The repository is its own tap: `brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite`,
   then `brew install redlite`.
   - The formula (`Formula/redlite.rb`, written by `scripts/dev/brew_formula.py`) installs the three binaries and

@@ -129,6 +129,9 @@ if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   echo "== GPU-routed decode (dev21, full residency; >= 40 GiB) =="
   expect_line engine.parity.gpu_routed "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib full --context 64 --repeat 2
   grep -q "GPU-routed tokens     : 12 speculative" "$LOG/engine.parity.gpu_routed.log" || { echo "FAIL  engine.parity.gpu_routed.count (expected 12 GPU-routed tokens)"; FAIL=$((FAIL + 1)); FAILED+=(engine.parity.gpu_routed.count); }
+  # dev56: two sequences in one pass (rl_engine_step_pair) vs each alone, and the --parallel 2 server
+  expect_line engine.pair "^PASS$" "$BIN/redlite-engine" pair "$MODEL" --tokens 9707,11,1879,0,785,12884,374,264,1273,13 --cache-mib full --context 64
+  expect_line server.parallel_greedy "SERVER PARALLEL CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --parallel
 fi
 
 echo "== batched prefill (dev20) =="

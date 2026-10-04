@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="232" viewBox="0 0 810 232">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="232"/>
+<text class="t" x="10" y="24">Two server requests, M4 Pro 24 GiB (every expert resident, E3 file)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">one after the other</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">at the same time</text>
+<text class="l" x="222" y="98" text-anchor="end">plain decode</text>
+<rect x="230" y="76" width="365.1" height="15" rx="2" fill="#d64545"/><text class="v" x="600.1" y="88">43.5</text>
+<rect x="230" y="94" width="469.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="704.2" y="106">55.9</text>
+<text class="l" x="222" y="144" text-anchor="end">with MTP</text>
+<rect x="230" y="122" width="428.0" height="15" rx="2" fill="#d64545"/><text class="v" x="663.0" y="134">51</text>
+<rect x="230" y="140" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="152">56</text>
+<text class="n" x="10" y="207">tok/s. Total throughput of two greedy 200-token answers, one after the other vs at the same time (--parallel 2). One run</text>
+<text class="n" x="10" y="222">each; identical answers.</text>
+</svg>

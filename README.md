@@ -52,6 +52,7 @@ M=models/Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf   # or Bartowski's: redlite
 .deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
 ./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
 ./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
+./bin/redlite serve --native $M --parallel 2   # dev56: two requests at once, decoded in one pass (every expert resident)
 .deps/redmetal/redlite-engine info $M          # layout, and the cache that holds every expert of this file
 ```
 

@@ -123,6 +123,18 @@
         {"label": "11,193", "values": [38.74, 38.97]}
       ],
       "sources": ["benchmarks/m4-dev55-gpu-budget.json"]
+    },
+    {
+      "id": "parallel_server",
+      "title": "Two server requests, M4 Pro 24 GiB (every expert resident, E3 file)",
+      "unit": "tok/s",
+      "note": "Total throughput of two greedy 200-token answers, one after the other vs at the same time (--parallel 2). One run each; identical answers.",
+      "series": ["one after the other", "at the same time"],
+      "bars": [
+        {"label": "plain decode", "values": [43.5, 55.9]},
+        {"label": "with MTP", "values": [51.0, 56.0]}
+      ],
+      "sources": ["benchmarks/m4pro-dev56-parallel-server.json"]
     }
   ]
 }
