@@ -32,7 +32,7 @@ def layers(spec: str) -> set[int]:
     return out
 
 
-def type_lines(like: Path, iq2xs: set[int]) -> list[str]:
+def type_lines(like: Path, iq2xs: set[int], dense_type: str | None = None) -> list[str]:
     from gguf import GGUFReader
     lines = []
     for t in GGUFReader(str(like)).tensors:
@@ -42,6 +42,8 @@ def type_lines(like: Path, iq2xs: set[int]) -> list[str]:
         m = re.match(r"blk\.(\d+)\.ffn_(gate|up|down)_exps\.weight$", t.name)
         if m:
             ty = "iq2_xs" if int(m.group(1)) in iq2xs else "iq1_m"
+        elif dense_type and ty == "iq2_xxs":   # dev56: the 2-bit dense projections every token reads
+            ty = dense_type
         lines.append(f"^{re.escape(t.name)}$={ty}")
     return lines
 
@@ -52,10 +54,11 @@ def main() -> int:
     ap.add_argument("--q8", required=True, help="first split of the Q8_0 source")
     ap.add_argument("--imatrix", required=True)
     ap.add_argument("--iq2xs-layers", default="37-47", help="expert layers at IQ2_XS, e.g. 37-47 or 0-5,43-47")
+    ap.add_argument("--dense-type", help="dev56: type for the dense tensors that are IQ2_XXS in --like (e.g. iq3_xxs, q4_K)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--quantize", default=str(ROOT / ".deps" / "llama.cpp" / "build-ppl" / "bin" / "llama-quantize"))
     args = ap.parse_args()
-    lines = type_lines(Path(args.like), layers(args.iq2xs_layers))
+    lines = type_lines(Path(args.like), layers(args.iq2xs_layers), args.dense_type)
     with tempfile.NamedTemporaryFile("w", suffix=".types", delete=False) as f:
         f.write("\n".join(lines) + "\n")
     print(f"{len(lines)} tensor types; experts IQ2_XS on layers {args.iq2xs_layers}, IQ1_M elsewhere")

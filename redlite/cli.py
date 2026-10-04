@@ -228,15 +228,17 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     res = native_residency(model)
     full = res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
     batch = args.batch
+    parallel = getattr(args, "parallel", 1) or 1
+    where = f"context {args.context or 4096}" + (f", {parallel} parallel requests" if parallel > 1 else "")
     if wired > 0 and full and batch is None:
         plan = native_gpu_plan(res, wired, context, head is not None)
         if plan is not None:
             batch, use_mtp = plan
             if head and not use_mtp:
-                print(f"[redlite] MTP off: it does not fit the GPU limit ({wired} MiB) at context {context}")
+                print(f"[redlite] MTP off: it does not fit the GPU limit ({wired} MiB) at {where}")
                 head = None
             if batch != 2048:
-                print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at context {context}")
+                print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at {where}")
     if head:
         print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
     return batch, head
