@@ -2,8 +2,10 @@
 
 **Qwen3-Next-80B-A3B on Apple Silicon Macs, with a native Metal runtime written for this one model.**
 
-Red Lite is an independent project inspired by the narrow, hardware-aware philosophy of
-DwarfStar/DS4. It is not a generic model runner. It targets one architecture and one
+Red Lite is an independent project, named after and inspired by [DwarfStar](https://dwarfstar.sh/)
+([antirez/ds4](https://github.com/antirez/ds4)) by Salvatore Sanfilippo (antirez): its narrow, hardware-aware
+philosophy, and several of its ideas (MTP verify, steering, checking answers against the model maker's API). It shares
+no code with it and is not affiliated with it. It is not a generic model runner. It targets one architecture and one
 hardware family:
 
 - **Model:** Qwen3-Next-80B-A3B-Instruct, two of Bartowski's GGUFs: the reference
@@ -41,6 +43,9 @@ brew install redlite
 redlite download 24gb && redlite download mtp     # into ~/.redlite/models (REDLITE_MODELS changes it)
 redlite doctor && redlite chat
 ```
+
+The formula installs prebuilt binaries but has no Homebrew bottle, so Homebrew asks for up-to-date Command Line
+Tools. After a macOS upgrade, update them from Software Update if `brew install` says they are outdated.
 
 **From source:**
 
@@ -240,6 +245,8 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
 - **One or two sequences.** By default the server runs one request at a time (others wait in a FIFO queue) and
   keeps the state of the last conversation only: a request that extends it exactly reuses it, any other request
   resets the engine. With every expert resident, `--parallel 2` serves two at once (dev56).
+- **Tested only on Apple M4 chips** (M4 Pro 24 GiB and M4 Max 48 GiB). The release binaries are built for M1 and
+  later, and the Metal kernels compile on any Apple GPU, but M1, M2 and M3 have never run them.
 - **macOS 27.0.1 GPU driver.** On an M4 Max with macOS 27.0.1, the Mac kernel-panicked twice in Apple's GPU driver
   (`IOGPUFamily`) while Red Lite ran Metal work; never on macOS 26. The cause is in the driver, not in Red Lite;
   avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
