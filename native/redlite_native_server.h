@@ -9,6 +9,9 @@
  * tested anywhere without a model.
  *
  * Endpoints: GET /health, GET /v1/models, POST /v1/chat/completions (stream true/false).
+ * dev59: OpenAI tool calling. `tools`, assistant `tool_calls` and `tool` messages are rendered exactly as the
+ * model's own chat template does (RL_TOOLS_JSON: Qwen3-Next Instruct, RL_TOOLS_XML: Qwen3-Coder), and the calls the
+ * model writes come back as `tool_calls` with finish_reason "tool_calls".
  * The engine is single-sequence: chat requests are parsed by the accepting thread and run
  * one at a time, in arrival order, by one worker thread (dev29 FIFO queue; /health and
  * /v1/models are answered while a generation runs). Every response closes the connection.
@@ -26,10 +29,23 @@ extern "C" {
 #define RL_SERVER_MAX_MESSAGES 256u
 #define RL_SERVER_MAX_STOP 4u          /* OpenAI: up to 4 stop sequences */
 #define RL_SERVER_MAX_STOP_BYTES 256u  /* per stop sequence */
+#define RL_SERVER_MAX_TOOL_CALLS 16u   /* per assistant message */
+
+enum { RL_TOOLS_JSON = 0, RL_TOOLS_XML = 1 };   /* dev59: tool-call format of the chat template */
+
+struct rl_json;   /* parsed JSON value (opaque) */
 
 typedef struct {
-    char *role;     /* "system" | "user" | "assistant" */
-    char *content;  /* UTF-8 */
+    char *id;
+    char *name;
+    struct rl_json *arguments;   /* a JSON string (OpenAI: the arguments as text) or an object */
+} rl_tool_call;
+
+typedef struct {
+    char *role;     /* "system" | "user" | "assistant" | "tool" */
+    char *content;  /* UTF-8 ("" for an assistant message that only calls tools) */
+    rl_tool_call tool_calls[RL_SERVER_MAX_TOOL_CALLS];
+    uint32_t tool_call_count;
 } rl_chat_message;
 
 typedef struct {
@@ -45,6 +61,8 @@ typedef struct {
     int stream;
     char *stop[RL_SERVER_MAX_STOP];   /* stop sequences (non-empty UTF-8), not included in the output */
     uint32_t stop_count;
+    struct rl_json *tools;   /* dev59: the "tools" array, NULL when absent or tool_choice is "none" */
+    int tool_choice_none;
 } rl_chat_request;
 
 typedef struct {
@@ -65,6 +83,7 @@ typedef struct {
      * status_out may be set to 400 for request-level errors (e.g. prompt exceeds context); default 500. */
     int (*generate)(void *ctx, const rl_chat_request *request, rl_server_emit_fn emit, void *sink,
                     rl_server_result *result, int *status_out, char *error, size_t error_cap);
+    int tool_format;   /* dev59: RL_TOOLS_JSON or RL_TOOLS_XML (rl_server_tool_format of the GGUF chat template) */
 } rl_server_backend;
 
 typedef struct {
@@ -93,9 +112,14 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
 int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, char *error, size_t error_cap);
 void rl_chat_request_free(rl_chat_request *req);
 
-/* ChatML prompt (Qwen3-Next): every message as <|im_start|>role\ncontent<|im_end|>\n, then
+/* The prompt, rendered as the model's chat template does (generation prompt included). Without tools and tool
+ * messages both formats are plain ChatML: every message as <|im_start|>role\ncontent<|im_end|>\n, then
  * <|im_start|>assistant\n. Returns a malloc'd string or NULL on allocation failure. */
-char *rl_server_chatml(const rl_chat_request *req);
+char *rl_server_prompt(const rl_chat_request *req, int tool_format);
+char *rl_server_chatml(const rl_chat_request *req);   /* rl_server_prompt(req, RL_TOOLS_JSON) */
+
+/* dev59: RL_TOOLS_XML when the GGUF chat template uses Qwen3-Coder's <function=...> calls, else RL_TOOLS_JSON. */
+int rl_server_tool_format(const char *chat_template);
 
 /* Length of the longest prefix of buf[0..len) that does not end inside an incomplete UTF-8
  * sequence (bytes after it must wait for the next token). */
