@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased (after 0.5.4)
+## 0.5.5 — 2026-10-04
+
+**Two requests at once, Homebrew, the GPU limit at boot.**
+- `redlite serve --native --parallel 2` decodes two requests in one pass with every expert resident (M4 Pro: total
+  throughput +28 %, +10 % against MTP; answers unchanged).
+- Homebrew: `brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite && brew install redlite`
+  (binaries and CLI from this release's tarball, models in `~/.redlite/models`).
+- A LaunchDaemon recipe sets the GPU limit at every boot; `redlite doctor` recognizes it.
+- Known issue: on macOS 27.0.1 the GPU driver kernel-panicked twice on an M4 Max under Red Lite's Metal work (see
+  `docs/WHAT_DID_NOT_WORK.md`).
+- Validation: local CI PASS; `regress_m4.sh` IQ2_XXS 54/0/0 (M4 Max), E3 49/0/1 (M4 Pro).
+
 
 - dev56: **two server requests at once.** `redlite-server --parallel 2` (and `redlite serve --native --parallel 2`)
   decodes two requests in one pass over the weights, with every expert resident.
