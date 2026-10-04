@@ -130,6 +130,19 @@ them.
 - **Expert mixes that did not help (dev54).** IQ2_XS down projections on every layer with IQ1_M gate/up: +3 % size
   and perplexity 16.423 vs 16.370 (t = +1.13), and the engine cannot run it (type word 0x111d). Keeping layers 0–2
   precise (E3b): no measurable gain (t = −1.28).
+- **A kernel panic in the GPU driver (2026-10-04, M4 Max 48 GiB).**
+  - **What happened.** At 01:50:34, during `regress_m4.sh` (check `engine.parity.gpu_routed`: every expert resident,
+    ~16 GB on the GPU), macOS panicked: "Kernel data abort" at address 0x10 inside `com.apple.iokit.IOGPUFamily`
+    (offset 0x2a31c, reached from 0xabd0), in a system call of `redlite-engine`. Its second thread was in the kernel
+    outside the driver. A user process cannot dereference a kernel null pointer, so this is a driver bug that our
+    workload reached.
+  - **Not reproducible after a reboot.** The same check passed 5 times in a row, and the whole regression passed
+    52/0/0 in the same order.
+  - **State at the time (not proven to matter):** 3 days of uptime with dozens of 17–29 GiB GPU load/unload
+    cycles, swap in use, and a GPU out-of-memory error four hours earlier (two overlapped GPU jobs, dev54).
+  - **Practice.** Never overlap GPU-heavy jobs. After a GPU out-of-memory error or days of such runs, reboot before
+    a long gate run. Report:
+    `/Library/Logs/DiagnosticReports/panic-full-2026-10-04-113143.0002.panic` (for Apple Feedback Assistant).
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

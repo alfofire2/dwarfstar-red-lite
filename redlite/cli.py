@@ -11,7 +11,7 @@ import sys
 from . import __version__
 from .hardware import GIB, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import native_defaults, plan_for, select_native_model
+from .planner import native_defaults, native_mtp_max_context, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
@@ -177,12 +177,12 @@ def cmd_run(args) -> int:
     return run_completion(args.model, plan, args.prompt, args.tokens, args.extra, args.dry_run, args.single_turn)
 
 
-def _mtp_for(model, cache_mib, args) -> str | None:
+def _mtp_for(model, cache_mib, args, quiet: bool = False) -> str | None:
     """dev45: pass the MTP head when it applies (full residency, Instruct file, head present); --no-mtp disables"""
     from .planner import native_mtp_file
     head = native_mtp_file(model, cache_mib, disabled=getattr(args, "no_mtp", False),
                            ram_bytes=detect(Path(model).parent).ram_bytes, wired_mib=gpu_wired_limit_mib())
-    if head:
+    if head and not quiet:
         print(f"[redlite] MTP speculative decoding with {head.name} (same output as plain decoding; --no-mtp disables)")
     return str(head) if head else None
 
@@ -198,7 +198,7 @@ def _print_gpu_advice(hw, wired: int) -> None:
         return
     need = native_full_residency_mib(res)
     head = NATIVE_MODELS_DIR / NATIVE_MTP_FILE
-    need_mtp = native_full_residency_mib(res, head.stat().st_size) if head.is_file() else None
+    need_mtp = native_full_residency_mib(res, mtp=True) if head.is_file() else None
     if need > hw.ram_bytes / (1024 * 1024) - 2048:
         return
     print(f"Full residency: needs a GPU limit of {need} MiB"
@@ -209,6 +209,29 @@ def _print_gpu_advice(hw, wired: int) -> None:
 
 
 ROUTE_CACHE_BIAS_DEFAULT = "0.5"
+
+
+def _gpu_tuning(model, cache_mib, args, context: int):
+    """dev55: (prefill chunk, MTP head) for this run. Under a raised GPU limit at full residency the chunk and MTP are
+    chosen so the measured need (planner.native_full_residency_mib) fits; otherwise the defaults stand."""
+    from .planner import native_gpu_plan, native_residency
+    head = _mtp_for(model, cache_mib, args, quiet=True)
+    wired = gpu_wired_limit_mib()
+    res = native_residency(model)
+    full = res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
+    batch = args.batch
+    if wired > 0 and full and batch is None:
+        plan = native_gpu_plan(res, wired, context, head is not None)
+        if plan is not None:
+            batch, use_mtp = plan
+            if head and not use_mtp:
+                print(f"[redlite] MTP off: it does not fit the GPU limit ({wired} MiB) at context {context}")
+                head = None
+            if batch != 2048:
+                print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at context {context}")
+    if head:
+        print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
+    return batch, head
 
 
 def _route_bias_env(model, cache_mib, args) -> None:
@@ -257,17 +280,18 @@ def cmd_chat(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
+        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
+    batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
     try:
         return run_native_chat(
             str(model), args.context, cache_mib, args.max_tokens,
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
-            batch=args.batch, json_stats=args.json, min_p=args.min_p,
-            mtp=_mtp_for(model, cache_mib, args), steer=_steer_args(args),
+            batch=batch, json_stats=args.json, min_p=args.min_p,
+            mtp=mtp, steer=_steer_args(args), mtp_max_context=native_mtp_max_context(hw.ram_bytes),
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -293,14 +317,16 @@ def _serve_native(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib())
+        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context or 4096)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
+    batch, mtp = _gpu_tuning(model, cache_mib, args, args.context or 4096)
     try:
         return run_native_server(
             str(model), args.host, args.port, args.context or 4096, cache_mib,
-            batch=args.batch, dry_run=args.dry_run, mtp=_mtp_for(model, cache_mib, args),
+            batch=batch, dry_run=args.dry_run, mtp=mtp, mtp_max_context=native_mtp_max_context(hw.ram_bytes),
+            steer=_steer_args(args),
         )
     except FileNotFoundError:
         _die("Native Red Lite server not built. Run: make native")
@@ -428,6 +454,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
     s.add_argument("--no-mtp", action="store_true", help="--native: do not use the MTP head for speculative decoding")
     s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
+    s.add_argument("--steer", default=None, help="--native: activation steering vector for the generated tokens")
+    s.add_argument("--steer-layers", default=None, help="--native: steered layers A-B (default 16-31)")
+    s.add_argument("--steer-strength", type=float, default=None, help="--native: steering strength (default 1)")
+    s.add_argument("--steer-tokens", type=int, default=None, help="--native: steer only the first N tokens of each answer")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

@@ -60,7 +60,16 @@ typedef struct {
     rl_statecache states;  /* dev43 --state-dir: disk checkpoints when the in-memory state does not apply */
     int speculate;         /* dev45 --mtp with every expert resident: MTP drafts + 2-row verify */
     float *logits1;
+    uint32_t mtp_max_context;   /* dev55: no speculation for answers starting past this position (0 = no limit) */
+    int steering;               /* dev55: --steer loaded */
+    float steer_base;
+    uint32_t steer_tokens;      /* steer only the first N generated tokens (0 = all) */
 } engine_ctx;
+
+/* dev55: steering strength for the next decode step (the batched prefill is never steered) */
+static void srv_steer(engine_ctx *c, uint32_t generated) {
+    if (c->steering) rl_engine_set_steering_strength(c->engine, c->steer_tokens && generated >= c->steer_tokens ? 0.0f : c->steer_base);
+}
 
 typedef struct {               /* wraps the server sink to time the first token */
     rl_server_emit_fn emit;
@@ -141,15 +150,19 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         if (!ttft_emit(&ts, piece_, (size_t)n_)) { fin = 1; break; } \
         if (generated >= req->max_tokens) { result->finish_length = 1; fin = 1; break; } \
     } while (0)
-    if (ok && c->speculate && c->backend == RL_BACKEND_GPU) {
+    const int spec = c->speculate && c->backend == RL_BACKEND_GPU &&
+                     (!c->mtp_max_context || rl_engine_position(c->engine, c->backend) <= c->mtp_max_context);
+    if (ok && spec) {
         int fin = 0;
         uint32_t u = rl_sampler_sample(&sampler, c->logits), mtp_pos = 0;
         SRV_EMIT(u, fin);
         if (!fin) {   /* one plain step so the hidden state the MTP block reads belongs to u's position */
+            srv_steer(c, generated);
             if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) ok = 0;
             else { c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin); }
         }
         while (ok && !fin) {
+            srv_steer(c, generated);
             if (rl_engine_position(c->engine, c->backend) + 2u > c->info->context) {   /* no room for two rows: plain step */
                 if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) { ok = 0; break; }
                 c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin);
@@ -170,7 +183,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             else u = v;
         }
     }
-    while (ok && !(c->speculate && c->backend == RL_BACKEND_GPU)) {
+    while (ok && !spec) {
         const uint32_t next = rl_sampler_sample(&sampler, c->logits);
         if (rl_tokenizer_is_eog(c->tokenizer, next)) break;
         char piece[512];
@@ -179,6 +192,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         generated++;
         if (!ttft_emit(&ts, piece, (size_t)n)) break;           /* client gone, Ctrl-C or stop sequence */
         if (generated >= req->max_tokens) { result->finish_length = 1; break; }
+        srv_steer(c, generated);
         if (!rl_engine_step(c->engine, c->backend, next, c->logits, &st, error, cap)) { ok = 0; break; }
         c->history[c->history_len++] = next;                     /* fed back: part of the state */
         gpu_routed += st.speculative;
@@ -220,6 +234,11 @@ static void usage(FILE *out) {
         "  --state-max-mib N   size limit of --state-dir in MiB, least recently used first (default 8192)\n"
         "  --mtp FILE          dev45: speculative decoding with a Qwen3-Next MTP block GGUF (needs --cache-mib full;\n"
         "                      output is exactly that of plain decoding)\n"
+        "  --mtp-max-context N dev55: no speculation for answers that start past position N (0 = no limit, the default)\n"
+        "  --steer FILE        dev55: activation steering vector for the generated tokens (see redlite-generate)\n"
+        "  --steer-layers A-B  steered layers (default 16-31)\n"
+        "  --steer-strength S  steering strength (default 1)\n"
+        "  --steer-tokens N    steer only the first N tokens of each answer (default 0 = all)\n"
         "  --cpu               use the CPU oracle backend (slow; the only backend off macOS)\n\n"
         "Endpoints: POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health\n");
 }
@@ -253,6 +272,9 @@ int main(int argc, char **argv) {
     int reuse = 1;
     const char *state_dir = NULL;
     uint32_t state_max_mib = 8192u;
+    uint32_t mtp_max_context = 0u, steer_tokens = 0u, steer_first = 16u, steer_last = 31u;
+    const char *steer_path = NULL;
+    float steer_base = 1.0f;
 #ifdef __APPLE__
     int use_cpu = 0;
 #else
@@ -276,6 +298,11 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--queue") == 0) { if (!parse_u32(v, &scfg.queue_max)) return 2; }
         else if (strcmp(argv[i - 1], "--state-dir") == 0) state_dir = v;
         else if (strcmp(argv[i - 1], "--mtp") == 0) cfg.mtp_path = v;
+        else if (strcmp(argv[i - 1], "--mtp-max-context") == 0) { if (!parse_u32(v, &mtp_max_context)) return 2; }
+        else if (strcmp(argv[i - 1], "--steer") == 0) steer_path = v;
+        else if (strcmp(argv[i - 1], "--steer-strength") == 0) { if (!parse_f32(v, &steer_base)) return 2; }
+        else if (strcmp(argv[i - 1], "--steer-tokens") == 0) { if (!parse_u32(v, &steer_tokens)) return 2; }
+        else if (strcmp(argv[i - 1], "--steer-layers") == 0) { if (sscanf(v, "%u-%u", &steer_first, &steer_last) != 2) return 2; }
         else if (strcmp(argv[i - 1], "--state-max-mib") == 0) { if (!parse_u32(v, &state_max_mib)) return 2; }
         else if (strcmp(argv[i - 1], "--min-p") == 0) { if (!parse_f32(v, &scfg.default_min_p) || scfg.default_min_p < 0.0f || scfg.default_min_p > 1.0f) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i - 1]); usage(stderr); return 2; }
@@ -332,6 +359,15 @@ int main(int argc, char **argv) {
         if (ctx.speculate && !ctx.logits1) { fprintf(stderr, "logits allocation failed\n"); return 1; }
     }
     ctx.states.max_bytes = (uint64_t)state_max_mib * 1024u * 1024u;
+    ctx.mtp_max_context = mtp_max_context;
+    if (steer_path) {
+        if (!rl_engine_load_steering(e, steer_path, steer_first, steer_last, 0.0f, error, sizeof(error))) {
+            fprintf(stderr, "steering: %s\n", error); return 1;
+        }
+        ctx.steering = 1; ctx.steer_base = steer_base; ctx.steer_tokens = steer_tokens;
+        fprintf(stderr, "[redlite-server] steering %s: layers %u-%u, strength %g%s\n", steer_path, steer_first, steer_last,
+                (double)steer_base, steer_tokens ? " (first tokens of each answer)" : "");
+    }
     int rc = 1;
     if (!ctx.logits || !ctx.history) {
         fprintf(stderr, "logits allocation failed\n");

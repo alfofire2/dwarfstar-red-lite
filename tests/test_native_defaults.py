@@ -164,8 +164,9 @@ class GpuLimitTests(unittest.TestCase):
 
     def test_needed_limit_includes_margin(self):
         from redlite.planner import native_full_residency_mib
-        self.assertEqual(native_full_residency_mib(self.IQ2_REAL), 17316 + 1083 + 1024)
-        self.assertEqual(native_full_residency_mib(self.IQ2_REAL, 2423911040), 17316 + 1083 + 2312 + 1024)
+        # dev55 measured model: slots + dense + 580 + 48 KiB per position + 572 MiB for 2048-token chunks (+1787 MTP)
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL), 17316 + 1083 + 580 + 192 + 572)
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL, mtp=True), 17316 + 1083 + 580 + 192 + 572 + 1787)
 
     def test_mtp_needs_room_for_the_head(self):
         import tempfile
@@ -229,3 +230,28 @@ class RedLiteMixPreferenceTests(unittest.TestCase):
         from redlite.model_catalog import resolve_variant
         self.assertEqual(resolve_variant("24gb").repo, "alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF")
         self.assertEqual(resolve_variant("bartowski-24gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf")
+
+
+class GpuPlanTests(unittest.TestCase):
+    """dev55: the measured need explains the M4 Pro outcomes at a 21,741 MiB limit (IQ2_XXS-size file)."""
+    RES = NativeResidency(17316, 1083 * 1024 * 1024)
+
+    def test_m4pro_outcomes(self):
+        from redlite.planner import native_full_residency_mib
+        self.assertGreater(native_full_residency_mib(self.RES, 32768, 512, True), 21741)    # observed: out of GPU memory
+        self.assertLessEqual(native_full_residency_mib(self.RES, 32768, 2048, False), 21741)  # observed: ran
+        self.assertLessEqual(native_full_residency_mib(self.RES, 4096, 2048, True), 21741)    # observed: ran (52.7 tok/s)
+
+    def test_plan_prefers_mtp_then_big_chunks(self):
+        from redlite.planner import native_gpu_plan
+        self.assertEqual(native_gpu_plan(self.RES, 21741, 4096, True), (2048, True))
+        self.assertEqual(native_gpu_plan(self.RES, 21741, 32768, True), (2048, False))   # MTP dropped at 32K
+        self.assertEqual(native_gpu_plan(self.RES, 21741, 16384, True), (512, True))     # smaller chunks keep MTP
+        self.assertIsNone(native_gpu_plan(self.RES, 19000, 4096, True))
+
+
+class MtpMaxContextTests(unittest.TestCase):
+    def test_limit_only_below_40gb(self):
+        from redlite.planner import native_mtp_max_context
+        self.assertEqual(native_mtp_max_context(24 * GIB), 8192)
+        self.assertIsNone(native_mtp_max_context(48 * GIB))

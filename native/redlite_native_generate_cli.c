@@ -87,6 +87,7 @@ static void usage(FILE *out) {
         "  --seed S            PRNG seed for sampling (default 0 -> fixed constant)\n"
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N|full  routed-expert cache budget in MiB (default 4096); full = every expert of the file,\n"        "                      computed from its expert payload (redlite-engine info prints it)\n"
+"  --mtp-max-context N dev55: no speculation for answers that start past position N (0 = no limit, the default)\n"
 "  --steer FILE        dev52: activation steering vector (hidden float32 values, scripts/dev/steer_extract.py)\n"
 "  --steer-layers A-B  layers whose input is steered (default 16-31)\n"
 "  --steer-strength S  x += S * vector at those layers for every generated token (default 1; /steer S in chat)\n"
@@ -165,6 +166,7 @@ static int parse_f32(const char *s, float *out) {
 /* dev52: activation steering (--steer FILE). g_steer_base is the strength the user chose (/steer S changes it);
  * with --steer-tokens N only the first N tokens of each answer are steered. */
 static const char *g_steer_path = NULL;
+static uint32_t g_mtp_max_context = 0u;   /* dev55: no speculation for answers starting past this position (0 = no limit) */
 static float g_steer_base = 1.0f;
 static uint32_t g_steer_tokens = 0u;
 static void steer_at(rl_engine *e, uint32_t generated) {
@@ -342,7 +344,8 @@ static int interactive_chat(
         /* dev45: speculative turn. Invariant at every break: each emitted token is in the state, the closing
          * token (end of answer) is not (as in the plain loop below). u = emitted token not yet in the state. */
         double spec_pre_ms = 0.0;
-        const int speculate = rl_engine_mtp_enabled(engine) && rl_engine_experts_preloaded(engine, &spec_pre_ms);
+        const int speculate = rl_engine_mtp_enabled(engine) && rl_engine_experts_preloaded(engine, &spec_pre_ms) &&
+                              (!g_mtp_max_context || rl_engine_position(engine, RL_BACKEND_GPU) <= g_mtp_max_context);
         uint32_t spec_cycles = 0, spec_accepted = 0;
 #define IA_PIECE(tok) do { \
         char piece_[512]; const int32_t b_ = rl_tokenizer_decode(tokenizer, (tok), piece_, sizeof(piece_)); \
@@ -490,6 +493,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--state-dir") == 0) state_dir = argv[++i];
         else if (strcmp(argv[i], "--mtp") == 0) cfg.mtp_path = argv[++i];
         else if (strcmp(argv[i], "--steer") == 0) g_steer_path = argv[++i];
+        else if (strcmp(argv[i], "--mtp-max-context") == 0) { if (!parse_u32(argv[++i], &g_mtp_max_context)) return 2; }
         else if (strcmp(argv[i], "--history") == 0) { if (!load_history(argv[++i], error_h, sizeof(error_h))) { fprintf(stderr, "%s\n", error_h); return 2; } }
         else if (strcmp(argv[i], "--steer-strength") == 0) { if (!parse_f32(argv[++i], &g_steer_base)) return 2; }
         else if (strcmp(argv[i], "--steer-tokens") == 0) { if (!parse_u32(argv[++i], &g_steer_tokens)) return 2; }
@@ -610,6 +614,7 @@ int main(int argc, char **argv) {
     double spec_mtp_ms = 0.0, spec_verify_ms = 0.0;
     double pre_ms_unused = 0.0;
     const int speculate = cfg.mtp_path && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms_unused) &&
+                          (!g_mtp_max_context || prompt_len <= g_mtp_max_context) &&
                           !(getenv("RL_MTP_SPECULATE") && atoi(getenv("RL_MTP_SPECULATE")) == 0);
 #define GEN_EMIT(tok) do { \
         const uint32_t tk_ = (tok); ids[prompt_len + generated] = tk_; generated++; \
