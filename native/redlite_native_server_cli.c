@@ -229,6 +229,21 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     uint32_t reused = 0;
     if (c->reuse && rl_engine_position(c->engine, c->backend) == S->history_len)
         reused = rl_prefix_reuse(S->history, S->history_len, ids, (uint32_t)needed);
+    if (!reused && S->history_len && getenv("RL_SERVER_DEBUG_REUSE")) {   /* dev59b: where the new prompt diverges */
+        uint32_t at = 0;
+        while (at < S->history_len && at < (uint32_t)needed && S->history[at] == ids[at]) at++;
+        char held[160] = {0}, got[160] = {0};
+        for (uint32_t i = at; i < at + 12u && i < S->history_len; ++i) {
+            char piece[64]; const int32_t n = rl_tokenizer_decode(c->tokenizer, S->history[i], piece, sizeof(piece) - 1u);
+            if (n > 0 && strlen(held) + (size_t)n < sizeof(held)) strncat(held, piece, (size_t)n);
+        }
+        for (uint32_t i = at; i < at + 12u && i < (uint32_t)needed; ++i) {
+            char piece[64]; const int32_t n = rl_tokenizer_decode(c->tokenizer, ids[i], piece, sizeof(piece) - 1u);
+            if (n > 0 && strlen(got) + (size_t)n < sizeof(got)) strncat(got, piece, (size_t)n);
+        }
+        fprintf(stderr, "[redlite-server] reuse: prompt diverges at token %u of %u held: held \"%s\" | new \"%s\"\n",
+                at, S->history_len, held, got);
+    }
     S->history_len = 0;   /* invalid until this request's ids are in the state */
     rl_engine_step_stats st;
     memset(&st, 0, sizeof(st));

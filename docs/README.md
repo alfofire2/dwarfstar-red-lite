@@ -24,6 +24,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [REDLITE_DEV52_STEERING.md](REDLITE_DEV52_STEERING.md) | dev52: activation steering (vectors from two prompt sets, /steer in the chat, exact with MTP) |
 | [REDLITE_DEV54_QUANT_MIX.md](REDLITE_DEV54_QUANT_MIX.md) | dev54: an expert-layer mix that beats Bartowski's IQ2_XXS at the same size (perplexity −0.94 %, paired t = −3.9) |
 | [REDLITE_DEV55_LONG_CONTEXT_24GB.md](REDLITE_DEV55_LONG_CONTEXT_24GB.md) | dev55: GPU-need model for long contexts at full residency on 24 GiB, where MTP stops paying, steering in the server |
+| [REDLITE_DEV60_CODING_AGENT.md](REDLITE_DEV60_CODING_AGENT.md) | dev60: the pi coding agent on the native server; agent-loop state reuse fixes; 5-task results on both Macs |
 | [REDLITE_DEV59_TOOL_CALLS.md](REDLITE_DEV59_TOOL_CALLS.md) | dev59: OpenAI tool calling in the server (Qwen3-Next JSON and Qwen3-Coder XML formats, exact rendering) |
 | [REDLITE_DEV58_DENSE_PRECISION.md](REDLITE_DEV58_DENSE_PRECISION.md) | dev58: dense weights at IQ3_XXS / Q4_K at E3's size, perplexity −5 % |
 | [REDLITE_DEV56_PARALLEL_SERVER.md](REDLITE_DEV56_PARALLEL_SERVER.md) | dev56: two server requests decoded in one pass (engine slots, paired step, `--parallel 2`) |

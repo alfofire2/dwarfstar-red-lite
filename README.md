@@ -91,6 +91,25 @@ every expert resident and use MTP when its head is in `models/`:
 
 Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_24GB.md`.
 
+**Use with a coding agent** (dev59, dev60). The server speaks OpenAI tool calling, so agents such as
+[pi](https://github.com/earendil-works/pi) work against it with a configuration file only.
+- **Measured:** five scripted coding tasks, three runs each:
+  - Qwen3-Coder-Next IQ2_XXS passed 15 of 15 on the M4 Max and 14 of 15 on the M4 Pro 24 GiB;
+  - Red Lite F2 passed 15 of 15 on the M4 Pro 24 GiB, at 6–29 s per task.
+- **State reuse:** each turn reuses the engine state, so the agent's long system prompt is read once per task.
+- Details: `docs/REDLITE_DEV60_CODING_AGENT.md`.
+
+```bash
+redlite serve --native --context 32768 --port 8080   # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
+mkdir -p ~/.pi/agent && cat > ~/.pi/agent/models.json <<'EOF'
+{"providers": {"redlite": {"baseUrl": "http://127.0.0.1:8080/v1", "api": "openai-completions", "apiKey": "redlite",
+  "compat": {"supportsDeveloperRole": false, "supportsReasoningEffort": false, "supportsStore": false,
+             "supportsStrictMode": false, "maxTokensField": "max_tokens"},
+  "models": [{"id": "qwen3-next-80b-a3b-redlite", "name": "Red Lite (local)", "contextWindow": 32768, "maxTokens": 4096}]}}}
+EOF
+pi --provider redlite --model qwen3-next-80b-a3b-redlite
+```
+
 **Steering** (dev52). Turn the model's style or topic with a vector added to its residual stream:
 
 ```bash

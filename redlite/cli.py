@@ -313,6 +313,8 @@ def cmd_chat(args) -> int:
 def cmd_serve(args) -> int:
     if args.native:
         return _serve_native(args)
+    if not args.model:
+        _die("redlite serve needs a model path (redlite serve --native picks one from the models folder)")
     _, plan = _make_plan(args)
     _print_plan(plan)
     if not plan.safe and not args.force:
@@ -323,9 +325,15 @@ def cmd_serve(args) -> int:
 
 
 def _serve_native(args) -> int:
-    hw = detect(Path(args.model).parent)
+    hw = detect(Path(args.model).parent if args.model else NATIVE_MODELS_DIR)
     _require_apple(hw)
-    model = Path(args.model).expanduser()
+    if args.model:
+        model = Path(args.model).expanduser()
+    else:   # dev60: as redlite chat, the best model present that this Mac can hold
+        model = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
+        if model is None:
+            _die(f"No native model found in {NATIVE_MODELS_DIR}. Download one: redlite download 24gb (and redlite download mtp)")
+        print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
@@ -377,8 +385,9 @@ def cmd_sweep(args) -> int:
     )
 
 
-def _add_plan_args(p):
-    p.add_argument("model", help="Path to a Qwen3-Next GGUF")
+def _add_plan_args(p, model_optional: bool = False):
+    p.add_argument("model", nargs="?" if model_optional else None,
+                   help="Path to a Qwen3-Next GGUF" + (" (--native: default, the best one in the models folder)" if model_optional else ""))
     p.add_argument("--mode", choices=["auto", "metal-resident", "ssd-cpu"], default="auto")
     p.add_argument("-c", "--context", type=int, default=None)
 
@@ -460,7 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_chat)
 
     s = sub.add_parser("serve", help="Start OpenAI-compatible HTTP server")
-    _add_plan_args(s)
+    _add_plan_args(s, model_optional=True)
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8080)
     s.add_argument("--native", action="store_true",

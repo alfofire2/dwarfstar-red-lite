@@ -172,6 +172,23 @@ class ToolCallTests(unittest.TestCase):
         # days is an integer in the schema; units is a string even though "12" parses as a number
         self.assertEqual(json.loads(call["function"]["arguments"]), {"city": "New York", "days": 3, "units": "12"})
 
+    def test_wrong_closing_brackets_are_repaired(self):
+        """dev60: the 2-bit model writes the right arguments but closes them wrong ('}}]}', '}}}}', or not at all)."""
+        good = {"path": "stats.py", "edits": [{"oldText": "a]}", "newText": 'b{"x"'}]}
+        body = json.dumps({"name": "edit", "arguments": good})
+        assert body.endswith('"}]}}')
+        for tail in ('"}}]}', '"}}}}', '"}]}}}', '"}]', '"}]}}\n'):
+            emitted = "<tool_call>\n" + body[:-len('"}]}}')] + tail + "\n</tool_call>"
+            with self.subTest(tail=tail):
+                status, out = self.chat(self.json_srv, [{"role": "user", "content": "__emit__:" + emitted}], [SEARCH])
+                choice = out["choices"][0]
+                self.assertEqual(choice["finish_reason"], "tool_calls", choice)
+                self.assertEqual(json.loads(choice["message"]["tool_calls"][0]["function"]["arguments"]), good)
+        # an error that is not only in the closers is not guessed at
+        status, out = self.chat(self.json_srv, [{"role": "user", "content": "__emit__:" +
+                                '<tool_call>\n{"name": "edit", "arguments": {"path" "x"}}\n</tool_call>'}], [SEARCH])
+        self.assertEqual(out["choices"][0]["finish_reason"], "stop")
+
     def test_malformed_call_comes_back_as_text(self):
         emitted = 'Trying.\n<tool_call>\n{"name": "search", "arguments": {"query": '
         status, out = self.chat(self.json_srv, [{"role": "user", "content": "__emit__:" + emitted}], [SEARCH])
@@ -214,6 +231,39 @@ class ToolCallTests(unittest.TestCase):
                 self.assertIn(resp.status, (200, 400))
             resp, _ = srv.request("GET", "/health")
             self.assertEqual(resp.status, 200)
+
+    def test_blank_line_before_a_call_still_extends_the_state(self):
+        """Qwen3-Next writes 'text.\\n\\n<tool_call>'; the template puts back one newline, so the content keeps one."""
+        srv = FakeServer(self.binary, "--tool-format", "json")
+        try:
+            emitted = 'Reading it.\n\n<tool_call>\n{"name": "search", "arguments": {"query": "x"}}\n</tool_call>'
+            first = [{"role": "user", "content": "__emit__:" + emitted}]
+            body = {"messages": first, "tools": [SEARCH], "max_tokens": 1000}
+            resp, data = srv.request("POST", "/v1/chat/completions", body)
+            msg = json.loads(data)["choices"][0]["message"]
+            self.assertEqual(msg["content"], "Reading it.\n")
+            second = first + [msg, {"role": "tool", "tool_call_id": msg["tool_calls"][0]["id"], "content": "none"}]
+            resp, data = srv.request("POST", "/v1/chat/completions", {**body, "messages": second})
+            self.assertGreater(json.loads(data)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+        finally:
+            srv.stop()
+
+    def test_reserialized_arguments_still_extend_the_state(self):
+        """Agents send back the arguments re-serialized ({"city":"Rome"}); the prompt uses json.dumps form anyway."""
+        srv = FakeServer(self.binary, "--tool-format", "json")
+        try:
+            emitted = '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Rome", "days": 2}}\n</tool_call>'
+            first = [{"role": "user", "content": "__emit__:" + emitted}]
+            body = {"messages": first, "tools": [WEATHER], "max_tokens": 1000}
+            resp, data = srv.request("POST", "/v1/chat/completions", body)
+            msg = json.loads(data)["choices"][0]["message"]
+            for c in msg["tool_calls"]:
+                c["function"]["arguments"] = json.dumps(json.loads(c["function"]["arguments"]), separators=(",", ":"))
+            second = first + [msg, {"role": "tool", "tool_call_id": msg["tool_calls"][0]["id"], "content": "18 C"}]
+            resp, data = srv.request("POST", "/v1/chat/completions", {**body, "messages": second})
+            self.assertGreater(json.loads(data)["usage"]["prompt_tokens_details"]["cached_tokens"], 0)
+        finally:
+            srv.stop()
 
     def test_next_turn_extends_the_state_exactly(self):
         """The assistant turn rendered from the returned tool_calls equals what the model wrote, so the engine keeps

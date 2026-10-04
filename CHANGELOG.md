@@ -10,6 +10,17 @@
   - An agent's next turn reuses the engine state: 203 of 230 prompt tokens with F2, 350 of 377 with
     Qwen3-Coder-Next.
   - New regress check `server.tool_call`. `docs/REDLITE_DEV59_TOOL_CALLS.md`.
+- dev59b/dev60: **a coding agent on the native server.** Measured with the pi agent and
+  `scripts/dev/agent_eval.py`, five scripted tasks, three runs each:
+  - Qwen3-Coder-Next IQ2_XXS 15/15 on the M4 Max and 14/15 on the M4 Pro;
+  - Red Lite F2 15/15 on the M4 Pro 24 GiB (6–29 s per task) and 14/15 on the M4 Max.
+  - **Fixes found by the measurement:**
+    - call arguments are rendered in `json.dumps` form, because agents send them back re-serialized;
+    - the content before a call keeps all but the template's one separator newline;
+    - with these two, agent turns reuse the engine state (F2 on the M4 Max: 0 % → 73 % median);
+    - JSON calls with wrong closing brackets are repaired (F2 11 → 14 of 15).
+  - `RL_SERVER_DEBUG_REUSE=1` logs where a prompt diverges from the held state.
+  - `docs/REDLITE_DEV60_CODING_AGENT.md`, README *Use with a coding agent*.
 - ci: hosted CI restored now that the repository is public (Linux as before, plus macOS running
   `scripts/dev/local_ci.sh`). It caught unused parameters in the non-Metal branches of `rl_engine_verify2` and
   `rl_engine_mtp_draft`, now fixed.
