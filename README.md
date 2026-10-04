@@ -21,6 +21,7 @@
   <a href="#measured-performance">Performance</a> &nbsp;|&nbsp;
   <a href="docs/FINDINGS.md">Findings</a> &nbsp;|&nbsp;
   <a href="#limits">Limits</a> &nbsp;|&nbsp;
+  <a href="#problems">Problems?</a> &nbsp;|&nbsp;
   <a href="docs/README.md">All docs</a>
 </p>
 
@@ -297,6 +298,17 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   ~930 tok/s at 1100 / 8192 tokens with full residency on the M4 Max).
 - **Quantization.** IQ2_XXS is a very low-bit quantization. Red Lite reproduces llama.cpp
   on this file; it does not improve the file's quality.
+
+## Problems?
+
+Open an [issue](https://github.com/alfofire2/dwarfstar-red-lite/issues) and include:
+
+- the output of `redlite doctor`: Mac model, chip, RAM, macOS version, GPU limit and which binaries were found;
+- the command you ran and its full output;
+- the model file (`redlite models` lists the known ones).
+
+Red Lite has only run on Apple M4 chips so far. A report from an M1, M2 or M3 Mac is useful even when everything
+works: say which chip it was and paste the `--stats` line of one answer.
 
 ## Tools
 
