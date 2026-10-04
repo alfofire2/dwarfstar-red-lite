@@ -959,10 +959,11 @@ typedef struct {
     pthread_cond_t cv;
     chat_job *head, *tail;
     uint32_t waiting;     /* queued, not yet started */
-    int running;          /* the worker is inside a generation */
+    uint32_t running;     /* workers inside a generation */
     int closing;
     const rl_server_backend *backend;
     volatile sig_atomic_t *stop;
+    uint32_t workers;
 } chat_queue;
 
 static void close_client(int fd) {
@@ -990,7 +991,7 @@ static void *chat_worker(void *user) {
         q->head = job->next;
         if (!q->head) q->tail = NULL;
         q->waiting--;
-        q->running = 1;
+        q->running++;
         pthread_mutex_unlock(&q->mu);
 
         if (q->stop && *q->stop) {
@@ -1005,7 +1006,7 @@ static void *chat_worker(void *user) {
         close_client(job->fd);
         free(job);
         pthread_mutex_lock(&q->mu);
-        q->running = 0;
+        q->running--;
         pthread_mutex_unlock(&q->mu);
     }
     return NULL;
@@ -1053,7 +1054,7 @@ static void handle_connection(int fd, const rl_server_config *cfg, const rl_serv
         job->request_no = request_no;
         pthread_mutex_lock(&q->mu);
         const uint32_t limit = cfg->queue_max;
-        if (q->waiting + (uint32_t)q->running > limit) {   /* queue_max requests may wait behind the running one */
+        if (q->waiting > limit || (q->waiting == limit && q->running >= q->workers)) {   /* queue_max may wait behind the running ones */
             const uint32_t waiting = q->waiting;
             pthread_mutex_unlock(&q->mu);
             char busy[128];
@@ -1064,7 +1065,7 @@ static void handle_connection(int fd, const rl_server_config *cfg, const rl_serv
             close_client(fd);
             return;
         }
-        const uint32_t ahead = q->waiting + (uint32_t)q->running;
+        const uint32_t ahead = q->running >= q->workers ? q->waiting + q->running : q->waiting;
         if (q->tail) q->tail->next = job; else q->head = job;
         q->tail = job;
         q->waiting++;
@@ -1129,10 +1130,15 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
     memset(&q, 0, sizeof(q));
     q.backend = backend;
     q.stop = stop;
-    pthread_t worker;
-    if (pthread_mutex_init(&q.mu, NULL) != 0 || pthread_cond_init(&q.cv, NULL) != 0 ||
-        pthread_create(&worker, NULL, chat_worker, &q) != 0) {
-        set_error(error, error_cap, "cannot start the request worker thread");
+    q.workers = cfg->workers ? (cfg->workers < 8u ? cfg->workers : 8u) : 1u;
+    pthread_t worker[8];
+    uint32_t started = 0;
+    int init_ok = pthread_mutex_init(&q.mu, NULL) == 0 && pthread_cond_init(&q.cv, NULL) == 0;
+    while (init_ok && started < q.workers && pthread_create(&worker[started], NULL, chat_worker, &q) == 0) started++;
+    if (started < q.workers) {
+        set_error(error, error_cap, "cannot start the request worker threads");
+        pthread_mutex_lock(&q.mu); q.closing = 1; pthread_cond_broadcast(&q.cv); pthread_mutex_unlock(&q.mu);
+        for (uint32_t w = 0; w < started; ++w) pthread_join(worker[w], NULL);
         close(lfd);
         return 0;
     }
@@ -1161,7 +1167,7 @@ int rl_server_run(const rl_server_config *cfg, const rl_server_backend *backend,
     q.closing = 1;
     pthread_cond_broadcast(&q.cv);
     pthread_mutex_unlock(&q.mu);
-    pthread_join(worker, NULL);
+    for (uint32_t w = 0; w < started; ++w) pthread_join(worker[w], NULL);
     pthread_cond_destroy(&q.cv);
     pthread_mutex_destroy(&q.mu);
     return rc;

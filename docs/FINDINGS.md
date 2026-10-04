@@ -90,6 +90,15 @@ context grows.
 
 <p align="center"><img src="img/mtp_context.svg" alt="MTP gain against prompt length on the M4 Pro"></p>
 
+**Two requests in one pass** (dev56). The same 2-row pass can carry two different conversations instead of one
+conversation's next two positions. `redlite serve --native --parallel 2` does that when two requests decode at the
+same time:
+- answers identical to serving them in turn;
+- total throughput on the M4 Pro +28 % without MTP (43.5 → 55.9 tok/s) and +10 % against MTP (51.0 → 56.0);
+- each answer is slower, about 29 tok/s instead of 46.
+
+<p align="center"><img src="img/parallel_server.svg" alt="Two server requests in turn and at the same time, M4 Pro"></p>
+
 ## 5. 24 GiB Macs: what the expert cache needs
 
 <p align="center">

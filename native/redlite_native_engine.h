@@ -158,6 +158,17 @@ int rl_engine_mtp_enabled(const rl_engine *engine);
  * logits0 equals d: the result is then exactly what two ordinary steps give.
  */
 int rl_engine_verify2(rl_engine *engine, uint32_t t0, uint32_t d, float *logits0, float *logits1, char *error, size_t error_cap);
+/*
+ * dev56: two independent sequences on the GPU backend (every expert resident). rl_engine_slots_enable allocates a
+ * second state (DeltaNet, KV cache incl. the MTP block's, position); rl_engine_select_slot makes slot 0 or 1 the
+ * one every other call (prefill, step, verify, reset, state I/O) works on. rl_engine_step_pair decodes one token of
+ * the selected slot and one of the other in a single pass (rows share the weight reads): each row's logits equal
+ * an ordinary rl_engine_step of its slot. Steering, when on, applies to both rows.
+ */
+int rl_engine_slots_enable(rl_engine *engine, char *error, size_t error_cap);
+int rl_engine_select_slot(rl_engine *engine, int slot);
+int rl_engine_step_pair(rl_engine *engine, uint32_t token, uint32_t other_token, float *logits, float *other_logits,
+                        char *error, size_t error_cap);
 int rl_engine_verify_commit(rl_engine *engine, int accepted, char *error, size_t error_cap);
 int rl_engine_mtp_draft(rl_engine *engine, uint32_t next_token, uint32_t mtp_position, uint32_t *draft, float *logits,
                         char *error, size_t error_cap);

@@ -130,7 +130,7 @@ them.
 - **Expert mixes that did not help (dev54).** IQ2_XS down projections on every layer with IQ1_M gate/up: +3 % size
   and perplexity 16.423 vs 16.370 (t = +1.13), and the engine cannot run it (type word 0x111d). Keeping layers 0–2
   precise (E3b): no measurable gain (t = −1.28).
-- **A kernel panic in the GPU driver (2026-10-04, M4 Max 48 GiB).**
+- **Kernel panics in the GPU driver (2026-10-04, M4 Max 48 GiB, macOS 27.0.1).**
   - **What happened.** At 01:50:34, during `regress_m4.sh` (check `engine.parity.gpu_routed`: every expert resident,
     ~16 GB on the GPU), macOS panicked: "Kernel data abort" at address 0x10 inside `com.apple.iokit.IOGPUFamily`
     (offset 0x2a31c, reached from 0xabd0), in a system call of `redlite-engine`. Its second thread was in the kernel
@@ -140,9 +140,19 @@ them.
     52/0/0 in the same order.
   - **State at the time (not proven to matter):** 3 days of uptime with dozens of 17–29 GiB GPU load/unload
     cycles, swap in use, and a GPU out-of-memory error four hours earlier (two overlapped GPU jobs, dev54).
-  - **Practice.** Never overlap GPU-heavy jobs. After a GPU out-of-memory error or days of such runs, reboot before
-    a long gate run. Report:
-    `/Library/Logs/DiagnosticReports/panic-full-2026-10-04-113143.0002.panic` (for Apple Feedback Assistant).
+  - **It happened again at 12:37,** 5 hours after a fresh boot, in `redlite-server` during `server_check.py`
+    (1.6 GB resident; `llama-quantize` and the local CI were running at the same time).
+  - **Same signature:** the same driver offsets (0xabd0 → 0x2a31c), the same null address, and kernel stacks
+    identical frame by frame. In both, two threads of our process were in the kernel: ours at default priority,
+    in the driver, and a priority-46 thread outside it.
+  - **macOS 27.0.1** (build 26A434) was installed on that Mac on 2026-09-30. The same checks had run hundreds of
+    times on macOS 26 without a panic. The M4 Pro (macOS 26.7) has never panicked. A driver regression in 27.0.1
+    is the likely cause. Not proven: the kernel has no symbols, and the bug does not reproduce on demand.
+  - **Practice.**
+    - Never overlap GPU-heavy jobs.
+    - On macOS 27.0.1, run long Metal gates one at a time, and prefer a Mac on macOS 26 when available.
+    - Reports for Apple Feedback Assistant: `/Library/Logs/DiagnosticReports/panic-full-2026-10-04-113143.0002.panic`
+      and `panic-full-2026-10-04-123737.0002.panic`.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 

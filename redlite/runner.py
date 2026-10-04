@@ -140,6 +140,7 @@ def run_native_server(
     mtp: str | None = None,
     mtp_max_context: int | None = None,
     steer: list[str] | None = None,
+    parallel: int = 1,
 ) -> int:
     cmd = [
         str(native_server()), model,
@@ -156,6 +157,8 @@ def run_native_server(
             cmd.extend(["--mtp-max-context", str(mtp_max_context)])
     if steer:
         cmd.extend(steer)
+    if parallel > 1:
+        cmd.extend(["--parallel", str(parallel)])
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

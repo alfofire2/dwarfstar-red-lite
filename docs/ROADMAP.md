@@ -60,7 +60,8 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 - **Low-power mode — measured:** −22 % decode at full residency, little with a bounded cache; energy not measured. **Low-power mode on the M4 Pro:** tok/s and temperature with `pmset lowpowermode`, for laptop users.
 - **A Red Lite quantization — first result (dev54):** IQ2_XS on expert layers 37–47 beats Bartowski's scheme at the same size; published in 0.5.3 (`redlite download 24gb`). **A Red Lite quantization:** search a mix of precisions that beats IQ2_XXS at the same size, judged by
   perplexity and the API comparison. After Phase 2.
-- **Concurrent server requests** sharing expert loads. Low priority for a single local user.
+- **Concurrent server requests — done (dev56):** `--parallel 2` decodes two requests in one pass; total throughput
+  +28 % on the M4 Pro (+10 % against MTP). Only with every expert resident.
 
 ## Not planned
 

@@ -145,6 +145,36 @@ def state_restart(bin_dir: Path, model: str, cache_mib: str, max_tokens: int) ->
     return ok
 
 
+def parallel(bin_dir: Path, model: str, max_tokens: int) -> bool:
+    """dev56: --parallel 2 at full residency. Two greedy answers asked at the same time equal the same answers asked
+    one after the other, and their decode steps ran as pairs."""
+    import threading
+    srv, port = start_server(bin_dir, model, "full", "--parallel", "2")
+    if not srv:
+        return False
+    prompts = [PROMPT, "Write a haiku about the sea."]
+    bodies = [{"messages": [{"role": "user", "content": p}], "temperature": 0, "max_tokens": max_tokens} for p in prompts]
+    alone, together = [None, None], [None, None]
+    try:
+        for i, b in enumerate(bodies):
+            alone[i] = json.loads(post(port, b)[1])["choices"][0]["message"]["content"]
+
+        def ask(i):
+            together[i] = json.loads(post(port, bodies[i])[1])["choices"][0]["message"]["content"]
+        threads = [threading.Thread(target=ask, args=(i,)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=600)
+    finally:
+        rc, err = stop_server(srv)
+    paired = sum(int(m) for m in re.findall(r"(\d+) paired", err))
+    for i in range(2):
+        print(f"prompt {i}: {'identical' if alone[i] == together[i] else 'DIFFERENT'}: {together[i]!r}")
+    print(f"paired decode steps: {paired}")
+    return rc == 0 and alone == together and None not in alone and paired > 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("model")
@@ -152,11 +182,16 @@ def main() -> int:
     ap.add_argument("--cache-mib", default="2048")
     ap.add_argument("--max-tokens", type=int, default=32)
     ap.add_argument("--state-restart", action="store_true", help="only the dev43 --state-dir restart check")
+    ap.add_argument("--parallel", action="store_true", help="only the dev56 --parallel 2 check (full residency)")
     ap.add_argument("--mtp", help="dev45: run every server with --mtp FILE (needs --cache-mib full); outputs must not change")
     args = ap.parse_args()
     bin_dir = Path(args.bin)
     if args.mtp:
         SERVER_EXTRA.extend(["--mtp", args.mtp])
+    if args.parallel:
+        ok = parallel(bin_dir, args.model, args.max_tokens)
+        print(f"SERVER PARALLEL CHECK: {'YES' if ok else 'NO'}")
+        return 0 if ok else 1
     if args.state_restart:
         ok = state_restart(bin_dir, args.model, args.cache_mib, args.max_tokens)
         print(f"SERVER STATE CHECK: {'YES' if ok else 'NO'}")

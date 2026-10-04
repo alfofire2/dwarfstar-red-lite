@@ -22,6 +22,7 @@
 
 #include <signal.h>
 #include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -33,6 +34,7 @@ typedef struct {
     unsigned token_delay_ms;
     char *state;        /* bytes "ingested" by the previous request (NULL: reset) */
     size_t state_len;
+    pthread_mutex_t mu; /* dev56: --workers N runs generations at the same time */
 } fake_ctx;
 
 static void state_append(fake_ctx *f, const char *p, size_t n) {
@@ -59,6 +61,7 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     if (!prompt) { snprintf(error, cap, "out of memory"); return 0; }
     const size_t prompt_len = strlen(prompt);
     result->prompt_tokens = (uint32_t)prompt_len;
+    pthread_mutex_lock(&f->mu);
     const int reuse = f->state && f->state_len < prompt_len && memcmp(f->state, prompt, f->state_len) == 0;
     result->cached_tokens = reuse ? (uint32_t)f->state_len : 0u;
     free(f->state);
@@ -68,6 +71,7 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     free(prompt);
 
     if (strcmp(last, "__fail__") == 0 || strcmp(last, "__too_long__") == 0) { free(f->state); f->state = NULL; f->state_len = 0; }
+    pthread_mutex_unlock(&f->mu);
     if (strcmp(last, "__fail__") == 0) { snprintf(error, cap, "fake backend failure"); return 0; }
     if (strcmp(last, "__too_long__") == 0) {
         *status = 400;
@@ -89,14 +93,18 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     for (size_t off = 0; off < n; off += 3u) {
         if (result->completion_tokens == req->max_tokens) { result->finish_length = 1; break; }
         if (fail_late && result->completion_tokens == 2u) {
+            pthread_mutex_lock(&f->mu);
             free(f->state); f->state = NULL; f->state_len = 0;   /* a failed request leaves no reusable state */
+            pthread_mutex_unlock(&f->mu);
             snprintf(error, cap, "fake backend failure mid-stream");
             return 0;
         }
         const size_t len = n - off < 3u ? n - off : 3u;
         result->completion_tokens++;
         if (!emit(sink, reply + off, len)) return 1; /* client gone, shutdown or stop sequence: stop cleanly */
-        if (result->completion_tokens < req->max_tokens) state_append(f, reply + off, len); /* the engine feeds it back */
+        if (result->completion_tokens < req->max_tokens) {   /* the engine feeds it back */
+            pthread_mutex_lock(&f->mu); state_append(f, reply + off, len); pthread_mutex_unlock(&f->mu);
+        }
         sleep_ms(f->token_delay_ms);
     }
     return 1;
@@ -106,6 +114,7 @@ int main(int argc, char **argv) {
     rl_server_config cfg;
     rl_server_config_default(&cfg);
     fake_ctx ctx = {0};
+    pthread_mutex_init(&ctx.mu, NULL);
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--selftest") == 0) {
             char error[512] = {0};
@@ -114,7 +123,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: redlite-server-fake [--host H] [--port P] [--token-delay-ms N] [--queue N] [--selftest]\n");
+            printf("Usage: redlite-server-fake [--host H] [--port P] [--token-delay-ms N] [--queue N] [--workers N] [--selftest]\n");
             return 0;
         }
         if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", argv[i]); return 2; }
@@ -122,6 +131,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--port") == 0) cfg.port = (uint16_t)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--token-delay-ms") == 0) ctx.token_delay_ms = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--queue") == 0) cfg.queue_max = (uint32_t)strtoul(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--workers") == 0) cfg.workers = (uint32_t)strtoul(argv[++i], NULL, 10);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     struct sigaction sa;

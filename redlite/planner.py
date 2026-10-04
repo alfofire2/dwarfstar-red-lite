@@ -248,6 +248,14 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
     return residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra <= ram_bytes * NATIVE_WORKING_SET_FRACTION
 
 
+NATIVE_SLOT_STATE_POSITIONS = 1536   # dev56: a second slot's DeltaNet state (72 MiB) in 48 KiB KV positions
+
+
+def native_plan_context(context: int, parallel: int = 1) -> int:
+    """dev56: positions the GPU plan sizes for when `parallel` slots each hold a `context`-position state."""
+    return context * parallel + NATIVE_SLOT_STATE_POSITIONS * (parallel - 1)
+
+
 def native_gpu_plan(residency: NativeResidency, wired_mib: int, context: int, mtp_available: bool) -> tuple[int, bool] | None:
     """dev55: under a raised GPU limit, the (prefill chunk, MTP) that fits, preferring MTP, then 2048-token chunks."""
     for batch, mtp in ((2048, True), (512, True), (2048, False), (512, False)):

@@ -11,7 +11,7 @@ import sys
 from . import __version__
 from .hardware import GIB, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import native_defaults, native_mtp_max_context, plan_for, select_native_model
+from .planner import native_defaults, native_mtp_max_context, native_plan_context, plan_for, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
@@ -228,15 +228,17 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     res = native_residency(model)
     full = res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
     batch = args.batch
+    parallel = getattr(args, "parallel", 1) or 1
+    where = f"context {args.context or 4096}" + (f", {parallel} parallel requests" if parallel > 1 else "")
     if wired > 0 and full and batch is None:
         plan = native_gpu_plan(res, wired, context, head is not None)
         if plan is not None:
             batch, use_mtp = plan
             if head and not use_mtp:
-                print(f"[redlite] MTP off: it does not fit the GPU limit ({wired} MiB) at context {context}")
+                print(f"[redlite] MTP off: it does not fit the GPU limit ({wired} MiB) at {where}")
                 head = None
             if batch != 2048:
-                print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at context {context}")
+                print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at {where}")
     if head:
         print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
     return batch, head
@@ -324,17 +326,21 @@ def _serve_native(args) -> int:
     if not model.is_file():
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
+    context = args.context or 4096
+    # dev56: a second slot holds another KV cache and DeltaNet state (72 MiB = 1536 positions at 48 KiB): the GPU
+    # plan sizes for those positions too
+    plan_context = native_plan_context(context, args.parallel)
     if cache_mib is None:
-        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context or 4096)
+        defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), plan_context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
-    batch, mtp = _gpu_tuning(model, cache_mib, args, args.context or 4096)
+    batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
     try:
         return run_native_server(
-            str(model), args.host, args.port, args.context or 4096, cache_mib,
+            str(model), args.host, args.port, context, cache_mib,
             batch=batch, dry_run=args.dry_run, mtp=mtp, mtp_max_context=native_mtp_max_context(hw.ram_bytes),
-            steer=_steer_args(args),
+            steer=_steer_args(args), parallel=args.parallel,
         )
     except FileNotFoundError:
         _die("Native Red Lite server not built. Run: make native")
@@ -466,6 +472,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--steer-layers", default=None, help="--native: steered layers A-B (default 16-31)")
     s.add_argument("--steer-strength", type=float, default=None, help="--native: steering strength (default 1)")
     s.add_argument("--steer-tokens", type=int, default=None, help="--native: steer only the first N tokens of each answer")
+    s.add_argument("--parallel", type=int, choices=(1, 2), default=1,
+                   help="--native: requests served at the same time (2 needs every expert resident; their decode steps share "
+                        "one pass over the weights)")
     s.add_argument("--quiet-warning", action="store_true")
     s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true")

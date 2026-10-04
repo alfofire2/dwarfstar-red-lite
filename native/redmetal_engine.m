@@ -1342,6 +1342,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
         m->engine_rs = nil;
     }
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
+    free(m->conv_park); free(m->rec_park); free(m->k_park); free(m->v_park);
     free(m->snap_conv); free(m->snap_rec);
     m->p_route = nil; m->plan_slots = m->plan_weights = m->plan_ids = m->plan_miss = m->layer_out_gpu = nil;
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
@@ -1852,7 +1853,19 @@ static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuff
     return 1;
 }
 
-static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint32_t position, char *error, size_t cap) {
+/* dev56: the parked slot's sequence state takes the place of the selected one's (encode time only) */
+static void swap_state(rl_metal_engine *m) {
+    __unsafe_unretained id<MTLBuffer> *t;
+    t = m->conv_state; m->conv_state = m->conv_park; m->conv_park = t;
+    t = m->rec_state; m->rec_state = m->rec_park; m->rec_park = t;
+    t = m->kcache; m->kcache = m->k_park; m->k_park = t;
+    t = m->vcache; m->vcache = m->v_park; m->v_park = t;
+}
+
+/* Two rows in one pass. Verify (pair = 0): row 1 is the next position of the same sequence. Pair (dev56): row 1 is
+ * the parked slot's sequence at position1, with its own DeltaNet and KV state. */
+static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint32_t position, uint32_t position1, int pair,
+                        char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden;
@@ -1873,7 +1886,14 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
             emit_rows_r2(m, em_enc(em), &w->z, m->normed, ALT(normed), m->z, ALT(z));
             emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
             em_group(em, 0);
-            if (e->info.d_conv <= 9u && m->p_dn_state2) {
+            if (pair) {
+                emit_recurrent_mid(e, em, t, w);
+                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+                swap_rows(m); swap_state(m);
+                emit_recurrent_mid(e, em, t, w);
+                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+                swap_state(m); swap_rows(m);
+            } else if (e->info.d_conv <= 9u && m->p_dn_state2) {
                 emit_recurrent_mid2(e, em, t, w);
             } else {
                 emit_recurrent_mid(e, em, t, w);
@@ -1895,8 +1915,9 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
             emit_rows_r2(m, em_enc(em), &w->v, m->normed, ALT(normed), m->value, ALT(value));
             em_group(em, 0);
             emit_attention_mid(e, em, t, w, position);
-            swap_rows(m);
-            emit_attention_mid(e, em, t, w, position + 1u);
+            swap_rows(m); if (pair) swap_state(m);
+            emit_attention_mid(e, em, t, w, position1);
+            if (pair) swap_state(m);
             swap_rows(m);
             emit_rows_r2(m, em_enc(em), &w->o, m->gated, ALT(gated), m->branch, ALT(branch));
         }
@@ -1948,7 +1969,7 @@ int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint3
             !rl_engine_embed_token(e, t1, (float *)ALT(x).contents, error, cap)) return 0;
         memset(m->abort.contents, 0, 16u);
         emitter em = { m, [m->queue commandBuffer], nil, m->abort };
-        if (!emit_verify2(e, &em, resident, s->position, error, cap)) { em_close(&em); return 0; }
+        if (!emit_verify2(e, &em, resident, s->position, s->position + 1u, 0, error, cap)) { em_close(&em); return 0; }
         em_close(&em);
         double gpu_ms = 0.0;
         if (!commit_wait(em.cb, "verify", &gpu_ms, error, cap)) return 0;
@@ -1957,6 +1978,56 @@ int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint3
         if (logits1) memcpy(logits1, ALT(logits).contents, (size_t)in->vocab * sizeof(float));
     }
     m->verify_pending = 1;
+    return 1;
+}
+
+int rl_metal_engine_slots_enable(rl_engine *e, rl_metal_engine *m, char *error, size_t cap) {
+    if (!m->spec_enabled || !m->preloaded) { set_error(error, cap, "two slots need every expert resident (full residency)"); return 0; }
+    if (!verify_alloc(e, m)) { set_error(error, cap, "row buffer allocation failed"); return 0; }
+    const uint32_t na = m->n_attention + 1u, nr = m->n_recurrent ? m->n_recurrent : 1u;
+    m->conv_park = (__unsafe_unretained id<MTLBuffer> *)calloc(nr, sizeof(id));
+    m->rec_park = (__unsafe_unretained id<MTLBuffer> *)calloc(nr, sizeof(id));
+    m->k_park = (__unsafe_unretained id<MTLBuffer> *)calloc(na, sizeof(id));
+    m->v_park = (__unsafe_unretained id<MTLBuffer> *)calloc(na, sizeof(id));
+    if (!m->conv_park || !m->rec_park || !m->k_park || !m->v_park) { set_error(error, cap, "slot table allocation failed"); return 0; }
+#define RL_PARK(dst, src) { dst = new_buf(m, (src).length); if (!dst) { set_error(error, cap, "second slot allocation failed"); return 0; } \
+                            memset(dst.contents, 0, dst.length); }
+    for (uint32_t r = 0; r < m->n_recurrent; ++r) { RL_PARK(m->conv_park[r], m->conv_state[r]); RL_PARK(m->rec_park[r], m->rec_state[r]); }
+    for (uint32_t a = 0; a < m->n_attention + (m->mtp ? 1u : 0u); ++a) { RL_PARK(m->k_park[a], m->kcache[a]); RL_PARK(m->v_park[a], m->vcache[a]); }
+    RL_PARK(m->final_park, m->final_norm);
+#undef RL_PARK
+    return 1;
+}
+
+void rl_metal_engine_swap_slot(rl_metal_engine *m) {
+    swap_state(m);
+    id<MTLBuffer> t = m->final_norm; m->final_norm = m->final_park; m->final_park = t;
+}
+
+int rl_metal_engine_step_pair(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,
+                              char *error, size_t cap) {
+    const rl_engine_info *in = &e->info;
+    const uint32_t p0 = e->gpu.position, p1 = e->gpu_parked.position;
+    if (m->verify_pending) { set_error(error, cap, "previous verify not committed"); return 0; }
+    if (p0 + 1u > in->context || p1 + 1u > in->context) { set_error(error, cap, "context capacity exhausted"); return 0; }
+    const size_t hb = (size_t)in->hidden * sizeof(float);
+    id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->experts);
+    @autoreleasepool {
+        if (!rl_engine_embed_token(e, t0, (float *)m->x.contents, error, cap) ||
+            !rl_engine_embed_token(e, t1, (float *)ALT(x).contents, error, cap)) return 0;
+        memset(m->abort.contents, 0, 16u);
+        emitter em = { m, [m->queue commandBuffer], nil, m->abort };
+        if (!emit_verify2(e, &em, resident, p0, p1, 1, error, cap)) { em_close(&em); return 0; }
+        em_close(&em);
+        double gpu_ms = 0.0;
+        if (!commit_wait(em.cb, "pair step", &gpu_ms, error, cap)) return 0;
+        if (((volatile uint32_t *)m->abort.contents)[0]) { set_error(error, cap, "pair step hit a non-resident expert"); return 0; }
+        if (logits0) memcpy(logits0, m->logits.contents, (size_t)in->vocab * sizeof(float));
+        if (logits1) memcpy(logits1, ALT(logits).contents, (size_t)in->vocab * sizeof(float));
+        memcpy(m->final_park.contents, ALT(final_norm).contents, hb);   /* row 1's final norm belongs to the parked slot */
+        memcpy(e->gpu.final_norm, m->final_norm.contents, hb);
+        memcpy(e->gpu_parked.final_norm, ALT(final_norm).contents, hb);
+    }
     return 1;
 }
 

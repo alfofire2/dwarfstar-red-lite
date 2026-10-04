@@ -76,7 +76,8 @@ typedef struct {
     uint32_t default_top_k;
     float default_min_p;
     int read_timeout_s;         /* per-connection receive timeout (default 30) */
-    uint32_t queue_max;         /* chat requests waiting behind the running one before 503 (default 16) */
+    uint32_t queue_max;         /* chat requests waiting behind the running ones before 503 (default 16) */
+    uint32_t workers;           /* dev56: generations run at the same time (default 1; the backend must be re-entrant) */
 } rl_server_config;
 
 void rl_server_config_default(rl_server_config *cfg);

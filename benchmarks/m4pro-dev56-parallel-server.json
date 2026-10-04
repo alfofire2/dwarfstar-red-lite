@@ -1,0 +1,41 @@
+{
+  "id": "m4pro-dev56-parallel-server",
+  "date": "2026-10-04",
+  "machine": "Apple M4 Pro 24 GiB (macOS 26.7), GPU limit 21741 MiB",
+  "model": "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
+  "cache": "full (every expert resident)",
+  "method": "two greedy chat requests of 200 tokens, first one after the other, then at the same time (scratch par_check.py); one run each",
+  "results": {
+    "plain_context4096": {
+      "serial_tok_s": 43.5,
+      "together_tok_s": 55.9,
+      "paired_steps_per_answer": 199
+    },
+    "mtp_context4096_batch512": {
+      "serial_tok_s": 51.0,
+      "together_tok_s": 56.0,
+      "paired_steps_per_answer": 199
+    },
+    "per_answer_tok_s_together": [
+      29.0,
+      30.3
+    ],
+    "identical_answers": true
+  },
+  "pair_step_ms": {
+    "m4pro_e3": {
+      "single": 20.6,
+      "pair": 33.6
+    },
+    "m4max_iq2_xxs": {
+      "single": 15.1,
+      "pair": 21.9
+    }
+  },
+  "m4max_iq2_xxs_plain": {
+    "serial_tok_s": 58.4,
+    "together_tok_s": 76.8,
+    "note": "a quantization was using the CPU"
+  },
+  "source": "docs/REDLITE_DEV56_PARALLEL_SERVER.md"
+}
