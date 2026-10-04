@@ -1,6 +1,6 @@
 # Red Lite dev58 — more precision for the dense weights, at the same size
 
-Status: on branch `dev58/quant-dense`. Measured on the Apple M4 Max 48 GiB (quality, speed) and the Apple M4 Pro
+Status: done; F2 published. Measured on the Apple M4 Max 48 GiB (quality, speed) and the Apple M4 Pro
 24 GiB (speed, fit), 2026-10-04.
 
 ## The idea
@@ -62,5 +62,12 @@ Decode, every expert resident (`bench_m4.sh --only decode22 --cache-mib full`, 3
 - **Quality:** perplexity on one corpus and agreement with one API, at context 512. No task benchmarks.
 - **Speed:** single prompts, as in dev54. The bounded 4 GiB cache (24 GiB Macs without the raised limit) was not
   measured with F1 or F2.
-- **Validation:** `regress_m4.sh` and `quick_parity.sh` have not been run on F1 or F2 yet; they are required before
-  either file is published or becomes the `24gb` download.
+- **Validation:** F2 passes `regress_m4.sh` 41/0/13 on the M4 Max. The 13 skips are the stage tools that only
+  read the reference IQ2_XXS dense layout, as for the IQ3_XXS file. It also passes `quick_parity.sh` (CPU vs Metal,
+  GPU-routed, logits and greedy vs the pinned llama.cpp). F1 was not regression-tested.
+
+## Published
+
+F2 is on Hugging Face as `Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf`, SHA-256
+`d22dbbc4e96ede01a028789d281992b758b817742d2842b82f2e3ce5a9a948c5`. `redlite download 24gb` fetches it,
+`redlite download e3` the dev54 file, and `redlite chat` prefers F2 when it is in the models folder.

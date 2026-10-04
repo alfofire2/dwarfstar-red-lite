@@ -265,3 +265,23 @@ class ParallelPlanTests(unittest.TestCase):
         self.assertEqual(native_plan_context(4096), 4096)
         self.assertEqual(native_plan_context(4096, 2), 8192 + 1536)
         self.assertEqual(native_plan_context(2048, 2), 4096 + 1536)
+
+
+class RedLiteF2PreferenceTests(unittest.TestCase):
+    """dev58: F2 is preferred over E3 and Bartowski's IQ2_XXS; `24gb` downloads it, `e3` still names E3."""
+
+    def test_f2_preferred(self):
+        import tempfile
+        from pathlib import Path
+        from redlite.planner import select_native_model
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            for n in ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
+                      "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf"):
+                (d / n).write_bytes(b"x")
+            self.assertEqual(select_native_model(d, 24 * GIB).name, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
+
+    def test_aliases(self):
+        from redlite.model_catalog import resolve_variant
+        self.assertEqual(resolve_variant("24gb").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
+        self.assertEqual(resolve_variant("e3").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf")

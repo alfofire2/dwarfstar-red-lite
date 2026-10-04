@@ -46,9 +46,9 @@ redlite doctor && redlite chat
 
 ```bash
 make native                     # builds .deps/redmetal/ and runs the model-free self-tests
-python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models   # the Red Lite E3 mix (dev54)
+python3 -m pip install -U huggingface_hub && ./bin/redlite download 24gb --dir models   # the Red Lite F2 mix (dev58)
 
-M=models/Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf   # or Bartowski's: redlite download bartowski-24gb
+M=models/Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf   # or Bartowski's: redlite download bartowski-24gb
 .deps/redmetal/redlite-generate $M --prompt "Explain in one sentence why the sky is blue." --stats
 ./bin/redlite chat --stats      # persistent terminal chat; /reset, /help, /quit; Ctrl-C stops an answer
 ./bin/redlite serve --native $M --port 8080    # OpenAI-compatible /v1/chat/completions (SSE) and /v1/models
@@ -87,12 +87,15 @@ python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 -
 - The server takes it too: `redlite serve --native $M --steer v.f32 …` (dev55).
 - Details and an example: `docs/REDLITE_DEV52_STEERING.md`.
 
-**A better 24 GiB file** (dev54): [alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF).
-- Same size (19.30 GB) and tensor types as Bartowski's IQ2_XXS, but IQ2_XS experts on layers 37–47, where the
-  importance matrix puts most of the expert input energy.
-- Perplexity 16.370 → 16.216 (paired t = −3.9), and more answers identical to Qwen's API (4 vs 2 of 235).
-- `redlite download 24gb` fetches it and `redlite chat` prefers it.
-- Details: `docs/REDLITE_DEV54_QUANT_MIX.md`.
+**A better 24 GiB file** (dev54, dev58): [alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF](https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF).
+- **F2** (dev58), the same size as Bartowski's IQ2_XXS (19.32 GB):
+  - the dense projections every token reads at Q4_K instead of 2-bit;
+  - IQ2_XS experts on layers 40–47.
+- **Perplexity:** 16.370 (Bartowski's scheme) → 16.216 (E3, dev54) → **15.379 (F2)**.
+- **Answers identical to Qwen's API:** 2 / 4 / 5 of 235.
+- **Speed:** plain decode 3 % slower than E3; with MTP on a 24 GiB Mac as fast or faster.
+- `redlite download 24gb` fetches F2 (`e3` the previous file), and `redlite chat` prefers it.
+- Details: `docs/REDLITE_DEV54_QUANT_MIX.md`, `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
 
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored

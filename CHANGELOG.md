@@ -9,7 +9,8 @@
   - **Perplexity** 15.42 / 15.38 against E3's 16.22 (paired t = −16 / −15).
   - **API agreement:** F2 5 identical answers, 15.2 % mean matching words; E3 4, 13.6 %.
   - **Speed:** plain decode −1 % / −3 %; with MTP on the M4 Pro as fast or faster.
-  - Not yet regression-tested or published. `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
+  - F2 passes `regress_m4.sh` 41/0/13 and `quick_parity.sh` (M4 Max). It is on Hugging Face, and
+    `redlite download 24gb` now fetches it (`e3` the previous file). `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
 
 ## 0.5.5 — 2026-10-04
 
