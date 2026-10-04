@@ -80,6 +80,16 @@ expert is resident. On a 24 GiB Mac that needs a raised GPU limit (section 5): t
 (46 → 52.7 tok/s, up to 55.7 on code). With the bounded cache it does not apply: checking two tokens loads the
 union of their experts.
 
+**MTP and long contexts** (dev55). The 2-row verify reads the attention cache twice, so the gain shrinks as the
+context grows.
+- **M4 Pro** (half the M4 Max's memory bandwidth): +24 % at a 20-token prompt, +4 % at 5.6K, 0 % at 11.2K,
+  −12 % at 16.8K.
+- **M4 Max:** still +2 % at 16.8K.
+- **What the product does:** below 40 GiB, `redlite chat` and `serve` skip MTP for answers that start past 8,192
+  positions (`--mtp-max-context`).
+
+<p align="center"><img src="img/mtp_context.svg" alt="MTP gain against prompt length on the M4 Pro"></p>
+
 ## 5. 24 GiB Macs: what the expert cache needs
 
 <p align="center">
@@ -125,6 +135,26 @@ until reboot), the whole token runs on the GPU in one command buffer:
 The trade-off is memory: about 1.3 GB of other apps went to swap and stayed there. `redlite doctor` prints the
 limit to set; `redlite chat` picks full residency (and MTP) on its own once the limit allows it.
 
+**Long contexts within the raised limit** (dev55). The GPU memory full residency needs was measured as a function
+of the context, the prefill chunk and MTP:
+
+    slots + dense + 580 MiB + 48 KiB per position + 572 MiB for 2048-token chunks + 1,787 MiB for MTP
+
+`redlite chat` and `serve` use it to choose what fits. At a 21,741 MiB limit:
+
+| context | prefill chunks | MTP |
+|---|---|---|
+| 4K | 2048 | yes |
+| 16K | 512 | yes |
+| 32K | 2048 | no |
+
+A 16.8K-token prompt in a 32K context now reads at 358 tok/s and decodes at 36.4 tok/s; before, it ran out of GPU
+memory with MTP on.
+
+**Setting the limit for good** (dev55b). `sysctl` only lasts until a restart. A small LaunchDaemon sets the limit at
+every boot (recipe in `docs/REDLITE_DEV51_24GB_DECODE.md`), and `redlite doctor` recognizes it. Verified on the M4
+Pro: the limit is applied, and Metal then reports 21.23 GiB.
+
 Since the dev18 build of September (27.8 tok/s decode; prompts ingested one token at a time at 16 tok/s), the
 24 GiB numbers rose to 46–53 tok/s decode and about 360 tok/s ingestion.
 
@@ -135,9 +165,13 @@ fixed 72 MiB state instead. So 64K positions need about 3 GiB, and 32K about 1.5
 
 On the M4 Max, with every expert resident:
 
-- **Speed at a 33,551-token prompt:** ingestion 417 tok/s, then decode at 25.7 tok/s (81 tok/s at short
-  context). At long context the decode time is attention reading the float32 cache; float16 would halve it and
-  is not implemented yet.
+- **Speed at a 33,551-token prompt** (dev53, current build, every expert resident):
+  - ingestion 566–587 tok/s;
+  - decode 54.5–57.4 tok/s, against 81–86 at short context.
+  - dev47 had measured 417 and 25.7 tok/s on the same prompt; the gap is not explained (that session came right
+    after a battery-powered one).
+- **Float16 KV cache** (dev53): it halved the context memory without changing the speed. It moved a few expert
+  choices between the CPU reference and Metal, which the parity rules do not allow, so it was not kept.
 - **Agreement with llama.cpp at 16K positions:** the top token agrees at all 100 positions checked, KL
   divergence 7.9e-5. 32K and 60K were not compared, because the oracle's token-by-token dump would take 5–9
   hours.

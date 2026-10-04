@@ -108,6 +108,21 @@
         {"label": "IQ3_XXS (29.55 GiB)", "values": [4.3, 15.6]}
       ],
       "sources": ["benchmarks/m4max-48gb-dev48-api-reference.json"]
+    },
+    {
+      "id": "mtp_context",
+      "title": "MTP against prompt length, M4 Pro 24 GiB (every expert resident, E3 file)",
+      "unit": "tok/s",
+      "note": "160 greedy tokens, 16K context, 512-token chunks, GPU limit 21,741 MiB. At 16.8K MTP was slower (37.2 -> 32.6, dev53). The M4 Max still gains +2 % at 16.8K.",
+      "series": ["plain", "--mtp"],
+      "bars": [
+        {"label": "20 prompt tokens", "values": [46.25, 57.51]},
+        {"label": "1,407", "values": [44.82, 49.69]},
+        {"label": "2,805", "values": [44.66, 48.12]},
+        {"label": "5,601", "values": [41.77, 43.61]},
+        {"label": "11,193", "values": [38.74, 38.97]}
+      ],
+      "sources": ["benchmarks/m4-dev55-gpu-budget.json"]
     }
   ]
 }
