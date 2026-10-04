@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased (after 0.5.7)
+## 0.6.0 — 2026-10-04
+
+**Coding agents on a local 80B model.**
+- `redlite-server` speaks OpenAI tool calling, rendered exactly as the model's own chat template: Qwen3-Next JSON
+  or Qwen3-Coder XML.
+- Agent loops keep the engine state between turns.
+- With the pi coding agent, 5 scripted tasks × 3 runs:
+  - Qwen3-Coder-Next IQ2_XXS 15/15 (M4 Max) and 14/15 (M4 Pro 24 GiB);
+  - Red Lite F2 15/15 on the M4 Pro 24 GiB.
+- The README has a ready pi configuration. `redlite serve --native` picks the model like `redlite chat`.
+- Hosted CI is back (Linux and macOS).
+- Validation:
+  - local CI and hosted CI PASS;
+  - protocol tests under ASan+UBSan;
+  - real-model tool round trips with F2, Bartowski's IQ2_XXS and Qwen3-Coder-Next (M4 Max);
+  - agent runs on both Macs.
+
 
 - dev59: **OpenAI tool calling in `redlite-server`.** It accepts `tools` (with `tool_choice`), assistant
   `tool_calls` and `tool` messages, and renders them as the model's own chat template does: Qwen3-Next JSON or
