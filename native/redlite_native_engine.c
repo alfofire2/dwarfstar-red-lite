@@ -289,6 +289,7 @@ void rl_engine_close(rl_engine *e) {
 #endif
     rl_backend_state_free(&e->cpu);
     rl_backend_state_free(&e->gpu);
+    rl_backend_state_free(&e->gpu_parked);
     rl_native_free_expert_map(&e->expert_map);
     if (e->mtp_enabled) { rl_native_free_expert_map(&e->mtp_expert_map); rl_gguf_model_close(&e->mtp_gguf); }
     free(e->layers);
@@ -402,6 +403,41 @@ int rl_engine_verify2(rl_engine *e, uint32_t t0, uint32_t d, float *logits0, flo
     return rl_metal_engine_verify2(e, e->metal, t0, d, logits0, logits1, error, cap);
 #else
     set_error(error, cap, "verify needs Metal"); return 0;
+#endif
+}
+
+int rl_engine_slots_enable(rl_engine *e, char *error, size_t cap) {
+    if (!e || !e->gpu_enabled) { set_error(error, cap, "two slots need the GPU backend"); return 0; }
+    if (e->slots == 2) return 1;
+#ifdef __APPLE__
+    if (!rl_backend_state_alloc(e, &e->gpu_parked, 0, error, cap)) return 0;
+    if (!rl_metal_engine_slots_enable(e, e->metal, error, cap)) { rl_backend_state_free(&e->gpu_parked); return 0; }
+    e->slots = 2;
+    return 1;
+#else
+    set_error(error, cap, "two slots need Metal"); return 0;
+#endif
+}
+
+int rl_engine_select_slot(rl_engine *e, int slot) {
+    if (!e || slot < 0 || slot >= (e->slots ? e->slots : 1)) return 0;
+    if (slot == e->slot) return 1;
+#ifdef __APPLE__
+    rl_metal_engine_swap_slot(e->metal);
+#endif
+    const rl_backend_state t = e->gpu; e->gpu = e->gpu_parked; e->gpu_parked = t;
+    e->slot = slot;
+    return 1;
+}
+
+int rl_engine_step_pair(rl_engine *e, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap) {
+    if (!e || e->slots != 2 || t0 >= e->info.vocab || t1 >= e->info.vocab) { set_error(error, cap, "invalid pair step"); return 0; }
+#ifdef __APPLE__
+    if (!rl_metal_engine_step_pair(e, e->metal, t0, t1, logits0, logits1, error, cap)) return 0;
+    e->gpu.position++; e->gpu_parked.position++;
+    return 1;
+#else
+    (void)logits0; (void)logits1; set_error(error, cap, "pair step needs Metal"); return 0;
 #endif
 }
 

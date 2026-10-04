@@ -104,6 +104,9 @@ static void usage(FILE *out) {
         "  redlite-engine dequant MODEL --tensor NAME [--row-first N] [--rows N] --out FILE\n"
         "      development: rows of a tensor (flattened to [rows][ne0]) dequantized to f32 by the CPU reference, for a bitwise\n"
         "      comparison with llama.cpp (redlite-ref-llama MODEL dequant); no engine is opened\n"
+        "  redlite-engine pair MODEL --tokens a,b,c,... [--context N] (--cache-mib full)\n"
+        "      dev56: two sequences decoded together (rl_engine_step_pair) vs each one alone: sequence A = the tokens,\n"
+        "      B = the tokens reversed, B two positions ahead; logits and argmax of every pair step and of the steps after\n"
         "  redlite-engine kernel-selftest\n"
         "      model-free: decode GEMV kernels (block and sub-block), early-out guard, rl_copy_f32, rl_route and decode attention vs the CPU reference\n");
 }
@@ -363,6 +366,64 @@ int main(int argc, char **argv) {
         free(logits);
         rl_engine_close(e);
         return 0;
+    }
+
+    if (strcmp(cmd, "pair") == 0) {
+        if (token_count < 4u) { fprintf(stderr, "pair needs --tokens with at least 4 ids\n"); return 2; }
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const rl_engine_info *in = rl_engine_info_get(e);
+        const uint32_t n = token_count, h = 2u, V = in->vocab;
+        uint32_t *rev = (uint32_t *)malloc(n * sizeof(uint32_t));
+        float *ref_a = (float *)malloc((size_t)n * V * sizeof(float)), *ref_b = (float *)malloc((size_t)n * V * sizeof(float));
+        float *la = (float *)malloc((size_t)V * sizeof(float)), *lb = (float *)malloc((size_t)V * sizeof(float));
+        rl_engine_step_stats st;
+        int ok = rev && ref_a && ref_b && la && lb;
+        for (uint32_t i = 0; ok && i < n; ++i) rev[i] = tokens[n - 1u - i];
+        /* references: each sequence alone, ordinary steps in slot 0 */
+        ok = ok && rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error));
+        for (uint32_t i = 0; ok && i < n; ++i) ok = rl_engine_step(e, RL_BACKEND_GPU, tokens[i], ref_a + (size_t)i * V, &st, error, sizeof(error));
+        ok = ok && rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error));
+        const double s0 = rl_engine_now_ms_public();
+        for (uint32_t i = 0; ok && i < n; ++i) ok = rl_engine_step(e, RL_BACKEND_GPU, rev[i], ref_b + (size_t)i * V, &st, error, sizeof(error));
+        const double single_ms = (rl_engine_now_ms_public() - s0) / n;
+        ok = ok && rl_engine_slots_enable(e, error, sizeof(error));
+        /* B alone in slot 1 for h tokens, then pairs (A in slot 0 as row 0), then the rest of A alone in slot 0 */
+        ok = ok && rl_engine_select_slot(e, 0) && rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error));
+        ok = ok && rl_engine_select_slot(e, 1) && rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error));
+        double worst = 0.0;
+        uint32_t mism = 0, checked = 0;
+#define RL_PAIR_CHECK(got, ref) do { const cmp c_ = compare((got), (ref), V); if (c_.max_abs > worst) worst = c_.max_abs; \
+            mism += argmax((got), V) != argmax((ref), V); checked++; } while (0)
+        for (uint32_t i = 0; ok && i < h; ++i) {
+            ok = rl_engine_step(e, RL_BACKEND_GPU, rev[i], lb, &st, error, sizeof(error));
+            if (ok) RL_PAIR_CHECK(lb, ref_b + (size_t)i * V);
+        }
+        ok = ok && rl_engine_select_slot(e, 0);
+        const double p0 = rl_engine_now_ms_public();
+        for (uint32_t i = 0; ok && i + h < n; ++i) {
+            ok = rl_engine_step_pair(e, tokens[i], rev[i + h], la, lb, error, sizeof(error));
+            if (ok) { RL_PAIR_CHECK(la, ref_a + (size_t)i * V); RL_PAIR_CHECK(lb, ref_b + (size_t)(i + h) * V); }
+        }
+        const double pair_ms = (rl_engine_now_ms_public() - p0) / (n - h);
+        for (uint32_t i = n - h; ok && i < n; ++i) {
+            ok = rl_engine_step(e, RL_BACKEND_GPU, tokens[i], la, &st, error, sizeof(error));
+            if (ok) RL_PAIR_CHECK(la, ref_a + (size_t)i * V);
+        }
+#undef RL_PAIR_CHECK
+        int rc = 1;
+        if (!ok) fprintf(stderr, "pair failed: %s\n", error);
+        else {
+            printf("pair: %u logit rows checked, max abs diff %.3g, argmax mismatches %u\n", checked, worst, mism);
+            printf("time (includes logits copies; not a benchmark): single step %.1f ms, pair step %.1f ms (%.2f x one step for 2 tokens)\n",
+                   single_ms, pair_ms, pair_ms / single_ms);
+            rc = mism ? 1 : 0;
+            printf("%s\n", rc ? "FAIL" : "PASS");
+        }
+        free(rev); free(ref_a); free(ref_b); free(la); free(lb);
+        rl_engine_close(e);
+        return rc;
     }
 
     if (strcmp(cmd, "prefill") == 0) {

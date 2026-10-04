@@ -47,6 +47,9 @@ struct rl_metal_engine {
     __unsafe_unretained id<MTLBuffer> *snap_conv, *snap_rec;
     int verify_ready;                  /* buffers allocated */
     int verify_pending;                /* a verify ran: rl_metal_engine_verify_commit must follow */
+    /* dev56: the parked slot's state (swapped with conv_state/rec_state/kcache/vcache/final_norm by the slot switch) */
+    __unsafe_unretained id<MTLBuffer> *conv_park, *rec_park, *k_park, *v_park;
+    id<MTLBuffer> final_park;
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
     id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;

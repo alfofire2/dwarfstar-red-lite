@@ -9,7 +9,8 @@
  *                  [--no-reuse] [--cpu]
  *
  * POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health.
- * Requests run one at a time in arrival order (FIFO queue in the server core). The engine
+ * Requests run one at a time in arrival order (FIFO queue in the server core; dev56 --parallel 2: two at a time,
+ * each with its own engine slot, their decode steps paired into one pass). The engine
  * remembers the token ids its state holds (prompt + every generated token that was fed
  * back). When a new prompt extends exactly that sequence (the next turn of the same
  * conversation), only the new suffix is prefilled (dev29); otherwise the engine is reset
@@ -28,6 +29,7 @@
 #include "redlite_native_tokenizer.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -48,27 +50,116 @@ static double now_ms(void) {
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1.0e6;
 }
 
+typedef struct {               /* dev56: one sequence state of the engine */
+    float *logits, *logits1;
+    uint32_t *history;         /* token ids the slot's state holds, in order (context entries) */
+    uint32_t history_len;
+    int busy;
+} srv_slot;
+
 typedef struct {
     rl_engine *engine;
     const rl_engine_info *info;
     rl_tokenizer *tokenizer;
     rl_engine_backend backend;
-    float *logits;
     int reuse;             /* dev29 prefix reuse enabled (--no-reuse clears it) */
-    uint32_t *history;     /* token ids the engine state holds, in order (context entries) */
-    uint32_t history_len;
     rl_statecache states;  /* dev43 --state-dir: disk checkpoints when the in-memory state does not apply */
     int speculate;         /* dev45 --mtp with every expert resident: MTP drafts + 2-row verify */
-    float *logits1;
     uint32_t mtp_max_context;   /* dev55: no speculation for answers starting past this position (0 = no limit) */
     int steering;               /* dev55: --steer loaded */
     float steer_base;
     uint32_t steer_tokens;      /* steer only the first N generated tokens (0 = all) */
+    /* dev56 --parallel 2: two slots, one per worker. The engine runs one call at a time (engine_busy); a decode
+     * step posts its token (want) and, when the other slot is decoding too, waits up to SRV_PAIR_WAIT_MS for it so
+     * that both run as one rl_engine_step_pair. */
+    srv_slot slot[2];
+    uint32_t nslots;
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    int engine_busy;
+    int decoding[2], want[2], done[2], res[2];
+    uint32_t tok[2];
+    float *out[2];
+    char *err[2];
+    size_t errcap[2];
 } engine_ctx;
+
+#define SRV_PAIR_WAIT_MS 20   /* ponytail: fixed; a client that reads slowly costs its partner up to this per token */
 
 /* dev55: steering strength for the next decode step (the batched prefill is never steered) */
 static void srv_steer(engine_ctx *c, uint32_t generated) {
     if (c->steering) rl_engine_set_steering_strength(c->engine, c->steer_tokens && generated >= c->steer_tokens ? 0.0f : c->steer_base);
+}
+
+/* exclusive use of the engine with slot k selected (prefill, reset, verify cycles) */
+static void eng_lock(engine_ctx *c, int k) {
+    pthread_mutex_lock(&c->mu);
+    while (c->engine_busy) pthread_cond_wait(&c->cv, &c->mu);
+    c->engine_busy = 1;
+    pthread_mutex_unlock(&c->mu);
+    rl_engine_select_slot(c->engine, k);
+}
+
+static void eng_unlock(engine_ctx *c) {
+    pthread_mutex_lock(&c->mu);
+    c->engine_busy = 0;
+    pthread_cond_broadcast(&c->cv);
+    pthread_mutex_unlock(&c->mu);
+}
+
+static void set_decoding(engine_ctx *c, int k, int on) {
+    pthread_mutex_lock(&c->mu);
+    c->decoding[k] = on;
+    pthread_cond_broadcast(&c->cv);
+    pthread_mutex_unlock(&c->mu);
+}
+
+static int other_busy(engine_ctx *c, int k) {   /* the other slot serves a request */
+    if (c->nslots < 2) return 0;
+    pthread_mutex_lock(&c->mu);
+    const int d = c->slot[1 - k].busy;
+    pthread_mutex_unlock(&c->mu);
+    return d;
+}
+
+/* One decode step of slot k: 0 = failed, 1 = alone, 2 = paired with the other slot's step.
+ * ponytail: a pair shares one steering strength (that of the slot that runs it). */
+static int eng_step(engine_ctx *c, int k, uint32_t token, float *logits, uint32_t generated, rl_engine_step_stats *st,
+                    char *error, size_t cap) {
+    const int o = 1 - k;
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += SRV_PAIR_WAIT_MS * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    pthread_mutex_lock(&c->mu);
+    c->want[k] = 1; c->tok[k] = token; c->out[k] = logits; c->err[k] = error; c->errcap[k] = cap; c->done[k] = 0;
+    pthread_cond_broadcast(&c->cv);
+    int timed_out = 0, r = 0;
+    for (;;) {
+        if (c->done[k]) { r = c->res[k]; break; }
+        if (c->engine_busy) { pthread_cond_wait(&c->cv, &c->mu); continue; }
+        const int pair = c->nslots == 2 && c->want[o];
+        if (!pair && c->nslots == 2 && c->decoding[o] && !timed_out) {
+            timed_out = pthread_cond_timedwait(&c->cv, &c->mu, &deadline) == ETIMEDOUT;
+            continue;
+        }
+        c->engine_busy = 1;
+        pthread_mutex_unlock(&c->mu);
+        rl_engine_select_slot(c->engine, k);
+        srv_steer(c, generated);
+        const int ok = pair ? rl_engine_step_pair(c->engine, token, c->tok[o], logits, c->out[o], error, cap)
+                            : rl_engine_step(c->engine, c->backend, token, logits, st, error, cap);
+        pthread_mutex_lock(&c->mu);
+        c->engine_busy = 0;
+        c->want[k] = 0; c->done[k] = 1; c->res[k] = ok ? 1 + pair : 0;
+        if (pair) {
+            c->want[o] = 0; c->done[o] = 1; c->res[o] = c->res[k];
+            if (!ok) snprintf(c->err[o], c->errcap[o], "%s", error);
+        }
+        pthread_cond_broadcast(&c->cv);
+    }
+    pthread_mutex_unlock(&c->mu);
+    return r;
 }
 
 typedef struct {               /* wraps the server sink to time the first token */
@@ -115,32 +206,53 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     rl_sampler sampler;
     if (!rl_sampler_init(&sampler, &sp, c->info->vocab)) { free(ids); snprintf(error, cap, "sampler allocation failed"); return 0; }
 
+    /* dev56: a free slot, preferably the one whose state this prompt extends (one worker per slot: one is free) */
+    pthread_mutex_lock(&c->mu);
+    int k = -1;
+    uint32_t best = 0;
+    for (int j = 0; j < (int)c->nslots; ++j) {
+        if (c->slot[j].busy) continue;
+        const uint32_t m = c->reuse ? rl_prefix_reuse(c->slot[j].history, c->slot[j].history_len, ids, (uint32_t)needed) : 0u;
+        if (k < 0 || m > best) { k = j; best = m; }
+    }
+    if (k >= 0) c->slot[k].busy = 1;
+    pthread_mutex_unlock(&c->mu);
+    if (k < 0) { free(ids); rl_sampler_free(&sampler); snprintf(error, cap, "no free engine slot"); return 0; }
+    srv_slot *S = &c->slot[k];
+
     /* dev29: keep the state when the prompt extends exactly the ids it holds */
+    eng_lock(c, k);
     uint32_t reused = 0;
-    if (c->reuse && rl_engine_position(c->engine, c->backend) == c->history_len)
-        reused = rl_prefix_reuse(c->history, c->history_len, ids, (uint32_t)needed);
-    c->history_len = 0;   /* invalid until this request's ids are in the state */
+    if (c->reuse && rl_engine_position(c->engine, c->backend) == S->history_len)
+        reused = rl_prefix_reuse(S->history, S->history_len, ids, (uint32_t)needed);
+    S->history_len = 0;   /* invalid until this request's ids are in the state */
     rl_engine_step_stats st;
     memset(&st, 0, sizeof(st));
     const double t_prefill = now_ms();
     int ok;
     if (reused) {
-        ok = rl_engine_prefill(c->engine, c->backend, ids + reused, (uint32_t)needed - reused, c->logits, &st, error, cap);
+        ok = rl_engine_prefill(c->engine, c->backend, ids + reused, (uint32_t)needed - reused, S->logits, &st, error, cap);
     } else {   /* dev43: restore the longest stored prefix (rl_statecache_prefill resets when there is none) */
         uint32_t loaded = 0, saved = 0;
-        ok = rl_statecache_prefill(c->engine, c->backend, &c->states, ids, (uint32_t)needed, c->logits, &st, &loaded, &saved, error, cap);
+        ok = rl_statecache_prefill(c->engine, c->backend, &c->states, ids, (uint32_t)needed, S->logits, &st, &loaded, &saved, error, cap);
         reused = loaded;
     }
+    const uint32_t start_position = rl_engine_position(c->engine, c->backend);
+    eng_unlock(c);
     const double prefill_ms = now_ms() - t_prefill;
-    if (ok) { memcpy(c->history, ids, (size_t)needed * sizeof(uint32_t)); c->history_len = (uint32_t)needed; }
+    if (ok) { memcpy(S->history, ids, (size_t)needed * sizeof(uint32_t)); S->history_len = (uint32_t)needed; }
     free(ids);
     result->cached_tokens = reused;
 
     ttft_sink ts = {emit, sink, -1.0};
-    uint32_t generated = 0, gpu_routed = 0;
+    uint32_t generated = 0, gpu_routed = 0, paired = 0;
+    int fin = 0, r = 0;
     const double t_gen = now_ms();
     /* dev45: speculative decoding. The pending token u is emitted but not in the state yet (as in the plain loop);
-     * a cycle drafts d, verifies u and d, and puts u (and d when accepted) into the state and the history. */
+     * a cycle drafts d, verifies u and d, and puts u (and d when accepted) into the state and the history.
+     * dev56: it is used only while the other slot is idle; when a request arrives there, u is stepped and the
+     * answer goes on in the plain loop, whose steps pair with the other slot's (two MTP slots alternating were
+     * slower than serving them one after the other: 66 vs 71 tok/s). */
     uint32_t spec_cycles = 0, spec_accepted = 0;
 #define SRV_EMIT(tok, fin) do { \
         if (rl_tokenizer_is_eog(c->tokenizer, (tok))) { fin = 1; break; } \
@@ -151,61 +263,82 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         if (generated >= req->max_tokens) { result->finish_length = 1; fin = 1; break; } \
     } while (0)
     const int spec = c->speculate && c->backend == RL_BACKEND_GPU &&
-                     (!c->mtp_max_context || rl_engine_position(c->engine, c->backend) <= c->mtp_max_context);
+                     (!c->mtp_max_context || start_position <= c->mtp_max_context) && !other_busy(c, k);
+    int switched = 0;
+    uint32_t u = 0;
     if (ok && spec) {
-        int fin = 0;
-        uint32_t u = rl_sampler_sample(&sampler, c->logits), mtp_pos = 0;
+        uint32_t mtp_pos = 0;
+        u = rl_sampler_sample(&sampler, S->logits);
         SRV_EMIT(u, fin);
         if (!fin) {   /* one plain step so the hidden state the MTP block reads belongs to u's position */
-            srv_steer(c, generated);
-            if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) ok = 0;
-            else { c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin); }
+            if (!(r = eng_step(c, k, u, S->logits, generated, &st, error, cap))) ok = 0;
+            else { paired += r == 2; S->history[S->history_len++] = u; u = rl_sampler_sample(&sampler, S->logits); SRV_EMIT(u, fin); }
         }
         while (ok && !fin) {
-            srv_steer(c, generated);
-            if (rl_engine_position(c->engine, c->backend) + 2u > c->info->context) {   /* no room for two rows: plain step */
-                if (!rl_engine_step(c->engine, c->backend, u, c->logits, &st, error, cap)) { ok = 0; break; }
-                c->history[c->history_len++] = u; u = rl_sampler_sample(&sampler, c->logits); SRV_EMIT(u, fin);
+            if (other_busy(c, k)) { switched = 1; break; }
+            eng_lock(c, k);
+            const int room = rl_engine_position(c->engine, c->backend) + 2u <= c->info->context;
+            uint32_t d = 0, v = 0;
+            int accepted = 0;
+            if (room) {
+                srv_steer(c, generated);
+                ok = rl_engine_mtp_draft(c->engine, u, mtp_pos++, &d, NULL, error, cap) &&
+                     rl_engine_verify2(c->engine, u, d, S->logits, S->logits1, error, cap);
+                if (ok) {
+                    v = rl_sampler_sample(&sampler, S->logits);
+                    accepted = v == d;
+                    ok = rl_engine_verify_commit(c->engine, accepted, error, cap);
+                }
+            }
+            eng_unlock(c);
+            if (!ok) break;
+            if (!room) {   /* no room for two rows: plain step */
+                if (!(r = eng_step(c, k, u, S->logits, generated, &st, error, cap))) { ok = 0; break; }
+                S->history[S->history_len++] = u; u = rl_sampler_sample(&sampler, S->logits); SRV_EMIT(u, fin);
                 continue;
             }
-            uint32_t d = 0;
-            if (!rl_engine_mtp_draft(c->engine, u, mtp_pos++, &d, NULL, error, cap) ||
-                !rl_engine_verify2(c->engine, u, d, c->logits, c->logits1, error, cap)) { ok = 0; break; }
             spec_cycles++;
-            const uint32_t v = rl_sampler_sample(&sampler, c->logits);
-            const int accepted = v == d;
-            if (!rl_engine_verify_commit(c->engine, accepted, error, cap)) { ok = 0; break; }
-            c->history[c->history_len++] = u;
-            if (accepted) { c->history[c->history_len++] = d; spec_accepted++; }
+            S->history[S->history_len++] = u;
+            if (accepted) { S->history[S->history_len++] = d; spec_accepted++; }
             SRV_EMIT(v, fin);
             if (fin) break;
-            if (accepted) { u = rl_sampler_sample(&sampler, c->logits1); SRV_EMIT(u, fin); }
+            if (accepted) { u = rl_sampler_sample(&sampler, S->logits1); SRV_EMIT(u, fin); }
             else u = v;
         }
     }
-    while (ok && !spec) {
-        const uint32_t next = rl_sampler_sample(&sampler, c->logits);
-        if (rl_tokenizer_is_eog(c->tokenizer, next)) break;
-        char piece[512];
-        const int32_t n = rl_tokenizer_decode(c->tokenizer, next, piece, sizeof(piece));
-        if (n < 0) { snprintf(error, cap, "token decode failed"); ok = 0; break; }
-        generated++;
-        if (!ttft_emit(&ts, piece, (size_t)n)) break;           /* client gone, Ctrl-C or stop sequence */
-        if (generated >= req->max_tokens) { result->finish_length = 1; break; }
-        srv_steer(c, generated);
-        if (!rl_engine_step(c->engine, c->backend, next, c->logits, &st, error, cap)) { ok = 0; break; }
-        c->history[c->history_len++] = next;                     /* fed back: part of the state */
-        gpu_routed += st.speculative;
+    if (ok && !fin && (!spec || switched)) {
+        set_decoding(c, k, 1);
+        if (switched) {   /* the pending token u goes into the state; the plain loop samples what follows it */
+            if (!(r = eng_step(c, k, u, S->logits, generated, &st, error, cap))) ok = 0;
+            else { paired += r == 2; S->history[S->history_len++] = u; }
+        }
+        while (ok) {
+            const uint32_t next = rl_sampler_sample(&sampler, S->logits);
+            if (rl_tokenizer_is_eog(c->tokenizer, next)) break;
+            char piece[512];
+            const int32_t n = rl_tokenizer_decode(c->tokenizer, next, piece, sizeof(piece));
+            if (n < 0) { snprintf(error, cap, "token decode failed"); ok = 0; break; }
+            generated++;
+            if (!ttft_emit(&ts, piece, (size_t)n)) break;           /* client gone, Ctrl-C or stop sequence */
+            if (generated >= req->max_tokens) { result->finish_length = 1; break; }
+            if (!(r = eng_step(c, k, next, S->logits, generated, &st, error, cap))) { ok = 0; break; }
+            S->history[S->history_len++] = next;                     /* fed back: part of the state */
+            if (r == 2) paired++; else gpu_routed += st.speculative;
+        }
+        set_decoding(c, k, 0);
     }
     const double gen_ms = now_ms() - t_gen;
     rl_sampler_free(&sampler);
     result->completion_tokens = generated;
-    if (!ok) c->history_len = 0;   /* unknown state: the next request resets */
+    if (!ok) S->history_len = 0;   /* unknown state: the next request resets */
+    pthread_mutex_lock(&c->mu);
+    S->busy = 0;
+    pthread_mutex_unlock(&c->mu);
     if (ok) {
-        fprintf(stderr, "[redlite-server] prefill %u tok (%u cached) %.0f ms (%.1f tok/s), ttft %.0f ms, decode %u tok %.0f ms (%.1f tok/s, %u GPU-routed)\n",
-            (uint32_t)needed - reused, reused, prefill_ms, prefill_ms > 0 ? (needed - reused) * 1000.0 / prefill_ms : 0.0,
+        fprintf(stderr, "[redlite-server] slot %d: prefill %u tok (%u cached) %.0f ms (%.1f tok/s), ttft %.0f ms, decode %u tok %.0f ms (%.1f tok/s, %u GPU-routed, %u paired)\n",
+            k, (uint32_t)needed - reused, reused, prefill_ms, prefill_ms > 0 ? (needed - reused) * 1000.0 / prefill_ms : 0.0,
             ts.first_ms >= 0.0 ? ts.first_ms - t_request : 0.0,
-            generated, gen_ms, generated > 1u ? (generated - 1u) * 1000.0 / gen_ms : 0.0, gpu_routed);
+            generated, gen_ms, generated > 1u ? (generated - 1u) * 1000.0 / gen_ms : 0.0, gpu_routed, paired);
         if (spec_cycles) fprintf(stderr, "[redlite-server] MTP speculation: %u cycles, %u drafts accepted (%.3f)\n",
                                  spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
     }
@@ -239,6 +372,8 @@ static void usage(FILE *out) {
         "  --steer-layers A-B  steered layers (default 16-31)\n"
         "  --steer-strength S  steering strength (default 1)\n"
         "  --steer-tokens N    steer only the first N tokens of each answer (default 0 = all)\n"
+        "  --parallel N        dev56: 1 or 2 requests at the same time (2 needs --cache-mib full; their decode steps run\n"
+        "                      as one pass over the weights, MTP only while one request is decoding; default 1)\n"
         "  --cpu               use the CPU oracle backend (slow; the only backend off macOS)\n\n"
         "Endpoints: POST /v1/chat/completions (stream true/false), GET /v1/models, GET /health\n");
 }
@@ -272,7 +407,7 @@ int main(int argc, char **argv) {
     int reuse = 1;
     const char *state_dir = NULL;
     uint32_t state_max_mib = 8192u;
-    uint32_t mtp_max_context = 0u, steer_tokens = 0u, steer_first = 16u, steer_last = 31u;
+    uint32_t mtp_max_context = 0u, steer_tokens = 0u, steer_first = 16u, steer_last = 31u, parallel = 1u;
     const char *steer_path = NULL;
     float steer_base = 1.0f;
 #ifdef __APPLE__
@@ -299,6 +434,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--state-dir") == 0) state_dir = v;
         else if (strcmp(argv[i - 1], "--mtp") == 0) cfg.mtp_path = v;
         else if (strcmp(argv[i - 1], "--mtp-max-context") == 0) { if (!parse_u32(v, &mtp_max_context)) return 2; }
+        else if (strcmp(argv[i - 1], "--parallel") == 0) { if (!parse_u32(v, &parallel) || parallel < 1u || parallel > 2u) return 2; }
         else if (strcmp(argv[i - 1], "--steer") == 0) steer_path = v;
         else if (strcmp(argv[i - 1], "--steer-strength") == 0) { if (!parse_f32(v, &steer_base)) return 2; }
         else if (strcmp(argv[i - 1], "--steer-tokens") == 0) { if (!parse_u32(v, &steer_tokens)) return 2; }
@@ -347,16 +483,30 @@ int main(int argc, char **argv) {
     ctx.info = rl_engine_info_get(e);
     ctx.tokenizer = tk;
     ctx.backend = use_cpu ? RL_BACKEND_CPU : RL_BACKEND_GPU;
-    ctx.logits = (float *)malloc((size_t)ctx.info->vocab * sizeof(float));
-    ctx.history = (uint32_t *)malloc(((size_t)ctx.info->context + 1u) * sizeof(uint32_t));
     ctx.reuse = reuse;
+    pthread_mutex_init(&ctx.mu, NULL);
+    pthread_cond_init(&ctx.cv, NULL);
     ctx.states.dir = state_dir;
     {
         double pre_ms = 0.0;
         ctx.speculate = !use_cpu && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms);
-        ctx.logits1 = ctx.speculate ? (float *)malloc((size_t)ctx.info->vocab * sizeof(float)) : NULL;
         if (cfg.mtp_path && !ctx.speculate) fprintf(stderr, "[redlite-server] --mtp ignored: it needs --cache-mib full (every expert resident)\n");
-        if (ctx.speculate && !ctx.logits1) { fprintf(stderr, "logits allocation failed\n"); return 1; }
+        ctx.nslots = 1;
+        if (parallel > 1) {
+            if (use_cpu || !rl_engine_experts_preloaded(e, &pre_ms) || !rl_engine_slots_enable(e, error, sizeof(error)))
+                fprintf(stderr, "[redlite-server] --parallel ignored: it needs the Metal backend and --cache-mib full%s%s\n",
+                        error[0] ? ": " : "", error);
+            else ctx.nslots = 2;
+            error[0] = 0;
+        }
+        scfg.workers = ctx.nslots;
+        for (uint32_t j = 0; j < ctx.nslots; ++j) {
+            ctx.slot[j].logits = (float *)malloc((size_t)ctx.info->vocab * sizeof(float));
+            ctx.slot[j].logits1 = (float *)malloc((size_t)ctx.info->vocab * sizeof(float));
+            ctx.slot[j].history = (uint32_t *)malloc(((size_t)ctx.info->context + 1u) * sizeof(uint32_t));
+            if (!ctx.slot[j].logits || !ctx.slot[j].logits1 || !ctx.slot[j].history) { fprintf(stderr, "slot allocation failed\n"); return 1; }
+        }
+        if (ctx.nslots == 2) fprintf(stderr, "[redlite-server] 2 parallel requests (their decode steps run as pairs)\n");
     }
     ctx.states.max_bytes = (uint64_t)state_max_mib * 1024u * 1024u;
     ctx.mtp_max_context = mtp_max_context;
@@ -369,15 +519,14 @@ int main(int argc, char **argv) {
                 (double)steer_base, steer_tokens ? " (first tokens of each answer)" : "");
     }
     int rc = 1;
-    if (!ctx.logits || !ctx.history) {
-        fprintf(stderr, "logits allocation failed\n");
-    } else {
+    {
         rl_server_backend backend = {&ctx, "qwen3-next-80b-a3b-redlite", engine_generate};
         if (rl_server_run(&scfg, &backend, &g_stop, error, sizeof(error))) rc = 0;
         else fprintf(stderr, "server failed: %s\n", error);
     }
-    free(ctx.logits);
-    free(ctx.history);
+    for (uint32_t j = 0; j < ctx.nslots; ++j) { free(ctx.slot[j].logits); free(ctx.slot[j].logits1); free(ctx.slot[j].history); }
+    pthread_cond_destroy(&ctx.cv);
+    pthread_mutex_destroy(&ctx.mu);
     rl_tokenizer_destroy(tk);
     rl_gguf_model_close(&g);
     rl_engine_close(e);

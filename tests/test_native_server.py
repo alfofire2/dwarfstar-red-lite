@@ -348,6 +348,30 @@ class NativeServerProtocolTests(unittest.TestCase):
         finally:
             srv.stop()
 
+    def test_two_workers_overlap_generations(self):
+        """dev56: --workers 2 runs two requests at the same time (the real server pairs their decode steps)."""
+        import threading
+        srv = FakeServer(self.binary, "--token-delay-ms", "20", "--workers", "2")
+        try:
+            t0 = time.monotonic()
+            srv.request("POST", "/v1/chat/completions", user("S" * 60))
+            single = time.monotonic() - t0
+            out = []
+            def worker(tag):
+                resp, data = srv.request("POST", "/v1/chat/completions", user(tag * 60))
+                out.append((resp.status, json.loads(data)["choices"][0]["message"]["content"]))
+            threads = [threading.Thread(target=worker, args=(t,)) for t in "AB"]
+            t0 = time.monotonic()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+            both = time.monotonic() - t0
+            self.assertEqual(sorted(out), [(200, "Echo: " + "A" * 60), (200, "Echo: " + "B" * 60)])
+            self.assertLess(both, 1.6 * single)   # serial would take 2x
+        finally:
+            srv.stop()
+
     def test_full_queue_answers_503(self):
         import threading
         srv = FakeServer(self.binary, "--token-delay-ms", "40", "--queue", "1")

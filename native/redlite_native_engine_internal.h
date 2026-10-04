@@ -62,6 +62,8 @@ struct rl_engine {
     int gpu_enabled;
     rl_backend_state cpu;
     rl_backend_state gpu;
+    rl_backend_state gpu_parked;          /* dev56: the other slot's host state (rl_engine_select_slot swaps) */
+    int slot, slots;                      /* selected slot; 2 once rl_engine_slots_enable ran */
     rl_metal_engine *metal;
     int cpu_threads;
     /* dev45: MTP block */
@@ -91,6 +93,10 @@ int rl_metal_engine_set_steering(rl_metal_engine *m, const float *vector, uint32
 int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
 int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap);
 int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted, char *error, size_t cap);   /* dev45 */
+int rl_metal_engine_slots_enable(rl_engine *e, rl_metal_engine *m, char *error, size_t cap);   /* dev56 */
+void rl_metal_engine_swap_slot(rl_metal_engine *m);
+int rl_metal_engine_step_pair(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,
+                              char *error, size_t cap);
 int rl_metal_engine_mtp_draft(rl_engine *e, rl_metal_engine *m, const float *embedding, uint32_t mtp_position, uint32_t *draft,
                               float *logits, char *error, size_t cap);   /* dev45 */
 int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *tokens, uint32_t count, float *logits,
