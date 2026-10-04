@@ -100,7 +100,7 @@ https://huggingface.co/bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF (put it i
 
     PYTHONPATH=$NAME/python python3 -m redlite.cli chat     # models in ~/.redlite/models (REDLITE_MODELS)
 
-Homebrew does all of this: \`brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite && brew install redlite\`.
+Homebrew does all of this: \`brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite\`, \`brew trust --tap alfofire2/redlite\`, \`brew install redlite\`.
 EOF
 
 tar -C "$(dirname "$STAGE")" -czf "$OUTDIR/$NAME.tar.gz" "$NAME"

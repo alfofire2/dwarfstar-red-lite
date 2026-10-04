@@ -49,6 +49,7 @@ weights resident, treats the experts as a cache, and on a raised GPU limit keeps
 
 ```bash
 brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
+brew trust --tap alfofire2/redlite     # Homebrew 7 loads formulae from third-party taps only once trusted
 brew install redlite
 redlite download 24gb && redlite download mtp     # into ~/.redlite/models (REDLITE_MODELS changes it)
 redlite doctor && redlite chat
