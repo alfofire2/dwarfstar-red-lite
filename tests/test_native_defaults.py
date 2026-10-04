@@ -255,3 +255,13 @@ class MtpMaxContextTests(unittest.TestCase):
         from redlite.planner import native_mtp_max_context
         self.assertEqual(native_mtp_max_context(24 * GIB), 8192)
         self.assertIsNone(native_mtp_max_context(48 * GIB))
+
+
+class ParallelPlanTests(unittest.TestCase):
+    """dev56: two slots are planned as extra positions (second KV cache + 72 MiB DeltaNet state)."""
+
+    def test_plan_context(self):
+        from redlite.planner import native_plan_context
+        self.assertEqual(native_plan_context(4096), 4096)
+        self.assertEqual(native_plan_context(4096, 2), 8192 + 1536)
+        self.assertEqual(native_plan_context(2048, 2), 4096 + 1536)
