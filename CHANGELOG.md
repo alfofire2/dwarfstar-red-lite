@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased (after 0.5.3)
+## 0.5.4 — 2026-10-04
+
+**Long contexts on a 24 GiB Mac with every expert resident.**
+- `redlite chat` / `serve` size the prefill chunk and MTP to the raised GPU limit, so a 32K context no longer runs out
+  of GPU memory.
+- MTP is skipped for answers that start past 8,192 positions on Macs below 40 GiB, where it stops paying.
+- Steering in the server.
+- Validation: local CI PASS; `regress_m4.sh` IQ2_XXS 52/0/0 (M4 Max); end-to-end planner runs on the M4 Pro 24 GiB.
+
 
 ### dev55 — long contexts on a 24 GiB Mac with every expert resident (M4 Pro 24 GiB, M4 Max 48 GiB)
 
