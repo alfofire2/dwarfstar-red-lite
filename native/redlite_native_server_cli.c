@@ -127,19 +127,22 @@ static int other_busy(engine_ctx *c, int k) {   /* the other slot serves a reque
 static int eng_step(engine_ctx *c, int k, uint32_t token, float *logits, uint32_t generated, rl_engine_step_stats *st,
                     char *error, size_t cap) {
     const int o = 1 - k;
-    struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
-    deadline.tv_nsec += SRV_PAIR_WAIT_MS * 1000000L;
-    if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+    struct timespec deadline = {0, 0};
     pthread_mutex_lock(&c->mu);
     c->want[k] = 1; c->tok[k] = token; c->out[k] = logits; c->err[k] = error; c->errcap[k] = cap; c->done[k] = 0;
     pthread_cond_broadcast(&c->cv);
-    int timed_out = 0, r = 0;
+    int timed_out = 0, waiting = 0, r = 0;
     for (;;) {
         if (c->done[k]) { r = c->res[k]; break; }
         if (c->engine_busy) { pthread_cond_wait(&c->cv, &c->mu); continue; }
         const int pair = c->nslots == 2 && c->want[o];
         if (!pair && c->nslots == 2 && c->decoding[o] && !timed_out) {
+            if (!waiting) {   /* the wait starts when the engine is free (the partner may have just run a step) */
+                clock_gettime(CLOCK_REALTIME, &deadline);
+                deadline.tv_nsec += SRV_PAIR_WAIT_MS * 1000000L;
+                if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+                waiting = 1;
+            }
             timed_out = pthread_cond_timedwait(&c->cv, &c->mu, &deadline) == ETIMEDOUT;
             continue;
         }
