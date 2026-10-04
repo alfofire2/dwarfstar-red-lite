@@ -1,0 +1,98 @@
+{
+  "id": "m4pro-dev61-streaming",
+  "date": "2026-10-04",
+  "machine": "Apple M4 Pro 24 GiB (macOS 26.7), default GPU limit",
+  "agent": {
+    "F2, 4 GiB cache": {
+      "passed": 15,
+      "of": 15,
+      "median_wall_s": {
+        "new_code": 21.4,
+        "bug_fix": 27.1,
+        "rename": 43.4,
+        "read_answer": 6.7,
+        "add_flag": 20.6
+      },
+      "median_reuse_multi_turn": 0.763
+    },
+    "Qwen3-Coder-Next IQ2_XXS, 4 GiB cache": {
+      "passed": 15,
+      "of": 15,
+      "median_wall_s": {
+        "new_code": 20.9,
+        "bug_fix": 29.2,
+        "rename": 40.4,
+        "read_answer": 7.0,
+        "add_flag": 14.7
+      },
+      "median_reuse_multi_turn": 0.84
+    }
+  },
+  "decode": {
+    "method": "small_mac_ab.sh bias05, six cache-trace prompts x 256 tokens, COOL 30",
+    "F2 4096": {
+      "misses_per_token": 29.9,
+      "mib_per_token": 40.7,
+      "tok_s": [
+        32.12,
+        33.42,
+        33.9,
+        34.03,
+        34.2,
+        34.04
+      ],
+      "median": 33.965
+    },
+    "IQ3_XXS 4096": {
+      "misses_per_token": 46.4,
+      "mib_per_token": 107.4,
+      "tok_s": [
+        28.31,
+        29.33,
+        28.03,
+        30.73,
+        32.48,
+        29.25
+      ],
+      "median": 29.29
+    },
+    "IQ3_XXS 8192": {
+      "misses_per_token": 17.6,
+      "mib_per_token": 40.5,
+      "tok_s": [
+        27.71,
+        27.7,
+        25.49,
+        29.02,
+        29.68,
+        28.07
+      ],
+      "median": 27.89
+    },
+    "IQ3_XXS 12288": {
+      "misses_per_token": 12.1,
+      "mib_per_token": 27.6,
+      "tok_s": [
+        27.82,
+        27.94,
+        28.08,
+        29.51,
+        29.38,
+        28.13
+      ],
+      "median": 28.105
+    }
+  },
+  "prefill": {
+    "method": "bench_m4.sh --only prefill4 --reps 2 --cool 60 (4 GiB cache, chunks of 2048)",
+    "F2": {
+      "1100": 349.75,
+      "8192": 367.0
+    },
+    "IQ3_XXS": {
+      "1100": 208.0,
+      "8192": 334.4
+    }
+  },
+  "source": "docs/REDLITE_DEV61_STREAMING_24GB.md"
+}

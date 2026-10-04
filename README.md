@@ -128,6 +128,9 @@ python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 -
 - **Speed:** plain decode 3 % slower than E3; with MTP on a 24 GiB Mac as fast or faster.
 - `redlite download 24gb` fetches F2 (`e3` the previous file), and `redlite chat` prefers it.
 - Details: `docs/REDLITE_DEV54_QUANT_MIX.md`, `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
+- **Higher quality on 24 GiB** (dev61): the 48 GiB file (`redlite download 48gb`, IQ3_XXS, perplexity 14.29)
+  streams from the SSD with the 4 GiB cache at 29 tok/s on an M4 Pro (F2: 34). Pass its path:
+  `redlite chat …/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf`.
 
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored

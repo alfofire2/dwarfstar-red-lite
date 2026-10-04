@@ -167,6 +167,17 @@ Pro: the limit is applied, and Metal then reports 21.23 GiB.
 Since the dev18 build of September (27.8 tok/s decode; prompts ingested one token at a time at 16 tok/s), the
 24 GiB numbers rose to 46–53 tok/s decode and about 360 tok/s ingestion.
 
+**The better file from the SSD** (dev61).
+- **What runs:** a 24 GiB Mac at the default GPU limit can stream the 29.6 GiB IQ3_XXS file (perplexity 14.29)
+  through the 4 GiB cache.
+- **Speed:** it decodes at 29.3 tok/s against 34.0 for F2, though it reads 2.6× more per token. The per-layer
+  round trip bounds that path, not the SSD.
+- **Bigger caches:** 8 and 12 GiB cut the reads but not the time.
+- **Agents:** the coding-agent tasks pass from the SSD as well (F2 and Qwen3-Coder-Next 15/15), 20–50 % slower
+  than resident.
+
+<p align="center"><img src="img/choices_24gb.svg" alt="Decode on a 24 GiB Mac: F2 resident, F2 from the SSD, IQ3_XXS from the SSD"></p>
+
 ## 6. Long context
 
 Each position costs 48 KiB of attention cache. Only 12 of the 48 layers keep one; the DeltaNet layers have a
