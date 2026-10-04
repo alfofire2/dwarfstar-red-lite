@@ -1,45 +1,48 @@
-# DwarfStar Red Lite
+<p align="center">
+  <img src="docs/img/logo.svg" width="168" alt="DwarfStar Red Lite logo: a red dwarf star ringed by 48 rays, one per model layer; the 12 long red rays are the full-attention layers">
+</p>
 
-**Qwen3-Next-80B-A3B on Apple Silicon Macs, with a native Metal runtime written for this one model.**
+<h1 align="center">DwarfStar Red Lite</h1>
 
-Red Lite is an independent project, named after and inspired by [DwarfStar](https://dwarfstar.sh/)
-([antirez/ds4](https://github.com/antirez/ds4)) by Salvatore Sanfilippo (antirez): its narrow, hardware-aware
-philosophy, and several of its ideas (MTP verify, steering, checking answers against the model maker's API). It shares
-no code with it and is not affiliated with it. It is not a generic model runner.
+<p align="center">
+  <b>Qwen3-Next-80B on a 24 GiB Mac.</b><br>
+  A native Metal runtime written for this one model.
+</p>
 
-**Why "Red Lite".**
-- **The star:** red dwarfs are the smallest and coolest true stars, still burning hydrogen. They are also the most
-  common.
-- **The fit:** DwarfStar Red Lite is the small red dwarf of the family: the same idea, made to fit the smallest
-  Apple Silicon Mac that can hold an 80B model, 24 GiB. It targets one architecture and one
-hardware family:
+<p align="center">
+  <a href="https://github.com/alfofire2/dwarfstar-red-lite/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/alfofire2/dwarfstar-red-lite?color=9E1F1A&label=release"></a>
+  <img alt="macOS on Apple Silicon" src="https://img.shields.io/badge/macOS-Apple%20Silicon-8C88A3">
+  <img alt="Tested on M4 Pro and M4 Max" src="https://img.shields.io/badge/tested%20on-M4%20Pro%20%2F%20M4%20Max-8C88A3">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-8C88A3"></a>
+</p>
 
-- **Model:** Qwen3-Next-80B-A3B-Instruct, two of Bartowski's GGUFs: the reference
-  `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB, for 24 GiB Macs) and, since
-  0.4.0, `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29 vs 16.47 on the same text), which
-  runs with every expert resident on a 48 GiB Mac. Since dev42 also `Qwen/Qwen3-Coder-Next` (same
-  architecture, Bartowski IQ2_XXS / IQ3_XXS), validated against llama.cpp.
-- **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
-  developed since September 2026 on a 48 GiB M4 Max.
-- **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the
-  whole model fits in memory.
+<p align="center">
+  <a href="#install">Install</a> &nbsp;|&nbsp;
+  <a href="#measured-performance">Performance</a> &nbsp;|&nbsp;
+  <a href="docs/FINDINGS.md">Findings</a> &nbsp;|&nbsp;
+  <a href="#limits">Limits</a> &nbsp;|&nbsp;
+  <a href="docs/README.md">All docs</a>
+</p>
 
-Qwen3-Next has 48 layers: 36 Gated DeltaNet blocks and 12 full-attention blocks, each
-followed by a 512-expert MoE that selects 10 experts per token. Only about 1 GiB of the
-weights is dense. The other ~17 GiB are routed experts, of which a token touches about
-3%. Red Lite keeps the dense part resident and treats the experts as a cache.
+---
 
-## Two runtimes
+Qwen3-Next-80B-A3B has 80 billion parameters, but a token uses only 3 billion of them: each of its 48 layers picks
+10 of 512 experts. Red Lite is a C, Objective-C and Metal runtime built around that one fact. It keeps the dense
+weights resident, treats the experts as a cache, and on a raised GPU limit keeps all of them on the GPU.
 
-| | **Native runtime (0.3, 0.4)** | **Launcher (0.2)** |
-|---|---|---|
-| What runs the model | Red Lite's own C11 / Objective-C / Metal implementation of the Qwen3-Next graph | a pinned llama.cpp (Metal), or a pinned CPU mmap runtime for oversized models |
-| Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
-| Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
-| Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
-| Validated on | M4 Max 48 GiB (0.3.0 – 0.5.0; both GGUFs); M4 Pro 24 GiB (dev18 build, 0.5.0) | M4 Pro 24 GiB |
+- **An 80B model on a 24 GiB MacBook Pro:** about 45 tok/s decode on an M4 Pro, 49–58 with MTP speculative
+  decoding, which never changes the answer. The llama.cpp launcher reaches 36–38 on the same Mac.
+- **A better 2-bit file:** Red Lite's own quantization, F2, has the size of Bartowski's IQ2_XXS (19.3 GB) and a
+  6 % lower perplexity.
+- **Checked against llama.cpp** on every change: logits, greedy tokens and long contexts, with llama.cpp used as an
+  oracle only, never linked.
+- **A local OpenAI-compatible server:** two requests at once, steering, and prompt states saved to disk.
 
-## Native runtime: quick start
+<p align="center">
+  <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB: 27.8 tok/s in September, 32.5 with the 4 GiB cache, 46.0 with every expert resident, 52.7 with MTP; llama.cpp launcher 36.4">
+</p>
+
+## Install
 
 **With Homebrew** (from release 0.5.5; no compiler, no source checkout):
 
@@ -139,12 +142,40 @@ answers meanwhile. A request that continues the previous conversation exactly re
 engine state and only ingests the new tokens (second-turn first token 3.8 s → 0.17 s on
 an 1185-token conversation); any other request resets. `stop` sequences are supported.
 
+## What runs
+
+- **Model:** Qwen3-Next-80B-A3B-Instruct.
+  - **24 GiB Macs:** Red Lite's F2 file (19.3 GB, `redlite download 24gb`), or the reference file it was validated
+    against, Bartowski's `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB).
+  - **48 GiB Macs:** Bartowski's `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29), with every expert resident.
+  - **Since dev42 also `Qwen/Qwen3-Coder-Next`:** same architecture, Bartowski IQ2_XXS / IQ3_XXS, validated against
+    llama.cpp.
+- **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
+  developed since September 2026 on a 48 GiB M4 Max.
+- **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the
+  whole model fits in memory.
+
+Qwen3-Next has 48 layers: 36 Gated DeltaNet blocks and 12 full-attention blocks, each
+followed by a 512-expert MoE that selects 10 experts per token. Only about 1 GiB of the
+weights is dense. The other ~17 GiB are routed experts, of which a token touches about
+3%. Red Lite keeps the dense part resident and treats the experts as a cache.
+
+
+### Two runtimes
+
+| | **Native runtime (0.3 and later)** | **Launcher (0.2)** |
+|---|---|---|
+| What runs the model | Red Lite's own C11 / Objective-C / Metal implementation of the Qwen3-Next graph | a pinned llama.cpp (Metal), or a pinned CPU mmap runtime for oversized models |
+| Memory model | dense weights mapped in place; routed experts in a bounded LRU cache (`--cache-mib`, 4 GiB on 24 GiB machines) or all resident (`--cache-mib full`) | whole model resident, or CPU mmap with bounded expert residency |
+| Entry points | `redlite chat`, `redlite serve --native`, `redlite-generate`, `redlite-server` | `redlite plan / run / serve / bench` |
+| Correctness reference | pinned llama.cpp, used as a test oracle only and never linked | llama.cpp itself |
+| Validated on | M4 Max 48 GiB and M4 Pro 24 GiB (regression suite at every release) | M4 Pro 24 GiB |
+
 ## Measured performance
 
 <p align="center">
   <img src="docs/img/decode_m4max.svg" alt="Decode speed on the M4 Max by release, with the llama.cpp reference">
   <img src="docs/img/prefill_m4max.svg" alt="Prompt ingestion of 8192 tokens on the M4 Max by release">
-  <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB">
 </p>
 
 In short:
@@ -282,7 +313,23 @@ The sections below describe the llama.cpp-based launcher: the memory planner, th
 engines and the M4 Pro 24 GiB presets. It remains the field-validated path on the 24 GiB
 M4 Pro.
 
-## 24 GB recommended configurations
+## Launcher (0.2): requirements and quick start
+
+The launcher runs the pinned llama.cpp or the oversized-MoE CPU runtime instead of the native engine. For the native
+runtime, see [Install](#install).
+
+### Requirements
+
+- Apple Silicon Mac (`arm64`)
+- macOS
+- Xcode Command Line Tools (`xcode-select --install`)
+- CMake
+- Git
+- Python 3.10+
+- Fast internal SSD strongly recommended for oversized mode
+- Enough free disk for model + build trees
+
+### 24 GB configurations
 
 | Mode | Quant | Approx file size | Backend | Trade-off |
 |---|---|---:|---|---|
@@ -292,7 +339,7 @@ M4 Pro.
 
 The planner uses the *actual GGUF file size*, not the marketing parameter count.
 
-### Field-validated M4 Pro / 24 GiB presets
+#### Field-validated M4 Pro / 24 GiB presets
 
 For the 17.97 GiB Bartowski IQ2_XXS model on Apple M4 Pro 24 GiB:
 
@@ -310,20 +357,9 @@ A controlled sweep completed all three depths with zero observed swap growth:
 
 The planner still labels these fits `CRITICAL` because the estimated headroom remains below 1 GiB. See `docs/FIELD_VALIDATION_M4PRO_24GB.md`.
 
-## Requirements
+### Quick start
 
-- Apple Silicon Mac (`arm64`)
-- macOS
-- Xcode Command Line Tools (`xcode-select --install`)
-- CMake
-- Git
-- Python 3.10+
-- Fast internal SSD strongly recommended for oversized mode
-- Enough free disk for model + build trees
-
-## Quick start
-
-### 1. Install the Red Lite CLI
+#### 1. Install the Red Lite CLI
 
 ```bash
 cd dwarfstar-red-lite
@@ -337,7 +373,7 @@ Or without installing:
 ./bin/redlite doctor
 ```
 
-### 2. Build the two pinned engines
+#### 2. Build the two pinned engines
 
 ```bash
 redlite bootstrap
@@ -350,7 +386,7 @@ This builds:
 
 Dependencies are placed in `.deps/` and are not committed to this project.
 
-### 3. Download the 24 GB profile
+#### 3. Download the 24 GB profile
 
 ```bash
 python3 -m pip install -U huggingface_hub
@@ -365,7 +401,7 @@ For a higher-quality oversized model:
 redlite download quality --dir models
 ```
 
-### 4. Ask the planner what to do
+#### 4. Ask the planner what to do
 
 ```bash
 redlite plan models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf
@@ -388,7 +424,7 @@ For Q4_K_M the planner should choose:
 mode             : ssd-cpu
 ```
 
-### 5. Run locally
+#### 5. Run locally
 
 ```bash
 redlite run models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
@@ -396,7 +432,7 @@ redlite run models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
   -n 512
 ```
 
-### 6. Start an OpenAI-compatible server
+#### 6. Start an OpenAI-compatible server
 
 ```bash
 redlite serve models/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf \
@@ -443,7 +479,19 @@ Red Lite will reject a forced resident plan if its conservative RAM budget says 
 model does not fit. `run`/`serve` expose `--force`, but it should be used only for
 experiments.
 
-## Why not just call this a DwarfStar fork?
+## The name, and DwarfStar
+
+Red Lite is an independent project, named after and inspired by [DwarfStar](https://dwarfstar.sh/)
+([antirez/ds4](https://github.com/antirez/ds4)) by Salvatore Sanfilippo (antirez). It takes from DwarfStar its
+narrow, hardware-aware philosophy and several ideas: MTP verify, steering, checking answers against the model maker's
+API. It shares no code with it and is not affiliated with it.
+
+**Why "Red Lite".** Red dwarfs are the smallest and coolest true stars, still burning hydrogen, and the most common
+ones. DwarfStar Red Lite is the small red dwarf of the family: the same idea, made to fit the smallest Apple Silicon
+Mac that can hold an 80B model, 24 GiB. The logo is that star, with one ray per model layer: the 12 long red rays are
+the full-attention layers, the 36 short ones the Gated DeltaNet layers.
+
+### Why not just call this a DwarfStar fork?
 
 DwarfStar currently has its own narrow tensor layouts and model implementations for
 DeepSeek V4 / GLM. Qwen3-Next is a genuinely different graph: Gated DeltaNet,
