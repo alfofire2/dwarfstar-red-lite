@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (after 0.5.4)
+
+- dev55b: the GPU limit at every boot, with a LaunchDaemon (recipe in `docs/REDLITE_DEV51_24GB_DECODE.md`). Verified on the
+  M4 Pro 24 GiB: it sets 21,741 MiB, and Metal reports 21.23 GiB. Persistence across a restart is not verified yet.
+  `redlite doctor` reports a limit set at boot and points to the recipe.
+
 ## 0.5.4 — 2026-10-04
 
 **Long contexts on a 24 GiB Mac with every expert resident.**

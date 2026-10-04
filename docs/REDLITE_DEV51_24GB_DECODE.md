@@ -68,7 +68,32 @@ sudo sysctl iogpu.wired_limit_mb=21741     # IQ2_XXS + MTP head (19429 without M
 ./bin/redlite chat                         # now full residency (+ MTP if models/ has the head file)
 ```
 
-To make it permanent, put `iogpu.wired_limit_mb=21741` in `/etc/sysctl.conf`. Not tested here.
+**At every boot** (dev55b): a LaunchDaemon sets the limit when macOS starts. It needs no editor; run it once,
+with the value `redlite doctor` prints:
+
+```bash
+sudo tee /Library/LaunchDaemons/com.redlite.gpulimit.plist >/dev/null <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.redlite.gpulimit</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/sbin/sysctl</string><string>iogpu.wired_limit_mb=21741</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+EOF
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.redlite.gpulimit.plist
+# undo: sudo launchctl bootout system/com.redlite.gpulimit; sudo rm /Library/LaunchDaemons/com.redlite.gpulimit.plist
+```
+
+The limit is a ceiling, not a reservation: when Red Lite is not running, macOS uses the memory as usual.
+- **Verified on the M4 Pro 24 GiB (macOS 26.7):**
+  - the daemon ran (exit 0) and set 21,741 MiB, and Metal then reported 21.23 GiB;
+  - `redlite doctor` reports the limit as "set at every boot";
+  - `redlite chat` picks every expert resident + MTP on its own.
+- **Not yet verified:** that the limit comes back after a restart (the M4 Pro has not been restarted since).
+
+`/etc/sysctl.conf` was not used: whether recent macOS releases still read it is not established.
 
 ## 2c. Cache-aware routing as the bounded-cache default
 
