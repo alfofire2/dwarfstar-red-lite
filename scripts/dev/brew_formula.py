@@ -42,7 +42,7 @@ TEMPLATE = '''class Redlite < Formula
   def caveats
     <<~EOS
       Models go to ~/.redlite/models (set REDLITE_MODELS to change it):
-        redlite download 24gb        # 19.3 GB, the Red Lite E3 file (48gb: IQ3_XXS for 48 GiB Macs)
+        redlite download 24gb        # 19.3 GB, the Red Lite F2 file (48gb: IQ3_XXS for 48 GiB Macs)
         redlite download mtp         # 2.4 GB, the MTP head (faster decode, same output)
         redlite chat
       On a 24 GiB Mac, `redlite doctor` prints the GPU limit that keeps every expert resident.

@@ -29,6 +29,15 @@ VARIANTS = {
         quality="very-low",
         recommended_mode="metal-resident",
     ),
+    # dev58: dense projections Q4_K instead of IQ2_XXS, IQ2_XS experts on layers 40-47 (perplexity 16.216 -> 15.379)
+    "redlite_f2": ModelVariant(
+        key="redlite_f2",
+        repo="alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF",
+        filename="Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf",
+        nominal_gb=19.32,
+        quality="very-low",
+        recommended_mode="metal-resident",
+    ),
     "iq2_xs": ModelVariant(
         key="iq2_xs",
         repo="bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF",
@@ -91,7 +100,8 @@ VARIANTS["mtp_q8_0"] = ModelVariant(
 )
 
 ALIASES = {
-    "24gb": "redlite_e3",
+    "24gb": "redlite_f2",
+    "f2": "redlite_f2",
     "e3": "redlite_e3",
     "bartowski-24gb": "iq2_xxs",
     "small": "iq2_xxs",

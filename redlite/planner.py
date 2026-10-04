@@ -201,7 +201,8 @@ NATIVE_MODEL_PREFERENCE = (
 )
 NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 # dev54: the 24 GiB files in preference order: the Red Lite E3 mix (same size and types, better quality), then Bartowski's
-NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf", NATIVE_REFERENCE_MODEL)
+NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
+                       NATIVE_REFERENCE_MODEL)   # dev58 F2, dev54 E3, then Bartowski's IQ2_XXS
 
 
 @dataclass(frozen=True)

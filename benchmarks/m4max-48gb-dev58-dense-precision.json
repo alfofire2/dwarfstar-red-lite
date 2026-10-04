@@ -1,0 +1,90 @@
+{
+  "id": "dev58-dense-precision",
+  "date": "2026-10-04",
+  "machines": {
+    "quality": "Apple M4 Max 48 GiB (macOS 27.0.1)",
+    "speed": "M4 Max and Apple M4 Pro 24 GiB (macOS 26.7, GPU limit 21741 MiB)"
+  },
+  "method": {
+    "perplexity": "scripts/dev/perplexity.sh, ctx 512, 111 chunks, llama.cpp 7798007a2, corpus sha256 6948b2c37279",
+    "api": "scripts/dev/api_compare.py compare, 235 prompts, --cache-mib full",
+    "decode": "bench_m4.sh --only decode22 --cache-mib full --reps 3, median; MTP: redlite-generate --mtp, 3 prompts x 256 tokens"
+  },
+  "variants": {
+    "E3": {
+      "dense": "IQ2_XXS",
+      "iq2xs_layers": "37-47",
+      "bytes": 19298972096,
+      "ppl": 16.216,
+      "api": {
+        "identical": 4,
+        "mean": 0.136,
+        "first_word_differs": 36
+      },
+      "decode_m4max": 85.21,
+      "decode_m4pro": 45.75,
+      "mtp_m4pro": [
+        50.78,
+        58.01,
+        46.97
+      ],
+      "gpu_need_mib_4k_mtp": 21536
+    },
+    "F1": {
+      "dense": "IQ3_XXS",
+      "iq2xs_layers": "38-47",
+      "bytes": 19333575104,
+      "ppl": 15.4192,
+      "paired_vs_E3": {
+        "d_nll": -0.0504,
+        "t": -16.02,
+        "better": "105/111"
+      },
+      "api": {
+        "identical": 3,
+        "median": 0.086,
+        "mean": 0.131,
+        "first_word_differs": 36
+      },
+      "decode_m4max": 84.42,
+      "decode_m4pro": 45.31,
+      "mtp_m4pro": [
+        53.62,
+        57.1,
+        50.1
+      ],
+      "gpu_need_mib_4k_mtp": 21569
+    },
+    "F2": {
+      "dense": "Q4_K",
+      "iq2xs_layers": "40-47",
+      "bytes": 19319615936,
+      "ppl": 15.3793,
+      "paired_vs_E3": {
+        "d_nll": -0.053,
+        "t": -14.89,
+        "better": "103/111"
+      },
+      "api": {
+        "identical": 5,
+        "median": 0.092,
+        "mean": 0.152,
+        "first_word_differs": 35
+      },
+      "decode_m4max": 82.81,
+      "decode_m4pro": 44.52,
+      "mtp_m4pro": [
+        54.83,
+        58.17,
+        48.85
+      ],
+      "gpu_need_mib_4k_mtp": 21556
+    }
+  },
+  "F2_vs_F1": {
+    "d_nll": -0.0026,
+    "t": -1.29,
+    "better": "63/111"
+  },
+  "source": "docs/REDLITE_DEV58_DENSE_PRECISION.md"
+}

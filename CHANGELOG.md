@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (after 0.5.5)
+
+- dev58: **dense weights with more precision, at the same size.** `quant_mix.py --dense-type` raises the 2-bit dense
+  projections every token reads (about 290 MiB):
+  - F1: IQ3_XXS, IQ2_XS experts on layers 38–47, 19.33 GB;
+  - F2: Q4_K, IQ2_XS experts on layers 40–47, 19.32 GB.
+  - **Perplexity** 15.42 / 15.38 against E3's 16.22 (paired t = −16 / −15).
+  - **API agreement:** F2 5 identical answers, 15.2 % mean matching words; E3 4, 13.6 %.
+  - **Speed:** plain decode −1 % / −3 %; with MTP on the M4 Pro as fast or faster.
+  - F2 passes `regress_m4.sh` 41/0/13 and `quick_parity.sh` (M4 Max). It is on Hugging Face, and
+    `redlite download 24gb` now fetches it (`e3` the previous file). `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
+
 ## 0.5.5 — 2026-10-04
 
 **Two requests at once, Homebrew, the GPU limit at boot.**
