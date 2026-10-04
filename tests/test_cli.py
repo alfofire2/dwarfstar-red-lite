@@ -70,3 +70,33 @@ class SteerArgsTests(unittest.TestCase):
         a = argparse.Namespace(steer="v.f32", steer_layers="12-23", steer_strength=0.3, steer_tokens=None, history="h.txt")
         self.assertEqual(_steer_args(a), ["--steer", "v.f32", "--steer-layers", "12-23", "--steer-strength", "0.3", "--history", "h.txt"])
         self.assertEqual(_steer_args(argparse.Namespace(steer=None, steer_layers=None, steer_strength=None, steer_tokens=None)), [])
+
+
+class InstalledLayoutTests(unittest.TestCase):
+    """dev57: REDLITE_MODELS overrides the models folder; native binaries are also found on PATH."""
+
+    def test_models_dir_override(self):
+        import os
+        import subprocess
+        import sys
+        out = subprocess.check_output([sys.executable, "-c", "from redlite.cli import NATIVE_MODELS_DIR; print(NATIVE_MODELS_DIR)"],
+                                      env={**os.environ, "REDLITE_MODELS": "/tmp/rl-models-test"}, text=True)
+        self.assertEqual(out.strip(), "/tmp/rl-models-test")
+
+    def test_native_binary_from_path(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from redlite import runner
+        with tempfile.TemporaryDirectory() as d:
+            exe = Path(d) / "redlite-generate"
+            exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+            with patch.object(runner, "REDMETAL_BIN", Path(d) / "missing"), patch.dict(os.environ, {"PATH": d}):
+                self.assertEqual(runner.native_generate(), exe)
+
+
+class DetectMissingDirTests(unittest.TestCase):
+    def test_detect_on_missing_nested_dir(self):
+        from redlite.hardware import detect
+        self.assertGreater(detect("/tmp/rl-missing-a/b/c").free_disk_bytes, 0)

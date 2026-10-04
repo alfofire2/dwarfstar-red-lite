@@ -52,6 +52,8 @@ done
 "$STAGE/bin/redlite-server" --help >/dev/null
 
 cp "$ROOT/LICENSE" "$ROOT/NOTICE.md" "$ROOT/VERSION" "$STAGE/"
+# dev57: the Python launcher (pure stdlib) travels with the binaries, for Homebrew and tarball users
+mkdir -p "$STAGE/python" && cp -R "$ROOT/redlite" "$STAGE/python/" && find "$STAGE/python" -name __pycache__ -prune -exec rm -rf {} +
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 git -C "$ROOT" diff --quiet 2>/dev/null || COMMIT="$COMMIT+dirty"
 {
@@ -94,7 +96,11 @@ https://huggingface.co/bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF (put it i
     redlite-server MODEL.gguf --port 8080 --cache-mib 4096              # OpenAI /v1/chat/completions (SSE)
 
 \`redlite-generate --help\` and \`redlite-server --help\` list every option. The Python launcher
-(\`redlite chat\`, \`redlite serve --native\`) lives in the source repository.
+(\`redlite chat\`, \`redlite serve --native\`, Python 3.10 or later) is in \`python/\`; with the binaries on PATH:
+
+    PYTHONPATH=$NAME/python python3 -m redlite.cli chat     # models in ~/.redlite/models (REDLITE_MODELS)
+
+Homebrew does all of this: \`brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite && brew install redlite\`.
 EOF
 
 tar -C "$(dirname "$STAGE")" -czf "$OUTDIR/$NAME.tar.gz" "$NAME"

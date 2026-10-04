@@ -2,6 +2,17 @@
 
 ## Unreleased (after 0.5.4)
 
+- dev57: **Homebrew.** The repository is its own tap: `brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite`,
+  then `brew install redlite`.
+  - The formula (`Formula/redlite.rb`, written by `scripts/dev/brew_formula.py`) installs the three binaries and
+    the `redlite` CLI from the release tarball, plus `hf` for downloads.
+  - The tarball now carries `python/redlite` (stdlib only).
+  - Outside a source checkout, the CLI finds the binaries on PATH and keeps models in `~/.redlite/models`
+    (`REDLITE_MODELS` overrides).
+  - Checked: install steps simulated in a scratch prefix on the M4 Max (no models → a message pointing to
+    `redlite download`; with models → the right binary and file). A real `brew install` is not tested yet; it needs
+    the repository and its releases to be public.
+
 - dev55b: the GPU limit at every boot, with a LaunchDaemon (recipe in `docs/REDLITE_DEV51_24GB_DECODE.md`). Verified on the
   M4 Pro 24 GiB: it sets 21,741 MiB, and Metal reports 21.23 GiB. Persistence across a restart is not verified yet.
   `redlite doctor` reports a limit set at boot and points to the recipe.

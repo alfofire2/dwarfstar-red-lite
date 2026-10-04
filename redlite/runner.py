@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 import signal
 import subprocess
@@ -34,17 +35,23 @@ def oversized_cli() -> Path:
     return _first_existing([OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"])
 
 
+def _native(name: str) -> Path:
+    """dev57: the native binary from a source checkout (.deps/redmetal), else from PATH (Homebrew, release tarball)."""
+    found = shutil.which(name)
+    return _first_existing([REDMETAL_BIN / name] + ([Path(found)] if found else []))
+
+
 def native_generate() -> Path:
-    return _first_existing([REDMETAL_BIN / "redlite-generate"])
+    return _native("redlite-generate")
 
 
 def native_server() -> Path:
-    return _first_existing([REDMETAL_BIN / "redlite-server"])
+    return _native("redlite-server")
 
 
 def engine_status() -> dict[str, bool]:
     return {
-        "native_redlite_generate": (REDMETAL_BIN / "redlite-generate").exists(),
+        "native_redlite_generate": (REDMETAL_BIN / "redlite-generate").exists() or shutil.which("redlite-generate") is not None,
         "metal_llama_cli": any(p.exists() for p in [LLAMA_BIN / "llama-cli", LLAMA_BIN / "llama-completion"]),
         "metal_llama_server": (LLAMA_BIN / "llama-server").exists(),
         "oversized_moe": any(p.exists() for p in [OMR_BIN / "oversized-moe", OMR_BIN / "oversized-moe-run"]),

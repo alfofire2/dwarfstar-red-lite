@@ -16,7 +16,10 @@ from .runner import engine_status, run_completion, run_server, run_bench, run_na
 from .telemetry import snapshot
 from .benchmark import run_sweep
 
-NATIVE_MODELS_DIR = ROOT / "models"
+# dev57: models next to the code in a source checkout, else in ~/.redlite/models (Homebrew / pip installs);
+# REDLITE_MODELS overrides both
+NATIVE_MODELS_DIR = Path(os.environ.get("REDLITE_MODELS") or (
+    ROOT / "models" if (ROOT / "pyproject.toml").is_file() else Path.home() / ".redlite" / "models")).expanduser()
 DEFAULT_NATIVE_MODEL = NATIVE_MODELS_DIR / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 
 
@@ -139,7 +142,7 @@ def _hf_binary() -> list[str]:
         return ["hf", "download"]
     if shutil.which("huggingface-cli"):
         return ["huggingface-cli", "download"]
-    _die("Hugging Face CLI not found. Install: python3 -m pip install -U huggingface_hub")
+    _die("Hugging Face CLI not found. Install: brew install hf (or python3 -m pip install -U huggingface_hub)")
 
 
 def cmd_download(args) -> int:
@@ -278,7 +281,7 @@ def cmd_chat(args) -> int:
         # dev31: the best model present in models/ that this machine can hold
         picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
         if picked is None:
-            _die(f"No native model found in {NATIVE_MODELS_DIR} (expected {DEFAULT_NATIVE_MODEL.name})")
+            _die(f"No native model found in {NATIVE_MODELS_DIR}. Download one: redlite download 24gb (and redlite download mtp)")
         model = picked
         print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():
@@ -398,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("download", help="Download a curated GGUF from Hugging Face")
     s.add_argument("variant", nargs="?", default="24gb")
-    s.add_argument("--dir", default="models")
+    s.add_argument("--dir", default=str(NATIVE_MODELS_DIR), help=f"Destination (default: {NATIVE_MODELS_DIR})")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_download)
 
