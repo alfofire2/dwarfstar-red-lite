@@ -100,13 +100,9 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
 - Details: `docs/REDLITE_DEV60_CODING_AGENT.md`.
 
 ```bash
-redlite serve --native --context 32768 --port 8080   # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
-mkdir -p ~/.pi/agent && cat > ~/.pi/agent/models.json <<'EOF'
-{"providers": {"redlite": {"baseUrl": "http://127.0.0.1:8080/v1", "api": "openai-completions", "apiKey": "redlite",
-  "compat": {"supportsDeveloperRole": false, "supportsReasoningEffort": false, "supportsStore": false,
-             "supportsStrictMode": false, "maxTokensField": "max_tokens"},
-  "models": [{"id": "qwen3-next-80b-a3b-redlite", "name": "Red Lite (local)", "contextWindow": 32768, "maxTokens": 4096}]}}}
-EOF
+npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)
+redlite setup-pi --port 8080                          # adds a "redlite" provider to ~/.pi/agent/models.json
+redlite serve --native --context 32768 --port 8080    # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```
 
@@ -132,6 +128,9 @@ python3 scripts/dev/steer_extract.py $M --pos POS.txt --neg NEG.txt --layer 24 -
 - **Speed:** plain decode 3 % slower than E3; with MTP on a 24 GiB Mac as fast or faster.
 - `redlite download 24gb` fetches F2 (`e3` the previous file), and `redlite chat` prefers it.
 - Details: `docs/REDLITE_DEV54_QUANT_MIX.md`, `docs/REDLITE_DEV58_DENSE_PRECISION.md`.
+- **Higher quality on 24 GiB** (dev61): the 48 GiB file (`redlite download 48gb`, IQ3_XXS, perplexity 14.29)
+  streams from the SSD with the 4 GiB cache at 29 tok/s on an M4 Pro (F2: 34). Pass its path:
+  `redlite chat …/Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf`.
 
 **Long prompts that come back.** `--state-dir DIR` (generate and server) saves the engine state of a prompt's
 prefix to disk; the next run, or a restarted server, with the same prefix skips its ingestion. A restored

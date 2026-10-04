@@ -148,6 +148,48 @@ def _hf_binary() -> list[str]:
     _die("Hugging Face CLI not found. Install: brew install hf (or python3 -m pip install -U huggingface_hub)")
 
 
+SERVER_MODEL_ID = "qwen3-next-80b-a3b-redlite"   # the id redlite-server reports in /v1/models
+
+
+def pi_provider(port: int, context: int, host: str = "127.0.0.1") -> dict:
+    """dev61: the pi coding agent's provider entry for a local redlite-server (docs/REDLITE_DEV60_CODING_AGENT.md)."""
+    return {
+        "baseUrl": f"http://{host}:{port}/v1", "api": "openai-completions", "apiKey": "redlite",
+        "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False, "supportsStore": False,
+                   "supportsStrictMode": False, "maxTokensField": "max_tokens"},
+        "models": [{"id": SERVER_MODEL_ID, "name": "Red Lite (local)", "reasoning": False, "input": ["text"],
+                    "contextWindow": context, "maxTokens": min(4096, context // 4),
+                    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}],
+    }
+
+
+def cmd_setup_pi(args) -> int:
+    """Adds (or updates) the "redlite" provider in pi's models.json; other providers are kept."""
+    agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent").expanduser()
+    path = agent_dir / "models.json"
+    config = {}
+    if path.is_file():
+        try:
+            config = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            _die(f"{path} is not valid JSON ({e}); fix or move it, then run redlite setup-pi again")
+    config.setdefault("providers", {})["redlite"] = pi_provider(args.port, args.context)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    # models.json may hold other providers' API keys: keep the file's permissions, and create it private (0600)
+    mode = path.stat().st_mode & 0o777 if path.is_file() else 0o600
+    tmp = path.with_suffix(".json.tmp")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(config, indent=2) + "\n")
+    os.chmod(tmp, mode)   # the umask may have narrowed it
+    tmp.replace(path)
+    print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context})")
+    print(f"start the server:  redlite serve --native --context {args.context} --port {args.port}")
+    print(f"then:              pi --provider redlite --model {SERVER_MODEL_ID}")
+    return 0
+
+
 def cmd_download(args) -> int:
     try:
         v = resolve_variant(args.variant)
@@ -416,6 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("bootstrap", help="Build pinned Metal + oversized engines")
     s.add_argument("-j", "--jobs", type=int)
     s.set_defaults(func=cmd_bootstrap)
+
+    s = sub.add_parser("setup-pi", help="Configure the pi coding agent for a local redlite serve --native")
+    s.add_argument("--port", type=int, default=8080)
+    s.add_argument("--context", type=int, default=32768, help="the --context the server runs with (default 32768)")
+    s.set_defaults(func=cmd_setup_pi)
 
     s = sub.add_parser("download", help="Download a curated GGUF from Hugging Face")
     s.add_argument("variant", nargs="?", default="24gb")

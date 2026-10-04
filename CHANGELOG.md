@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (after 0.6.0)
+
+- dev61: **the 24 GiB Mac at the default GPU limit** (bounded 4 GiB expert cache, experts streamed from the SSD).
+  M4 Pro:
+  - **Coding agent:** pi installed on the same Mac; F2 and Qwen3-Coder-Next pass 15/15 each, 20–50 % slower than
+    with every expert resident.
+  - **IQ3_XXS** (29.6 GiB, perplexity 14.29) streams at 29.3 tok/s decode against 34.0 for F2, and ingests
+    208–334 tok/s.
+  - **Cache size:** 8 and 12 GiB caches cut the reads but not the time; 4 GiB stays.
+  - **`redlite setup-pi`:** writes pi's provider for `redlite serve --native`, keeps other providers and the
+    file's permissions (new file 0600).
+  - `docs/REDLITE_DEV61_STREAMING_24GB.md`, FINDINGS section 5 with a chart.
+
 ## 0.6.0 — 2026-10-04
 
 **Coding agents on a local 80B model.**

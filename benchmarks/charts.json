@@ -164,6 +164,19 @@
         {"label": "Coder-Next, M4 Pro 24 GiB", "values": [14]}
       ],
       "sources": ["benchmarks/m4-dev60-coding-agent.json"]
+    },
+    {
+      "id": "choices_24gb",
+      "title": "Decode on a 24 GiB Mac: three ways to run it (M4 Pro)",
+      "unit": "tok/s",
+      "note": "F2 perplexity 15.38, IQ3_XXS 14.29 (lower is better). Resident: raised GPU limit, 256 tokens, median of 3 (dev58). 4 GiB cache: default GPU limit, six prompts x 256 tokens, cache-aware routing (dev61).",
+      "series": ["decode"],
+      "bars": [
+        {"label": "F2, every expert resident", "values": [44.52]},
+        {"label": "F2, 4 GiB cache (SSD)", "values": [33.97]},
+        {"label": "IQ3_XXS, 4 GiB cache (SSD)", "values": [29.29]}
+      ],
+      "sources": ["benchmarks/m4max-48gb-dev58-dense-precision.json", "benchmarks/m4pro-dev61-streaming.json"]
     }
   ]
 }
