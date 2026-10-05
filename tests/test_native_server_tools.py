@@ -189,6 +189,21 @@ class ToolCallTests(unittest.TestCase):
                                 '<tool_call>\n{"name": "edit", "arguments": {"path" "x"}}\n</tool_call>'}], [SEARCH])
         self.assertEqual(out["choices"][0]["finish_reason"], "stop")
 
+    def test_xml_short_parameter_tags_are_accepted(self):
+        """dev62: the 2-bit Qwen3-Coder wrote '<command>' for '<parameter=command>' (seen in an agent run)."""
+        bash = {"type": "function", "function": {"name": "bash", "parameters": {
+            "type": "object", "properties": {"command": {"type": "string"}, "timeout": {"type": "integer"}}}}}
+        for emitted, args in (
+            ('<tool_call>\n<function=bash>\n<command>\npython3 -m unittest discover -s tests\n</parameter>\n</function>\n</tool_call>',
+             {"command": "python3 -m unittest discover -s tests"}),
+            ('<tool_call>\n<function=bash>\n<command>\nls\n</command>\n<parameter=timeout>\n5\n</parameter>\n</function>\n</tool_call>',
+             {"command": "ls", "timeout": 5})):
+            with self.subTest(emitted=emitted[:40]):
+                status, out = self.chat(self.xml_srv, [{"role": "user", "content": "__emit__:" + emitted}], [bash])
+                choice = out["choices"][0]
+                self.assertEqual(choice["finish_reason"], "tool_calls", choice)
+                self.assertEqual(json.loads(choice["message"]["tool_calls"][0]["function"]["arguments"]), args)
+
     def test_malformed_call_comes_back_as_text(self):
         emitted = 'Trying.\n<tool_call>\n{"name": "search", "arguments": {"query": '
         status, out = self.chat(self.json_srv, [{"role": "user", "content": "__emit__:" + emitted}], [SEARCH])
@@ -209,6 +224,17 @@ class ToolCallTests(unittest.TestCase):
         self.assertEqual(status, 400)
         status, out = self.chat(self.json_srv, [{"role": "user", "content": "x"}], functions=[{"name": "f"}])
         self.assertEqual(status, 400)
+
+    def test_long_agent_sessions_are_accepted(self):
+        """dev62: an agent session past 256 messages (two per tool call) was rejected with "too many messages"."""
+        msgs = [{"role": "user", "content": "start"}]
+        for i in range(400):
+            msgs.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": "search", "arguments": '{"query": "x"}'}}]})
+            msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "nothing"})
+        msgs.append({"role": "user", "content": "done?"})
+        status, out = self.chat(self.json_srv, msgs, [SEARCH], max_tokens=4)
+        self.assertEqual(status, 200, out)
 
     def test_mutated_tool_bodies_get_200_or_400_and_the_servers_stay_up(self):
         import random

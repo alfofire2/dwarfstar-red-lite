@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define RL_SERVER_MAX_MESSAGES 256u
+#define RL_SERVER_MAX_MESSAGES 16384u   /* dev62: agent sessions add two messages per tool call (256 was hit) */
 #define RL_SERVER_MAX_STOP 4u          /* OpenAI: up to 4 stop sequences */
 #define RL_SERVER_MAX_STOP_BYTES 256u  /* per stop sequence */
 #define RL_SERVER_MAX_TOOL_CALLS 16u   /* per assistant message */
@@ -49,8 +49,9 @@ typedef struct {
 } rl_chat_message;
 
 typedef struct {
-    rl_chat_message messages[RL_SERVER_MAX_MESSAGES];
+    rl_chat_message *messages;   /* dev62: heap array, grown while parsing (the request is copied onto a worker stack) */
     uint32_t message_count;
+    uint32_t message_cap;
     uint32_t max_tokens;   /* 0 -> server default */
     float temperature;     /* < 0 -> server default */
     float top_p;           /* < 0 -> server default */

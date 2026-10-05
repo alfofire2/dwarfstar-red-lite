@@ -605,6 +605,13 @@ static int parse_messages(jp *j, rl_chat_request *req) {
     if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
     for (;;) {
         if (req->message_count >= RL_SERVER_MAX_MESSAGES) return jfail(j, "too many messages");
+        if (req->message_count == req->message_cap) {
+            const uint32_t cap = req->message_cap ? 2u * req->message_cap : 16u;
+            rl_chat_message *grown = (rl_chat_message *)realloc(req->messages, (size_t)cap * sizeof(*grown));
+            if (!grown) return jfail(j, "out of memory");
+            req->messages = grown;
+            req->message_cap = cap;
+        }
         msg_state m = {0};
         if (!jobject(j, message_member, &m)) { msg_state_free(&m); return 0; }
         if (!m.role) { msg_state_free(&m); return jfail(j, "every message needs a \"role\""); }
@@ -770,7 +777,9 @@ void rl_chat_request_free(rl_chat_request *req) {
         free(req->messages[i].content);
         for (uint32_t k = 0; k < req->messages[i].tool_call_count; ++k) tool_call_clear(&req->messages[i].tool_calls[k]);
     }
-    req->message_count = 0;
+    free(req->messages);
+    req->messages = NULL;
+    req->message_count = req->message_cap = 0;
     rl_json_free(req->tools);
     req->tools = NULL;
     for (uint32_t i = 0; i < req->stop_count; ++i) { free(req->stop[i]); req->stop[i] = NULL; }
@@ -1327,14 +1336,27 @@ static int parse_xml_call(const char *p, const char *end, const struct rl_json *
     for (;;) {
         while (p < end && is_space(*p)) p++;
         if (end - p >= 11 && memcmp(p, "</function>", 11) == 0) { p += 11; break; }
-        if (!(end - p > 11 && memcmp(p, "<parameter=", 11) == 0)) { sb_free(&a); return 0; }
-        p += 11;
+        /* <parameter=KEY>; dev62: also <KEY>, which the 2-bit Qwen3-Coder sometimes writes ("<command>" ...
+         * "</parameter>"), closed by </parameter> or </KEY> */
+        const int short_form = !(end - p > 11 && memcmp(p, "<parameter=", 11) == 0);
+        if (short_form && !(end - p > 2 && p[0] == '<' && p[1] != '/')) { sb_free(&a); return 0; }
+        p += short_form ? 1 : 11;
         const char *kgt = memchr(p, '>', (size_t)(end - p));
         if (!kgt || kgt == p) { sb_free(&a); return 0; }
+        for (const char *k = p; k < kgt; ++k)
+            if (!((*k >= 'a' && *k <= 'z') || (*k >= 'A' && *k <= 'Z') || (*k >= '0' && *k <= '9') || *k == '_' || *k == '-')) {
+                sb_free(&a); return 0;
+            }
         char *key = strndup(p, (size_t)(kgt - p));
-        const char *v = kgt + 1, *vend = find(v, end, "</parameter>");
+        const char *v = kgt + 1, *vend = find(v, end, "</parameter>"), *close_end = vend ? vend + 12 : NULL;
+        if (key && short_form) {
+            char tag[80];
+            snprintf(tag, sizeof(tag), "</%.70s>", key);
+            const char *alt = find(v, end, tag);
+            if (alt && (!vend || alt < vend)) { vend = alt; close_end = alt + strlen(tag); }
+        }
         if (!key || !vend) { free(key); sb_free(&a); return 0; }
-        p = vend + 12;
+        p = close_end;
         if (v < vend && *v == '\n') v++;
         if (vend > v && vend[-1] == '\n') vend--;
         if (count++) sb_puts(&a, ", ");
@@ -1472,6 +1494,9 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
     uint32_t call_count = 0;
     if (ok && s.capturing && !s.client_gone) {
         if (!parse_tool_calls(s.calls.data, s.calls.len, backend->tool_format, req.tools, calls, &call_count)) {
+            /* dev62: the model wrote <tool_call> but not a well-formed call; what it wrote goes to the client as text */
+            fprintf(stderr, "[redlite-server] request %lu: unparsed tool call (%zu bytes, sent as text): %.*s\n", request_no,
+                    s.calls.len, (int)(s.calls.len < 2000u ? s.calls.len : 2000u), s.calls.data);
             for (uint32_t i = 0; i < RL_SERVER_MAX_TOOL_CALLS; ++i) { free(calls[i].name); free(calls[i].arguments); }
             memset(calls, 0, sizeof(calls));
             call_count = 0;

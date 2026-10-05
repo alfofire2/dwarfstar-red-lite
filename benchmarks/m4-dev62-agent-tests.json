@@ -1,0 +1,242 @@
+{
+  "id": "dev62-agent-tests",
+  "date": "2026-10-05",
+  "source": "docs/REDLITE_DEV62_AGENT_TESTS.md",
+  "test1_routing_perplexity_m4pro": {
+    "method": "redlite-engine perplexity, 16384 ids of tests/fixtures/perplexity_corpus.txt, context 512 (8192 scored), --cache-mib 4096",
+    "IQ3_XXS": {
+      "exact": 12.0003,
+      "lambda_0.5": 12.0232,
+      "misses_exact": 2081847,
+      "misses_bias": 1697436
+    },
+    "F2": {
+      "exact": 12.8599,
+      "lambda_0.5": 12.8671,
+      "misses_exact": 1473675,
+      "misses_bias": 1189993
+    }
+  },
+  "test2_api_basic_suite": {
+    "passed": 15,
+    "of": 15,
+    "per_task": {
+      "new_code": 3,
+      "bug_fix": 3,
+      "rename": 3,
+      "read_answer": 3,
+      "add_flag": 3
+    },
+    "median_wall_s": {
+      "new_code": 5.9,
+      "bug_fix": 4.4,
+      "rename": 6.4,
+      "read_answer": 2.0,
+      "add_flag": 8.5
+    },
+    "failures": []
+  },
+  "test3_repo_suite_m4max": {
+    "Qwen API": {
+      "passed": 10,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 3,
+        "fix_planner": 2,
+        "long_session": 2
+      },
+      "median_wall_s": {
+        "models_json": 22.0,
+        "explain_stop": 9.6,
+        "fix_planner": 22.4,
+        "long_session": 16.4
+      },
+      "failures": [
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "long_session",
+          [
+            "pi exit 1",
+            "answer lacks 'GpuPlanTests'"
+          ]
+        ]
+      ]
+    },
+    "Qwen3-Coder-Next IQ2_XXS": {
+      "passed": 14,
+      "of": 20,
+      "per_task": {
+        "models_json": 4,
+        "explain_stop": 5,
+        "fix_planner": 1,
+        "long_session": 4
+      },
+      "median_wall_s": {
+        "models_json": 269.6,
+        "explain_stop": 70.7,
+        "fix_planner": 80.3,
+        "long_session": 51.8
+      },
+      "failures": [
+        [
+          "fix_planner",
+          [
+            "pi exit 1: 400: {\"message\":\"too many messages\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":null}",
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "models_json",
+          [
+            "pi exit -1",
+            "check: json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "long_session",
+          [
+            "pi exit -1",
+            "answer lacks 'GpuPlanTests'"
+          ]
+        ]
+      ]
+    },
+    "Red Lite F2 + MTP": {
+      "passed": 6,
+      "of": 12,
+      "per_task": {
+        "models_json": 2,
+        "explain_stop": 0,
+        "fix_planner": 1,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 70.1,
+        "explain_stop": 3.2,
+        "fix_planner": 271.5,
+        "long_session": 90.6
+      },
+      "failures": [
+        [
+          "explain_stop",
+          [
+            "answer lacks 'rl_stop_scan'"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "models_json",
+          [
+            "check: AssertionError"
+          ]
+        ],
+        [
+          "explain_stop",
+          [
+            "answer lacks 'rl_stop_scan'"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "pi exit -1",
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "explain_stop",
+          [
+            "answer lacks 'rl_stop_scan'"
+          ]
+        ]
+      ]
+    },
+    "Qwen3-Coder-Next fix_planner after the fixes": {
+      "passed": 2,
+      "of": 4,
+      "per_task": {
+        "fix_planner": 2
+      },
+      "median_wall_s": {
+        "fix_planner": 89.75
+      },
+      "failures": [
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ],
+        [
+          "fix_planner",
+          [
+            "check: FAILED (failures=1)"
+          ]
+        ]
+      ]
+    }
+  },
+  "test4_iq3_agent_m4pro": {
+    "passed": 15,
+    "of": 15,
+    "per_task": {
+      "new_code": 3,
+      "bug_fix": 3,
+      "rename": 3,
+      "read_answer": 3,
+      "add_flag": 3
+    },
+    "median_wall_s": {
+      "new_code": 23.2,
+      "bug_fix": 48.9,
+      "rename": 52.5,
+      "read_answer": 9.9,
+      "add_flag": 111.5
+    },
+    "failures": []
+  },
+  "test5_parallel_m4max": {
+    "round2": {
+      "sequential_s": 76,
+      "concurrent_s": 74
+    },
+    "round3": {
+      "sequential_s": 97,
+      "concurrent_s": 92
+    },
+    "round1": {
+      "sequential_s": 83,
+      "concurrent_s": 274,
+      "note": "one agent looped for 207 s on add_flag"
+    }
+  }
+}
