@@ -284,6 +284,12 @@ def _gpu_tuning(model, cache_mib, args, context: int):
                 head = None
             if batch != 2048:
                 print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at {where}")
+    if wired == 0 and full and head:   # dev64: at the default limit, MTP must fit the RAM rule at this context too
+        from .planner import NATIVE_WORKING_SET_FRACTION, native_full_residency_fits
+        if not native_full_residency_fits(detect(Path(model).parent).ram_bytes, res, 0, context, mtp=True):
+            print(f"[redlite] MTP off: with it, {Path(model).name} at {where} is above "
+                  f"{NATIVE_WORKING_SET_FRACTION:.0%} of RAM")
+            head = None
     if head:
         print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
     return batch, head
