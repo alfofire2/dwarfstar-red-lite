@@ -334,7 +334,8 @@ def run_task(task: dict, args) -> dict:
         session = ["--no-session"] if len(prompts) == 1 else ["--session-dir", str(work / ".pi-sessions"), "--session-id", "eval"]
         for k, prompt in enumerate(prompts):   # several prompts: one pi session, continued
             try:
-                out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, *session,
+                extra = ["--append-system-prompt", args.append_system] if args.append_system else []
+                out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, *session, *extra,
                                       "--no-extensions", "--no-skills", "--no-context-files", "-p", prompt],
                                      cwd=work, env=env, stdin=subprocess.DEVNULL,   # pi -p reads a piped stdin
                                      capture_output=True, text=True,
@@ -384,6 +385,7 @@ def main() -> int:
     ap.add_argument("--model-id", default="qwen3-next-80b-a3b-redlite")
     ap.add_argument("--context", type=int, default=32768)
     ap.add_argument("--temperature", type=float, help="dev65: sampling temperature pi sends (as redlite setup-pi does)")
+    ap.add_argument("--append-system", help="dev65: text or file appended to pi's system prompt (--append-system-prompt)")
     ap.add_argument("--agent-dir", help="pi config dir (default: a models.json for --port in a temporary dir)")
     ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository; hard: 6 harder ones (dev65)")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
