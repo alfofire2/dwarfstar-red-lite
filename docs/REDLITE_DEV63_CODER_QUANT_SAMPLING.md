@@ -37,7 +37,8 @@ Qwen3-Coder-Next IQ2_XXS with every expert resident, a 32K context, the reposito
 
 **The first attempt measured a test bug, not the model.** A, B and C passed 4/12, 6/12 and 3/12, never more than
 2 of 4 tasks in a run, while the same file passed 10/12 on the M4 Max.
-- **Not pi's version:** pi 1.0.2, the M4 Pro's, passed on the M4 Max too.
+- **Not pi's version:** on the M4 Max, with the same file and settings, pi 1.0.2 (the M4 Pro's) passed 10/12, as
+  pi 0.84.4 did (explain_stop 3/3, fix_planner 3/3, long_session 3/3, models_json 1/3).
 - **The cause:** two tests of `tests/test_native_defaults.py` read the machine's real GPU limit. On the M4 Pro it is
   raised to 21,741 MiB, and in a clean copy of the repository the two tests fail before the agent does anything.
 - **The effect:** the checks of `fix_planner` and `long_session` run these tests, so on the M4 Pro those two tasks

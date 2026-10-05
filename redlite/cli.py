@@ -210,6 +210,20 @@ def cmd_download(args) -> int:
 
 
 def cmd_models(args) -> int:
+    if args.json:
+        variants = []
+        for v in VARIANTS.values():
+            variants.append({
+                "key": v.key,
+                "repo": v.repo,
+                "filename": v.filename,
+                "nominal_gb": v.nominal_gb,
+                "quality": v.quality,
+                "recommended_mode": v.recommended_mode
+            })
+        print(json.dumps(variants, indent=2))
+        return 0
+    
     print("variant      approx GB   quality               default mode")
     for v in VARIANTS.values():
         print(f"{v.key:12} {v.nominal_gb:9.2f}   {v.quality:20} {v.recommended_mode}")
@@ -454,6 +468,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_pressure)
 
     s = sub.add_parser("models", help="List curated Qwen3-Next 80B variants")
+    s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_models)
 
     s = sub.add_parser("plan", help="Calculate RAM/SSD execution plan")

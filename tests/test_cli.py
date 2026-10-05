@@ -58,6 +58,28 @@ class CliTests(unittest.TestCase):
         a = self.p.parse_args(["sweep", "x.gguf", "--contexts", "2048,4096,8192"])
         self.assertEqual(a.contexts, [2048, 4096, 8192])
 
+    def test_models_json_flag(self):
+        import json
+        import sys
+        from io import StringIO
+        import unittest
+        from unittest.mock import patch
+
+        # Test --json flag outputs JSON list
+        a = self.p.parse_args(["models", "--json"])
+        self.assertTrue(a.json)
+
+        # Mock sys.stdout to capture output
+        with patch('sys.stdout', new=StringIO()) as out:
+            # Need to re-run cmd_models since it's a function, not a method
+            from redlite.cli import cmd_models
+            cmd_models(a)
+            output = out.getvalue()
+            data = json.loads(output)
+            self.assertIsInstance(data, list)
+            self.assertGreater(len(data), 0)
+            self.assertEqual(set(data[0].keys()), {"key", "repo", "filename", "nominal_gb", "quality", "recommended_mode"})
+
 
 if __name__ == "__main__":
     unittest.main()
