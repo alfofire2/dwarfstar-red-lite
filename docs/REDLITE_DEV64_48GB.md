@@ -139,7 +139,7 @@ during the request.
 **G2** for 48 GiB Macs: perplexity −0.65 % on text and −1.4 % on code against IQ3_XXS, the same decode speed with
 MTP, and inside the planner's 70 % rule. It passes the parity checks. Before it replaces IQ3_XXS in
 `redlite download 48gb`:
-- a decision on long contexts: G2's 1.7 GiB more pushes a 48 GiB Mac into swap above about 20K tokens, which
+- a decision on long contexts: G2's 1.7 GiB more pushed this 48 GiB Mac into swap with a 25K-token prompt, which
   costs a third of prompt speed once;
 - the Hugging Face upload.
 
