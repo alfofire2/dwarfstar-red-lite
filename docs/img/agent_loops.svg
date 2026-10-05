@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="324" viewBox="0 0 810 324">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="324"/>
+<text class="t" x="10" y="24">Agent loops against sampling temperature (Qwen3-Coder-Next IQ2_XXS, M4 Pro 24 GiB)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">tasks passed</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">loops</text>
+<text class="l" x="222" y="98" text-anchor="end">temperature 0.3</text>
+<rect x="230" y="76" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="88">9</text>
+<rect x="230" y="94" width="1.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="236.0" y="106">0</text>
+<text class="l" x="222" y="144" text-anchor="end">temperature 0.7 (server default)</text>
+<rect x="230" y="122" width="365.6" height="15" rx="2" fill="#d64545"/><text class="v" x="600.6" y="134">7</text>
+<rect x="230" y="140" width="52.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="287.2" y="152">1</text>
+<text class="l" x="222" y="190" text-anchor="end">temperature 1.0</text>
+<rect x="230" y="168" width="417.8" height="15" rx="2" fill="#d64545"/><text class="v" x="652.8" y="180">8</text>
+<rect x="230" y="186" width="104.4" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="339.4" y="198">2</text>
+<text class="l" x="222" y="236" text-anchor="end">temperature 1.0 + presence_penalty</text>
+<rect x="230" y="214" width="417.8" height="15" rx="2" fill="#d64545"/><text class="v" x="652.8" y="226">8</text>
+<rect x="230" y="232" width="52.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="287.2" y="244">1</text>
+<text class="n" x="10" y="299">count over 12 agent tasks. A loop: a task stopped at the 600 s limit after 40 or more requests. Repository suite, 3 runs per</text>
+<text class="n" x="10" y="314">setting. C adds presence_penalty 1.0 to temperature 1.0. Passes 7-9 of 12 are within noise.</text>
+</svg>

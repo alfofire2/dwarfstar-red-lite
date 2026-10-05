@@ -1,0 +1,274 @@
+{
+  "id": "dev64-48gb",
+  "date": "2026-10-05",
+  "machine": "Apple M4 Max 48 GiB",
+  "source": "docs/REDLITE_DEV64_48GB.md",
+  "files": {
+    "IQ3_XXS": {
+      "bytes": 31726709216
+    },
+    "G1": {
+      "bytes": 32532015552,
+      "recipe": "--keep-experts, dense IQ3_XXS/IQ2_S/IQ4_XS -> Q8_0"
+    },
+    "G2": {
+      "bytes": 33538648512,
+      "recipe": "--keep-experts --set ffn_down_exps=iq3_s --set ffn_gate_exps=iq3_s@24-47 --set ffn_up_exps=iq3_s@24-47",
+      "sha256": "f0b05ae3cd98946fb35d0d5412253920cf3da14664159c026fa9f4deed321c1f"
+    },
+    "G3": {
+      "bytes": 34343954880,
+      "recipe": "G2 + G1's Q8_0 dense"
+    }
+  },
+  "planner_share_of_48gib": {
+    "IQ3_XXS": {
+      "plain": 0.616,
+      "mtp": 0.652
+    },
+    "G2": {
+      "plain": 0.651,
+      "mtp": 0.687
+    },
+    "G3": {
+      "plain": 0.666,
+      "mtp": 0.703
+    }
+  },
+  "perplexity": {
+    "method": "scripts/dev/perplexity.sh, pinned llama.cpp 7798007a2, ctx 512",
+    "perplexity_corpus": {
+      "perplexity": {
+        "IQ3_XXS": 14.2917,
+        "G1": 14.2315,
+        "G2": 14.1989,
+        "G3": 14.1431
+      },
+      "paired_vs_IQ3_XXS": {
+        "G1": {
+          "mean_nats": -0.0042,
+          "t": -2.1,
+          "better_chunks": 62,
+          "chunks": 111
+        },
+        "G2": {
+          "mean_nats": -0.0065,
+          "t": -3.5,
+          "better_chunks": 62,
+          "chunks": 111
+        },
+        "G3": {
+          "mean_nats": -0.0105,
+          "t": -3.9,
+          "better_chunks": 67,
+          "chunks": 111
+        }
+      },
+      "G3_vs_G2": {
+        "mean_nats": -0.0039,
+        "t": -2.1,
+        "better_chunks": 64,
+        "chunks": 111
+      }
+    },
+    "perplexity_code_corpus": {
+      "perplexity": {
+        "IQ3_XXS": 1.9751,
+        "G1": 1.9686,
+        "G2": 1.9483,
+        "G3": 1.9421
+      },
+      "paired_vs_IQ3_XXS": {
+        "G1": {
+          "mean_nats": -0.0033,
+          "t": -1.8,
+          "better_chunks": 53,
+          "chunks": 90
+        },
+        "G2": {
+          "mean_nats": -0.0137,
+          "t": -5.5,
+          "better_chunks": 68,
+          "chunks": 90
+        },
+        "G3": {
+          "mean_nats": -0.0168,
+          "t": -5.4,
+          "better_chunks": 67,
+          "chunks": 90
+        }
+      },
+      "G3_vs_G2": {
+        "mean_nats": -0.0032,
+        "t": -1.9,
+        "better_chunks": 52,
+        "chunks": 90
+      }
+    }
+  },
+  "decode_six_prompts": {
+    "method": "redlite-generate --cache-mib full --max-tokens 256 --temperature 0 --json, tests/fixtures/cache_trace_prompts.txt, 30 s apart",
+    "IQ3_plain": {
+      "tok_s": [
+        69.28,
+        75.44,
+        73.93,
+        74.15,
+        74.7,
+        74.74
+      ],
+      "footprint_mib": [
+        29942.9,
+        29942.5,
+        29945.3,
+        29942.9,
+        29942.5,
+        29942.6
+      ],
+      "median_tok_s": 74.4
+    },
+    "IQ3_mtp": {
+      "tok_s": [
+        88.45,
+        93.93,
+        97.04,
+        83.54,
+        81.27,
+        90.08
+      ],
+      "footprint_mib": [
+        31682.8,
+        31682.1,
+        31685.3,
+        31682.6,
+        31682.2,
+        31682.4
+      ],
+      "median_tok_s": 89.3
+    },
+    "G2_mtp": {
+      "tok_s": [
+        88.65,
+        92.68,
+        95.33,
+        84.93,
+        83.2,
+        96.35
+      ],
+      "footprint_mib": [
+        33411.7,
+        33411.8,
+        33414.6,
+        33412.0,
+        33411.0,
+        33411.1
+      ],
+      "median_tok_s": 90.7
+    },
+    "G3_plain": {
+      "tok_s": [
+        72.77,
+        72.21,
+        72.8,
+        71.9,
+        72.28,
+        72.99
+      ],
+      "footprint_mib": [
+        31671.4,
+        31671.6,
+        31674.2,
+        31671.8,
+        31671.5,
+        31671.6
+      ],
+      "median_tok_s": 72.5
+    }
+  },
+  "validation_g2": {
+    "regress_m4": "39 PASS / 3 FAIL / 13 SKIP; failures: two long-context argmax near-ties (top-2 gaps 0.0003 and 0.012), generate.greedy phrase check",
+    "quick_parity": "4/4 PASS",
+    "server_check_mtp": "YES"
+  },
+  "long_context_generate_25274_tokens_mtp": {
+    "method": "redlite-generate --context 32768 --mtp, same command twice, 180 s apart",
+    "IQ3_XXS": [
+      {
+        "prefill_tok_s": 638.28,
+        "decode_tok_s": 52.58
+      },
+      {
+        "prefill_tok_s": 623.6,
+        "decode_tok_s": 52.02
+      }
+    ],
+    "G2": [
+      {
+        "prefill_tok_s": 639.4,
+        "decode_tok_s": 57.86
+      },
+      {
+        "prefill_tok_s": 491.67,
+        "decode_tok_s": 55.2
+      }
+    ]
+  },
+  "long_context_server": {
+    "method": "redlite-server --cache-mib full --context 32768, two different prompts (25378 and 22518 tokens) 180 s apart",
+    "requests": {
+      "IQ3_XXS MTP": [
+        {
+          "prompt_tokens": 25378,
+          "prefill_tok_s": 619.9,
+          "decode_tok_s": 57.2
+        },
+        {
+          "prompt_tokens": 22518,
+          "prefill_tok_s": 595.5,
+          "decode_tok_s": 61.0
+        }
+      ],
+      "G2 MTP": [
+        {
+          "prompt_tokens": 25378,
+          "prefill_tok_s": 400.7,
+          "decode_tok_s": 58.5
+        },
+        {
+          "prompt_tokens": 22518,
+          "prefill_tok_s": 572.5,
+          "decode_tok_s": 56.8
+        }
+      ],
+      "G2 no MTP": [
+        {
+          "prompt_tokens": 25378,
+          "prefill_tok_s": 676.1,
+          "decode_tok_s": 55.9
+        },
+        {
+          "prompt_tokens": 22518,
+          "prefill_tok_s": 514.3,
+          "decode_tok_s": 62.3
+        }
+      ]
+    },
+    "swapped_out_gib": {
+      "IQ3_XXS MTP": {
+        "request_1": 1.31,
+        "pause": 0.0,
+        "request_2": 0.0
+      },
+      "G2 MTP": {
+        "request_1": 4.32,
+        "pause": 0.75,
+        "request_2": 0.49
+      },
+      "G2 no MTP": {
+        "request_1": 0.0,
+        "pause": 3.82,
+        "request_2": 1.58
+      }
+    }
+  }
+}

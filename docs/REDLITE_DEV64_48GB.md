@@ -82,7 +82,7 @@ experts with IQ3_XXS's dense weights and fits with MTP, at 68.7 %.
 
 - **G2 with MTP decodes as fast as IQ3_XXS with MTP.** The per-prompt differences follow the drafts accepted, since
   the two files' answers differ.
-- **G3 without MTP is 25 % slower than G2.** Its 0.4 % better text perplexity does not pay for that.
+- **G3 without MTP is 20 % slower than G2** (72.5 against 90.7 tok/s). Its 0.4 % better text perplexity does not pay for that.
 - **IQ3_XXS plain** is 74.4 tok/s here against 79.9 in the 0.5.0 record. That record used `bench_m4.sh` with one
   fixed prompt, so the two numbers are not comparable. Every row of this table was measured in one session under
   the same conditions.

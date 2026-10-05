@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="278" viewBox="0 0 810 278">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="278"/>
+<text class="t" x="10" y="24">Qwen3-Coder-Next 2-bit files on harder agent tasks (pi agent, repository suite)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">M4 Pro 24 GiB</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">M4 Max 48 GiB</text>
+<text class="l" x="222" y="98" text-anchor="end">Bartowski IQ2_XXS</text>
+<rect x="230" y="76" width="272.6" height="15" rx="2" fill="#d64545"/><text class="v" x="507.6" y="88">58</text>
+<rect x="230" y="94" width="390.1" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="625.1" y="106">83</text>
+<text class="l" x="222" y="144" text-anchor="end">Red Lite CE3</text>
+<rect x="230" y="122" width="432.4" height="15" rx="2" fill="#d64545"/><text class="v" x="667.4" y="134">92</text>
+<rect x="230" y="140" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="152">100</text>
+<text class="l" x="222" y="190" text-anchor="end">Red Lite CF2</text>
+<rect x="230" y="168" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="180">100</text>
+<rect x="230" y="186" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="198">100</text>
+<text class="n" x="10" y="253">% of tasks passed. 4 tasks x 3 runs per file and Mac, every expert resident, 32K context, server sampling defaults. M4 Pro 24</text>
+<text class="n" x="10" y="268">GiB: 600 s limit, pi 1.0.2; M4 Max 48 GiB: 900 s, pi 0.84.4. CE3 and CF2 are Red Lite quantizations of the same size (dev63).</text>
+</svg>
