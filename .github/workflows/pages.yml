@@ -1,10 +1,10 @@
 name: Pages
 
-# The project site (site/index.html) on GitHub Pages, with the logo and charts of docs/img.
+# The project site on GitHub Pages: site/ plus the Markdown docs rendered by scripts/dev/build_site.py.
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/img/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "README.md", "CHANGELOG.md", "scripts/dev/build_site.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -24,11 +24,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # per-page "updated" dates come from git log
       - name: Assemble the site
         run: |
-          mkdir -p _site/img
-          cp site/* _site/
-          cp docs/img/*.svg docs/img/social-preview.png _site/img/
+          pip install markdown-it-py==3.0.0
+          python3 scripts/dev/build_site.py _site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
