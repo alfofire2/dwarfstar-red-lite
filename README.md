@@ -21,15 +21,20 @@
   <a href="#measured-performance">Performance</a> &nbsp;|&nbsp;
   <a href="docs/FINDINGS.md">Findings</a> &nbsp;|&nbsp;
   <a href="#limits">Limits</a> &nbsp;|&nbsp;
+  <a href="#faq">FAQ</a> &nbsp;|&nbsp;
   <a href="#problems">Problems?</a> &nbsp;|&nbsp;
   <a href="docs/README.md">All docs</a>
 </p>
 
 ---
 
-Qwen3-Next-80B-A3B has 80 billion parameters, but a token uses only 3 billion of them: each of its 48 layers picks
-10 of 512 experts. Red Lite is a C, Objective-C and Metal runtime built around that one fact. It keeps the dense
-weights resident, treats the experts as a cache, and on a raised GPU limit keeps all of them on the GPU.
+Red Lite runs **Qwen3-Next-80B-A3B** and **Qwen3-Coder-Next** locally on Apple Silicon Macs, down to a 24 GB
+MacBook Pro.
+- **The model:** it has 80 billion parameters, but a token uses only 3 billion of them, because each of its 48
+  layers picks 10 of 512 experts.
+- **The runtime:** a local LLM engine in C, Objective-C and Metal, built around that one fact in the spirit of
+  antirez's [DwarfStar](https://dwarfstar.sh/). It keeps the dense weights resident and treats the experts as a
+  cache, streamed from the SSD. With a raised GPU limit it keeps all of them on the GPU.
 
 - **An 80B model on a 24 GiB MacBook Pro:** about 45 tok/s decode on an M4 Pro, 49–58 with MTP speculative
   decoding, which never changes the answer. The llama.cpp launcher reaches 36–38 on the same Mac.
@@ -37,8 +42,8 @@ weights resident, treats the experts as a cache, and on a raised GPU limit keeps
   6 % lower perplexity.
 - **Checked against llama.cpp** on every change: logits, greedy tokens and long contexts, with llama.cpp used as an
   oracle only, never linked.
-- **A local OpenAI-compatible server:** tool calling for agents, two requests at once, steering, and prompt
-  states saved to disk.
+- **A local OpenAI-compatible server:** tool calling for coding agents such as pi, two requests at once, steering,
+  and prompt states saved to disk.
 
 <p align="center">
   <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB: 27.8 tok/s in September, 32.5 with the 4 GiB cache, 46.0 with every expert resident, 52.7 with MTP; llama.cpp launcher 36.4">
@@ -165,6 +170,50 @@ same arithmetic. min-p is off by default here and 0.05 in llama.cpp.
 answers meanwhile. A request that continues the previous conversation exactly reuses the
 engine state and only ingests the new tokens (second-turn first token 3.8 s → 0.17 s on
 an 1185-token conversation); any other request resets. `stop` sequences are supported.
+
+## FAQ
+
+**Can I run an 80B model on a 24 GB Mac?**
+Yes, this one. Qwen3-Next-80B-A3B is a sparse mixture of experts: a token uses about 3B of its 80B parameters.
+- **Default:** Red Lite keeps about 1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest
+  from the SSD. That gives 34 tok/s on an M4 Pro 24 GiB with F2, with nothing to configure.
+- **Raised GPU limit:** with `sudo` (see *24 GiB Macs* above) every expert stays on the GPU: 45 tok/s, 49–58 with
+  MTP.
+
+**How is it different from DwarfStar?**
+[DwarfStar](https://dwarfstar.sh/) ([antirez/ds4](https://github.com/antirez/ds4)) by Salvatore Sanfilippo runs
+DeepSeek V4 and GLM on large Macs. Red Lite applies the same idea to another model, Qwen3-Next, and a smaller Mac:
+- one model family;
+- hardware-specific code;
+- dense weights treated apart from the routed experts.
+
+It shares no code with DwarfStar. If you want those models on a big Mac, use DwarfStar. If you want an 80B model on
+a 24 GB Mac, try this. More in *The name, and DwarfStar*.
+
+**How does it compare with llama.cpp, Ollama, LM Studio or MLX?**
+- **llama.cpp,** the only one measured here, on the same files:
+  - on an M4 Max 48 GiB, Red Lite decodes 19 % faster (86.2 vs 72.5 tok/s);
+  - on an M4 Pro 24 GiB, 45–46 tok/s against 36–38.
+- **Ollama, LM Studio and MLX** were not measured.
+- **What Red Lite adds:** its own expert streaming for Macs where the model does not fit, MTP speculative
+  decoding, and tool calling for agents, all for this one model.
+
+**Which Mac do I need?**
+- **Tested:** Apple Silicon with 24 GiB or more, on an M4 Pro 24 GiB and an M4 Max 48 GiB.
+- **Built for but never run:** M1, M2 and M3 (the release binaries are built for M1 and later).
+- **Never tried:** 16 GiB.
+- **Disk:** 19.3 GB for the 24 GiB file, 31.7 GB for the 48 GiB one.
+
+**Does it work with coding agents and the OpenAI API?**
+Yes. `redlite serve --native` speaks the OpenAI chat API with tool calling, and `redlite setup-pi` configures the pi
+coding agent. On harder tasks Qwen3-Coder-Next at 2 bits passed 70 % against 83 % for the full-precision model
+(dev62).
+
+**Is the output the same as the original model?**
+- **What the files are:** 2-bit quantizations (19.3 GB instead of 160 GB), so answers differ from the
+  full-precision model. Red Lite's F2 file has a 6 % lower perplexity than the usual IQ2_XXS of the same size.
+- **What matches:** the runtime gives the same tokens as llama.cpp on the same file, which is checked on every
+  change.
 
 ## What runs
 
@@ -592,12 +641,12 @@ redlite serve MODEL.gguf --dry-run
 
 See:
 
-- `docs/ARCHITECTURE.md`
-- `docs/DS4_ADAPTATION.md`
-- `docs/MEMORY.md`
-- `docs/BENCHMARK.md`
-- `docs/METAL_STREAMING_ROADMAP.md`
-- `NOTICE.md`
+- [`docs/FINDINGS.md`](docs/FINDINGS.md): results and charts;
+- [`docs/README.md`](docs/README.md): every milestone, with what was measured where;
+- [`docs/ROADMAP.md`](docs/ROADMAP.md);
+- the launcher (0.2): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/MEMORY.md`](docs/MEMORY.md),
+  [`docs/BENCHMARK.md`](docs/BENCHMARK.md), [`docs/DS4_ADAPTATION.md`](docs/DS4_ADAPTATION.md);
+- [`NOTICE.md`](NOTICE.md).
 
 ## License
 

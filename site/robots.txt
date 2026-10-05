@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://alfofire2.github.io/dwarfstar-red-lite/sitemap.xml
