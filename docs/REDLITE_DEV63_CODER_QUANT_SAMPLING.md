@@ -47,12 +47,24 @@ Qwen3-Coder-Next IQ2_XXS with every expert resident, a 32K context, the reposito
 - **Fixed:** the tests now patch the GPU limit. The study was restarted on the fixed checkout; its results replace
   this paragraph's.
 
-| Setting | Tasks passed per run | Loops |
-|---|---|---|
-| A | pending | pending |
-| B | pending | pending |
-| C | pending | pending |
-| D | pending | pending |
+**Results on the fixed checkout.** A loop is a task that hit the 600 s limit after 40 or more requests.
+
+| Setting | Passed | Per run | Timeouts | Loops (requests) | Most requests in a task | Median passed task |
+|---|---:|---|---:|---|---:|---:|
+| A, temperature 0.7 (defaults) | 7/12 | 2, 2, 3 | 2 | 1 (64) | 64 | 114 s |
+| B, temperature 1.0 | 8/12 | 2, 3, 3 | 2 | 2 (272, 349) | 349 | 176 s |
+| C, temperature 1.0, `presence_penalty` 1.0 | 8/12 | 3, 3, 2 | 2 | 1 (170) | 170 | 149 s |
+| D, temperature 0.3 | **9/12** | 2, 3, 4 | **0** | **0** | **19** | **109 s** |
+
+- **Pass rates do not separate the settings:** 7 to 9 of 12 is within noise.
+- **Loops follow the temperature:** four loops in 36 sessions at 0.7 and above, none in 12 at 0.3, where no task
+  needed more than 19 requests. Temperature 1.0, Qwen3-Coder-Next's card value, gave the longest (349 requests).
+- **`presence_penalty` 1.0** shortened the loop (170 requests against 272 and 349 at the same temperature) but did
+  not remove it.
+- **`explain_stop`** passed 0/3 at 0.7 and 3/3 at 0.3. Its failures answer in 15–40 s that the file is missing,
+  having looked under `/opt/homebrew` (pi's install path, which pi's system prompt lists for its own docs).
+- **Reading:** a small sample (12 tasks per setting), so a consistent direction, not a proof. It supports a lower
+  temperature for the 2-bit Coder in agent loops; the server default (0.7) is unchanged.
 
 ## 3. Red Lite quantizations of Qwen3-Coder-Next (M4 Max)
 
