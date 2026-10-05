@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DwarfStar Red Lite: run Qwen3-Next 80B and Qwen3-Coder on a 24 GB Mac</title>
+<meta name="description" content="A DwarfStar-inspired local LLM runtime for Apple Silicon. Runs Qwen3-Next-80B-A3B and Qwen3-Coder-Next on a 24 GB MacBook Pro with native Metal, expert streaming from the SSD, MTP speculative decoding and an OpenAI-compatible server for coding agents. Open source, MIT.">
+<link rel="canonical" href="https://redlite.alfonsodaniello.it/">
+<link rel="icon" href="img/logo.svg" type="image/svg+xml">
+<meta name="theme-color" content="#17142B">
+<meta property="og:type" content="website">
+<meta property="og:title" content="DwarfStar Red Lite: an 80B model on a 24 GB Mac">
+<meta property="og:description" content="Qwen3-Next 80B and Qwen3-Coder locally on Apple Silicon: native Metal, experts streamed from the SSD, an OpenAI-compatible server for coding agents.">
+<meta property="og:url" content="https://redlite.alfonsodaniello.it/">
+<meta property="og:image" content="https://redlite.alfonsodaniello.it/img/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DwarfStar Red Lite: an 80B model on a 24 GB Mac">
+<meta name="twitter:description" content="Qwen3-Next 80B and Qwen3-Coder locally on Apple Silicon, native Metal, OpenAI-compatible server.">
+<meta name="twitter:image" content="https://redlite.alfonsodaniello.it/img/social-preview.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "DwarfStar Red Lite",
+  "description": "A local LLM runtime for Apple Silicon that runs Qwen3-Next-80B-A3B and Qwen3-Coder-Next on Macs with 24 GB of memory, in native Metal, inspired by DwarfStar.",
+  "codeRepository": "https://github.com/alfofire2/dwarfstar-red-lite",
+  "programmingLanguage": ["C", "Objective-C", "Metal", "Python"],
+  "runtimePlatform": "macOS on Apple Silicon",
+  "license": "https://opensource.org/licenses/MIT",
+  "keywords": "local LLM, Apple Silicon, Metal, Qwen3-Next, Qwen3-Coder, mixture of experts, GGUF, DwarfStar, MacBook Pro, OpenAI API, coding agent"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "Can I run an 80B model on a 24 GB Mac?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes, Qwen3-Next-80B-A3B. It is a sparse mixture of experts: a token uses about 3B of its 80B parameters. By default Red Lite keeps about 1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest from the SSD: 34 tokens per second on an M4 Pro 24 GiB with nothing to configure. With a raised GPU limit every expert stays on the GPU: 45 tokens per second, 49 to 58 with MTP speculative decoding."}},
+    {"@type": "Question", "name": "How is DwarfStar Red Lite different from DwarfStar?",
+     "acceptedAnswer": {"@type": "Answer", "text": "DwarfStar (antirez/ds4) by Salvatore Sanfilippo runs DeepSeek V4 and GLM on large Macs. Red Lite applies the same idea to Qwen3-Next and a smaller Mac: one model family, hardware-specific code, dense weights treated apart from the routed experts. It shares no code with DwarfStar."}},
+    {"@type": "Question", "name": "How does it compare with llama.cpp?",
+     "acceptedAnswer": {"@type": "Answer", "text": "On the same files, Red Lite decodes 19% faster than the pinned llama.cpp on an M4 Max 48 GiB (86.2 vs 72.5 tokens per second), and 45 to 46 against 36 to 38 tokens per second on an M4 Pro 24 GiB. Ollama, LM Studio and MLX were not measured."}},
+    {"@type": "Question", "name": "Does it work with coding agents?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes. The server speaks the OpenAI chat API with tool calling, and redlite setup-pi configures the pi coding agent. On harder tasks on a real repository, Qwen3-Coder-Next at 2 bits passed 70% against 83% for the full-precision model."}},
+    {"@type": "Question", "name": "Which Mac do I need?",
+     "acceptedAnswer": {"@type": "Answer", "text": "An Apple Silicon Mac with 24 GB of memory or more. It was tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. The binaries are built for M1 and later, but M1, M2 and M3 have not been tested yet."}}
+  ]
+}
+</script>
+<style>
+  :root {
+    --night: #17142B;
+    --night-deep: #110F22;
+    --ink: #F3EEF8;
+    --muted: #B9B4CC;
+    --slate: #8C88A3;
+    --dwarf: #F2542D;
+    --dwarf-deep: #9E1F1A;
+    --panel: #201B38;
+    --line: #2F2950;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; color: var(--ink); background: var(--night);
+    background-image: radial-gradient(ellipse 80% 60% at 50% 0%, #2A1F45 0%, var(--night) 60%, var(--night-deep) 100%);
+    background-attachment: fixed;
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  a { color: #FFB08F; text-underline-offset: 3px; }
+  a:hover { color: #FFD2BF; }
+  a:focus-visible, .btn:focus-visible { outline: 2px solid #FFB08F; outline-offset: 3px; border-radius: 6px; }
+  main { max-width: 860px; margin: 0 auto; padding: 0 20px 64px; }
+  header { text-align: center; padding: 64px 0 40px; }
+  header img { width: 200px; height: 200px; }
+  h1 { font-size: clamp(40px, 7vw, 64px); line-height: 1.05; letter-spacing: -1.5px; margin: 18px 0 14px; font-weight: 750; }
+  .lede { font-size: clamp(19px, 2.6vw, 23px); color: var(--muted); max-width: 640px; margin: 0 auto; }
+  .lede b { color: var(--ink); font-weight: 650; }
+  .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
+  .btn { display: inline-block; padding: 11px 20px; border-radius: 10px; font-weight: 600; text-decoration: none; }
+  .btn.primary { background: var(--dwarf); color: #fff; }
+  .btn.primary:hover { background: #ff6a44; color: #fff; }
+  .btn.ghost { border: 1px solid var(--line); color: var(--ink); }
+  .btn.ghost:hover { border-color: var(--slate); color: var(--ink); }
+  section { margin-top: 56px; }
+  h2 { font-size: 28px; letter-spacing: -0.4px; margin: 0 0 14px; }
+  h3 { font-size: 18px; margin: 26px 0 6px; }
+  p, li { color: var(--muted); }
+  strong { color: var(--ink); }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  figure { margin: 22px 0; }
+  figure img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #0d1117; }
+  figcaption { font-size: 14px; color: var(--slate); margin-top: 8px; }
+  pre { background: var(--night-deep); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto;
+        font: 14.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #E7E2F2; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-top: 8px; }
+  .facts div { border-top: 2px solid var(--dwarf); padding-top: 10px; }
+  .facts b { display: block; color: var(--ink); font-size: 30px; letter-spacing: -0.5px; }
+  .facts span { color: var(--muted); font-size: 15px; }
+  details { border-bottom: 1px solid var(--line); padding: 12px 0; }
+  summary { cursor: pointer; font-weight: 600; color: var(--ink); }
+  details p { margin: 10px 0 0; }
+  footer { border-top: 1px solid var(--line); margin-top: 64px; padding-top: 22px; font-size: 14px; color: var(--slate); }
+  footer p { color: var(--slate); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="img/logo.svg" alt="DwarfStar Red Lite logo: a red dwarf star with 48 rays, one per layer of the model">
+    <h1>DwarfStar Red Lite</h1>
+    <p class="lede"><b>Qwen3-Next 80B and Qwen3-Coder on a 24 GB Mac.</b> A local LLM runtime in native Metal, written
+      for this one model family, in the spirit of antirez's DwarfStar.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/alfofire2/dwarfstar-red-lite">Star it on GitHub</a>
+      <a class="btn ghost" href="#install">Install</a>
+      <a class="btn ghost" href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">Read the findings</a>
+    </div>
+  </header>
+
+  <section aria-labelledby="what">
+    <h2 id="what">An 80B model that touches 3% of itself per token</h2>
+    <p>Qwen3-Next-80B-A3B has 80 billion parameters, but each token uses only about 3 billion: every one of its 48
+      layers picks 10 of 512 experts. Red Lite keeps the dense weights in memory and treats the experts as a cache
+      read from the SSD, so the model runs on a MacBook Pro with 24 GB of unified memory. With a raised GPU limit it
+      keeps every expert on the GPU.</p>
+    <div class="facts">
+      <div><b>34 tok/s</b><span>on an M4 Pro 24 GiB, nothing to configure</span></div>
+      <div><b>45–58 tok/s</b><span>with every expert on the GPU, MTP speculative decoding</span></div>
+      <div><b>19% faster</b><span>decode than llama.cpp on the same file, M4 Max</span></div>
+    </div>
+    <figure>
+      <img src="img/choices_24gb.svg" alt="Decode on a 24 GiB M4 Pro: F2 with every expert resident 44.5 tok/s, F2 streamed from the SSD 34.0, IQ3_XXS streamed 29.3" loading="lazy">
+      <figcaption>Three ways to run it on a 24 GiB Mac, measured on an M4 Pro.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="install">
+    <h2 id="install">Install</h2>
+    <pre><code>brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
+brew trust --tap alfofire2/redlite
+brew install redlite
+redlite download 24gb &amp;&amp; redlite download mtp
+redlite chat</code></pre>
+    <p>Or build from source: <a href="https://github.com/alfofire2/dwarfstar-red-lite#install">instructions in the README</a>.
+      Models are standard GGUF files on <a href="https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF">Hugging Face</a>.</p>
+  </section>
+
+  <section aria-labelledby="agents">
+    <h2 id="agents">A local server for coding agents</h2>
+    <p><code>redlite serve --native</code> speaks the OpenAI chat API with tool calling, rendered exactly as the
+      model's own chat template, so an agent's turns keep the engine state instead of re-reading the prompt.</p>
+    <pre><code>npm install -g @earendil-works/pi-coding-agent
+redlite setup-pi --port 8080
+redlite serve --native --context 32768 --port 8080
+pi --provider redlite --model qwen3-next-80b-a3b-redlite</code></pre>
+    <figure>
+      <img src="img/agent_repo_tasks.svg" alt="Harder coding-agent tasks passed: full-precision model 83 percent, Qwen3-Coder-Next at 2 bits 70 percent, F2 50 percent" loading="lazy">
+      <figcaption>Harder tasks on a real repository: the full-precision model through Qwen's API against the 2-bit files on a Mac.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="why">
+    <h2 id="why">What makes it different</h2>
+    <ul>
+      <li><strong>Written for one model.</strong> The Gated DeltaNet, attention and 512-expert MoE kernels were each
+        checked against a CPU reference and llama.cpp before use.</li>
+      <li><strong>Expert streaming from the SSD,</strong> with a bounded cache and cache-aware routing (at most 0.2%
+        perplexity cost).</li>
+      <li><strong>A better 2-bit file.</strong> Red Lite's F2 has the size of the usual IQ2_XXS and a 6% lower perplexity.</li>
+      <li><strong>MTP speculative decoding</strong> that never changes the answer.</li>
+      <li><strong>Honest numbers.</strong> Every result names the Mac it was measured on, and what did not work is
+        written down too.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="faq">
+    <h2 id="faq">FAQ</h2>
+    <details><summary>Can I run an 80B model on a 24 GB Mac?</summary>
+      <p>Yes, Qwen3-Next-80B-A3B. A token uses about 3B of its 80B parameters. By default Red Lite keeps about
+        1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest from the SSD: 34 tok/s on an
+        M4 Pro 24 GiB. With a raised GPU limit every expert stays on the GPU: 45 tok/s, 49–58 with MTP.</p></details>
+    <details><summary>How is it different from DwarfStar?</summary>
+      <p><a href="https://dwarfstar.sh/">DwarfStar</a> (<a href="https://github.com/antirez/ds4">antirez/ds4</a>) by
+        Salvatore Sanfilippo runs DeepSeek V4 and GLM on large Macs. Red Lite applies the same idea to Qwen3-Next and
+        a smaller Mac. It shares no code with DwarfStar and is named after it as a tribute: red dwarfs are the
+        smallest true stars.</p></details>
+    <details><summary>How does it compare with llama.cpp, Ollama, LM Studio or MLX?</summary>
+      <p>Against llama.cpp on the same files: 86.2 vs 72.5 tok/s on an M4 Max 48 GiB, 45–46 vs 36–38 on an M4 Pro
+        24 GiB. Ollama, LM Studio and MLX were not measured.</p></details>
+    <details><summary>Which Mac do I need?</summary>
+      <p>Apple Silicon with 24 GB of memory or more. Tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. M1, M2 and M3
+        should work but have not been tested. Reports are welcome.</p></details>
+    <details><summary>Does it work with Qwen3-Coder and coding agents?</summary>
+      <p>Yes. Qwen3-Coder-Next runs the same way, and on harder agent tasks it passed 70% at 2 bits against 83% for
+        the full-precision model.</p></details>
+  </section>
+
+  <footer>
+    <p>DwarfStar Red Lite is open source under the MIT license:
+      <a href="https://github.com/alfofire2/dwarfstar-red-lite">github.com/alfofire2/dwarfstar-red-lite</a>.
+      Model by the Qwen team (Apache-2.0). Q8 sources and importance matrices by bartowski. llama.cpp is used as a
+      test oracle only. Inspired by DwarfStar by Salvatore Sanfilippo.</p>
+  </footer>
+</main>
+</body>
+</html>
