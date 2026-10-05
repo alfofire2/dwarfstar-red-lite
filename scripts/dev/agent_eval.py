@@ -298,7 +298,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REQ = re.compile(r"request \d+: prompt=(\d+) cached=(\d+) completion=(\d+) finish=(\w+)")
 
 
-def write_agent_dir(path: Path, port: int, model_id: str, context: int) -> None:
+def write_agent_dir(path: Path, port: int, model_id: str, context: int, temperature: float | None = None) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "models.json").write_text(json.dumps({"providers": {"redlite": {
         "baseUrl": f"http://127.0.0.1:{port}/v1", "api": "openai-completions", "apiKey": "redlite",
@@ -306,6 +306,7 @@ def write_agent_dir(path: Path, port: int, model_id: str, context: int) -> None:
                    "supportsStrictMode": False, "maxTokensField": "max_tokens"},
         "models": [{"id": model_id, "name": "Red Lite (local)", "reasoning": False, "input": ["text"],
                     "contextWindow": context, "maxTokens": 4096,
+                    **({"samplingParams": {"temperature": temperature}} if temperature is not None else {}),
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}]}}}, indent=2))
 
 
@@ -382,6 +383,7 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8091)
     ap.add_argument("--model-id", default="qwen3-next-80b-a3b-redlite")
     ap.add_argument("--context", type=int, default=32768)
+    ap.add_argument("--temperature", type=float, help="dev65: sampling temperature pi sends (as redlite setup-pi does)")
     ap.add_argument("--agent-dir", help="pi config dir (default: a models.json for --port in a temporary dir)")
     ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository; hard: 6 harder ones (dev65)")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
@@ -392,7 +394,7 @@ def main() -> int:
     if not args.agent_dir:
         tmp = tempfile.TemporaryDirectory()
         args.agent_dir = tmp.name
-        write_agent_dir(Path(tmp.name), args.port, args.model_id, args.context)
+        write_agent_dir(Path(tmp.name), args.port, args.model_id, args.context, args.temperature)
     tasks = [t for t in SUITES[args.suite] if not args.tasks or t["id"] in args.tasks.split(",")]
     results = []
     for t in tasks:
