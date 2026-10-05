@@ -1,0 +1,38 @@
+name: Pages
+
+# The project site on GitHub Pages: site/ plus the Markdown docs rendered by scripts/dev/build_site.py.
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", "README.md", "CHANGELOG.md", "scripts/dev/build_site.py", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # per-page "updated" dates come from git log
+      - name: Assemble the site
+        run: |
+          pip install markdown-it-py==3.0.0
+          python3 scripts/dev/build_site.py _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

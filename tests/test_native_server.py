@@ -350,26 +350,46 @@ class NativeServerProtocolTests(unittest.TestCase):
             srv.stop()
 
     def test_two_workers_overlap_generations(self):
-        """dev56: --workers 2 runs two requests at the same time (the real server pairs their decode steps)."""
+        """dev56: --workers 2 runs two requests at the same time (the real server pairs their decode steps).
+
+        Checked by order, not by a ratio of elapsed times (that failed on a loaded machine): with one worker, B's
+        first token cannot come before A's last one."""
         import threading
         srv = FakeServer(self.binary, "--token-delay-ms", "20", "--workers", "2")
+
+        def stream(tag):
+            conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+            conn.request("POST", "/v1/chat/completions", body=json.dumps(user(tag * 60, stream=True)),
+                         headers={"Content-Type": "application/json"})
+            return conn, conn.getresponse()
+
+        def events(resp, stamps):
+            data = b""
+            for line in iter(resp.readline, b""):
+                data += line
+                if line.startswith(b"data: "):
+                    stamps.append(time.monotonic())
+            return data
+
         try:
-            t0 = time.monotonic()
-            srv.request("POST", "/v1/chat/completions", user("S" * 60))
-            single = time.monotonic() - t0
-            out = []
-            def worker(tag):
-                resp, data = srv.request("POST", "/v1/chat/completions", user(tag * 60))
-                out.append((resp.status, json.loads(data)["choices"][0]["message"]["content"]))
-            threads = [threading.Thread(target=worker, args=(t,)) for t in "AB"]
-            t0 = time.monotonic()
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join(timeout=30)
-            both = time.monotonic() - t0
-            self.assertEqual(sorted(out), [(200, "Echo: " + "A" * 60), (200, "Echo: " + "B" * 60)])
-            self.assertLess(both, 1.6 * single)   # serial would take 2x
+            conn_a, resp_a = stream("A")
+            a_stamps, a_data = [], []
+            first = resp_a.readline()          # A is generating
+            reader = threading.Thread(target=lambda: a_data.append(first + events(resp_a, a_stamps)))
+            reader.start()
+            conn_b, resp_b = stream("B")
+            b_stamps = []
+            b_data = events(resp_b, b_stamps)
+            reader.join(timeout=30)
+            conn_a.close()
+            conn_b.close()
+            texts = []
+            for data in (a_data[0], b_data):
+                evs, done = parse_sse(data)
+                self.assertTrue(done)
+                texts.append("".join(e["choices"][0]["delta"].get("content") or "" for e in evs))
+            self.assertEqual(texts, ["Echo: " + "A" * 60, "Echo: " + "B" * 60])
+            self.assertLess(b_stamps[0], a_stamps[-1])   # B started before A ended
         finally:
             srv.stop()
 

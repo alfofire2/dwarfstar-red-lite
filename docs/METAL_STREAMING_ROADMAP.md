@@ -1,5 +1,9 @@
 # Native Metal + SSD expert streaming roadmap
 
+> **Historical (0.2, September 2026).** This plan was carried out: the native runtime has streamed experts from the
+> SSD since 0.3, and it is the default on 24 GiB Macs. Current results: [FINDINGS.md](FINDINGS.md); all milestones:
+> [docs/README.md](README.md).
+
 Red Lite 0.2 does **not** claim to have solved native Metal expert streaming yet.
 The quality path remains the separately validated CPU/Accelerate mmap-residency
 backend. This document defines the next native backend instead of hiding the gap.
