@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased (after 0.6.0)
+## 0.6.1 — 2026-10-05
+
+**Agents on a 24 GiB Mac without `sudo`, and sturdier tool calls.**
+- `redlite setup-pi` configures the pi coding agent.
+- At the default GPU limit (experts from the SSD) agents pass as with everything resident, 20–50 % slower.
+- The 48 GiB IQ3_XXS file streams on 24 GiB at 29 tok/s.
+- **The server:**
+  - accepts long agent sessions (up to 16,384 messages; 256 before);
+  - tolerates a frequent slip of the 2-bit Qwen3-Coder in its XML calls;
+  - logs calls it cannot parse.
+- Harder agent tasks on this repository: Qwen3-Coder-Next 70 %, F2 50 %, the full-precision model 83 %.
+- Validation:
+  - local and hosted CI;
+  - protocol tests under ASan+UBSan;
+  - real-model agent runs on the M4 Max and the M4 Pro.
+
 
 - dev62: **five follow-up tests.**
   - **Cache-aware routing** costs +0.19 % (IQ3_XXS) and +0.06 % (F2) engine perplexity with the 4 GiB cache.
