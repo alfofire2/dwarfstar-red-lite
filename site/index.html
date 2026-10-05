@@ -7,7 +7,7 @@
 <meta name="description" content="A DwarfStar-inspired local LLM runtime for Apple Silicon. Runs Qwen3-Next-80B-A3B and Qwen3-Coder-Next on a 24 GB MacBook Pro with native Metal, expert streaming from the SSD, MTP speculative decoding and an OpenAI-compatible server for coding agents. Open source, MIT.">
 <link rel="canonical" href="https://redlite.alfonsodaniello.it/">
 <link rel="icon" href="img/logo.svg" type="image/svg+xml">
-<meta name="theme-color" content="#17142B">
+<meta name="theme-color" content="#0B0E1A">
 <meta property="og:type" content="website">
 <meta property="og:title" content="DwarfStar Red Lite: an 80B model on a 24 GB Mac">
 <meta property="og:description" content="Qwen3-Next 80B and Qwen3-Coder locally on Apple Silicon: native Metal, experts streamed from the SSD, an OpenAI-compatible server for coding agents.">
@@ -40,7 +40,7 @@
     {"@type": "Question", "name": "Can I run an 80B model on a 24 GB Mac?",
      "acceptedAnswer": {"@type": "Answer", "text": "Yes, Qwen3-Next-80B-A3B. It is a sparse mixture of experts: a token uses about 3B of its 80B parameters. By default Red Lite keeps about 1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest from the SSD: 34 tokens per second on an M4 Pro 24 GiB with nothing to configure. With a raised GPU limit every expert stays on the GPU: 45 tokens per second, 49 to 58 with MTP speculative decoding."}},
     {"@type": "Question", "name": "How is DwarfStar Red Lite different from DwarfStar?",
-     "acceptedAnswer": {"@type": "Answer", "text": "DwarfStar (antirez/ds4) by Salvatore Sanfilippo runs DeepSeek V4 and GLM on large Macs. Red Lite applies the same idea to Qwen3-Next and a smaller Mac: one model family, hardware-specific code, dense weights treated apart from the routed experts. It shares no code with DwarfStar."}},
+     "acceptedAnswer": {"@type": "Answer", "text": "DwarfStar (antirez/ds4) by Salvatore Sanfilippo is the original project. Red Lite applies its idea to Qwen3-Next and a smaller Mac: one model family, hardware-specific code, dense weights treated apart from the routed experts. It shares no code with DwarfStar and is not affiliated with it."}},
     {"@type": "Question", "name": "How does it compare with llama.cpp?",
      "acceptedAnswer": {"@type": "Answer", "text": "On the same files, Red Lite decodes 19% faster than the pinned llama.cpp on an M4 Max 48 GiB (86.2 vs 72.5 tokens per second), and 45 to 46 against 36 to 38 tokens per second on an M4 Pro 24 GiB. Ollama, LM Studio and MLX were not measured."}},
     {"@type": "Question", "name": "Does it work with coding agents?",
@@ -52,161 +52,346 @@
 </script>
 <style>
   :root {
-    --night: #17142B;
-    --night-deep: #110F22;
-    --ink: #F3EEF8;
-    --muted: #B9B4CC;
-    --slate: #8C88A3;
+    --bg: #0B0E1A;
+    --bg-2: #0F1324;
+    --panel: #121729;
+    --grid: rgba(120, 132, 180, 0.07);
+    --line: #232A44;
+    --ink: #E8EAF3;
+    --muted: #9AA1B8;
+    --faint: #6B7290;
     --dwarf: #F2542D;
-    --dwarf-deep: #9E1F1A;
-    --panel: #201B38;
-    --line: #2F2950;
+    --dwarf-hi: #FF7A52;
+    --amber: #FFB070;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   body {
-    margin: 0; color: var(--ink); background: var(--night);
-    background-image: radial-gradient(ellipse 80% 60% at 50% 0%, #2A1F45 0%, var(--night) 60%, var(--night-deep) 100%);
-    background-attachment: fixed;
-    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+    margin: 0; color: var(--ink); background: var(--bg); font: 16.5px/1.6 var(--sans);
+    background-image:
+      radial-gradient(ellipse 70% 45% at 70% 0%, rgba(242, 84, 45, 0.10), transparent 70%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: auto, 64px 64px, 64px 64px;
   }
-  a { color: #FFB08F; text-underline-offset: 3px; }
-  a:hover { color: #FFD2BF; }
-  a:focus-visible, .btn:focus-visible { outline: 2px solid #FFB08F; outline-offset: 3px; border-radius: 6px; }
-  main { max-width: 860px; margin: 0 auto; padding: 0 20px 64px; }
-  header { text-align: center; padding: 64px 0 40px; }
-  header img { width: 200px; height: 200px; }
-  h1 { font-size: clamp(40px, 7vw, 64px); line-height: 1.05; letter-spacing: -1.5px; margin: 18px 0 14px; font-weight: 750; }
-  .lede { font-size: clamp(19px, 2.6vw, 23px); color: var(--muted); max-width: 640px; margin: 0 auto; }
-  .lede b { color: var(--ink); font-weight: 650; }
-  .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
-  .btn { display: inline-block; padding: 11px 20px; border-radius: 10px; font-weight: 600; text-decoration: none; }
+  a { color: var(--amber); text-underline-offset: 3px; }
+  a:hover { color: #FFD0A8; }
+  a:focus-visible, .btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 6px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  nav { position: sticky; top: 0; z-index: 5; background: rgba(11, 14, 26, 0.86); backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none;
+           font: 600 15px var(--mono); }
+  .brand img { width: 26px; height: 26px; }
+  .brand span { color: var(--faint); font-weight: 400; }
+  .links { display: flex; gap: 22px; font: 12px var(--mono); letter-spacing: 1.2px; }
+  .links a { color: var(--muted); text-decoration: none; }
+  .links a:hover { color: var(--ink); }
+  .nav-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 8px; font-weight: 600;
+         font-size: 14.5px; text-decoration: none; border: 1px solid transparent; }
   .btn.primary { background: var(--dwarf); color: #fff; }
-  .btn.primary:hover { background: #ff6a44; color: #fff; }
-  .btn.ghost { border: 1px solid var(--line); color: var(--ink); }
-  .btn.ghost:hover { border-color: var(--slate); color: var(--ink); }
-  section { margin-top: 56px; }
-  h2 { font-size: 28px; letter-spacing: -0.4px; margin: 0 0 14px; }
-  h3 { font-size: 18px; margin: 26px 0 6px; }
-  p, li { color: var(--muted); }
-  strong { color: var(--ink); }
-  ul { padding-left: 20px; }
-  li { margin: 6px 0; }
-  figure { margin: 22px 0; }
-  figure img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #0d1117; }
-  figcaption { font-size: 14px; color: var(--slate); margin-top: 8px; }
-  pre { background: var(--night-deep); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto;
-        font: 14.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #E7E2F2; }
-  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; margin-top: 8px; }
-  .facts div { border-top: 2px solid var(--dwarf); padding-top: 10px; }
-  .facts b { display: block; color: var(--ink); font-size: 30px; letter-spacing: -0.5px; }
-  .facts span { color: var(--muted); font-size: 15px; }
-  details { border-bottom: 1px solid var(--line); padding: 12px 0; }
-  summary { cursor: pointer; font-weight: 600; color: var(--ink); }
-  details p { margin: 10px 0 0; }
-  footer { border-top: 1px solid var(--line); margin-top: 64px; padding-top: 22px; font-size: 14px; color: var(--slate); }
-  footer p { color: var(--slate); }
+  .btn.primary:hover { background: var(--dwarf-hi); color: #fff; }
+  .btn.ghost { border-color: var(--line); color: var(--ink); background: rgba(255, 255, 255, 0.02); }
+  .btn.ghost:hover { border-color: var(--faint); color: var(--ink); }
+
+  .eyebrow { font: 12px var(--mono); letter-spacing: 1.6px; color: var(--muted); margin: 0 0 18px; }
+  .eyebrow b { color: var(--amber); font-weight: 500; }
+
+  .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; padding: 96px 0 72px;
+          border-bottom: 1px solid var(--line); }
+  h1 { font-size: clamp(40px, 5.6vw, 62px); line-height: 1.04; letter-spacing: -1.6px; margin: 0 0 22px; font-weight: 720; }
+  .hero p.lede { color: var(--muted); font-size: 18px; max-width: 520px; margin: 0 0 28px; }
+  .hero .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .supported { margin-top: 30px; font: 11.5px/2 var(--mono); letter-spacing: 1.4px; color: var(--faint); }
+  .supported b { color: var(--dwarf-hi); font-weight: 500; }
+
+  .term { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+          box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.6); }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line);
+              font: 11.5px var(--mono); color: var(--faint); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .term-bar span { margin: 0 auto; transform: translateX(-20px); }
+  .term pre { margin: 0; padding: 18px 18px 20px; font: 13px/1.75 var(--mono); color: #C9CDE0; white-space: pre-wrap;
+              word-break: break-word; }
+  .term .p { color: var(--dwarf-hi); }
+  .term .dim { color: var(--faint); }
+  .term .you { color: var(--amber); }
+
+  section { padding: 84px 0; border-bottom: 1px solid var(--line); }
+  h2 { font-size: clamp(28px, 3.6vw, 38px); letter-spacing: -0.8px; line-height: 1.12; margin: 0 0 16px; max-width: 760px; }
+  section > .wrap > p.intro { color: var(--muted); max-width: 720px; font-size: 17.5px; margin: 0 0 36px; }
+  p, li, td { color: var(--muted); }
+  strong { color: var(--ink); font-weight: 600; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card { background: rgba(18, 23, 41, 0.75); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .card .n { font: 12px var(--mono); color: var(--amber); letter-spacing: 1.4px; }
+  .card h3 { margin: 10px 0 8px; font-size: 26px; letter-spacing: -0.5px; color: var(--ink); }
+  .card p { margin: 0; font-size: 15.5px; }
+
+  .choices { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 40px; }
+  .choices div { border-top: 1px solid var(--line); padding-top: 14px; }
+  .choices h3 { margin: 0 0 6px; font-size: 17px; color: var(--ink); }
+  .choices p { margin: 0; font-size: 15.5px; }
+
+  pre.cmd { background: #080B15; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow-x: auto;
+            font: 14px/1.8 var(--mono); color: #D7DAEA; margin: 0; }
+  pre.cmd .p { color: var(--dwarf-hi); user-select: none; }
+  pre.cmd .c { color: var(--faint); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th { text-align: left; font: 11.5px var(--mono); letter-spacing: 1.2px; color: var(--faint); font-weight: 400;
+       padding: 0 12px 10px 0; border-bottom: 1px solid var(--line); }
+  td { padding: 13px 12px 13px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.num { font-family: var(--mono); color: var(--ink); white-space: nowrap; }
+  .table-scroll { overflow-x: auto; }
+  .note { font-size: 14px; color: var(--faint); margin-top: 14px; }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  figure { margin: 0; }
+  figure img { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--line); background: #0d1117; display: block; }
+  figcaption { font-size: 13.5px; color: var(--faint); margin-top: 8px; }
+
+  details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+  details:first-of-type { border-top: 1px solid var(--line); }
+  summary { cursor: pointer; font-weight: 600; color: var(--ink); font-size: 17px; }
+  details p { margin: 10px 0 0; max-width: 760px; }
+
+  .cta { text-align: center; padding: 96px 0; border-bottom: 0; }
+  .cta h2 { margin: 0 auto 14px; }
+  .cta p { margin: 0 auto 28px; max-width: 560px; }
+  .cta .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; font: 12.5px/1.9 var(--mono); color: var(--faint); }
+  footer p { color: var(--faint); margin: 0; }
+  footer a { color: var(--muted); }
+
+  .hero > *, .two > *, .charts > *, .steps > *, .choices > * { min-width: 0; }   /* a wide pre must not widen the column */
+  @media (max-width: 900px) {
+    .hero, .two, .charts { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; }
+    .choices { grid-template-columns: 1fr; }
+    .links { display: none; }
+    .hero { padding-top: 76px; }
+  }
+  @media (max-width: 480px) {
+    .nav-right .ghost { display: none; }
+    .brand span { display: none; }
+    .wrap { padding: 0 16px; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <img src="img/logo.svg" alt="DwarfStar Red Lite logo: a red dwarf star with 48 rays, one per layer of the model">
-    <h1>DwarfStar Red Lite</h1>
-    <p class="lede"><b>Qwen3-Next 80B and Qwen3-Coder on a 24 GB Mac.</b> A local LLM runtime in native Metal, written
-      for this one model family, in the spirit of antirez's DwarfStar.</p>
-    <div class="actions">
-      <a class="btn primary" href="https://github.com/alfofire2/dwarfstar-red-lite">Star it on GitHub</a>
-      <a class="btn ghost" href="#install">Install</a>
-      <a class="btn ghost" href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">Read the findings</a>
-    </div>
-  </header>
 
-  <section aria-labelledby="what">
-    <h2 id="what">An 80B model that touches 3% of itself per token</h2>
-    <p>Qwen3-Next-80B-A3B has 80 billion parameters, but each token uses only about 3 billion: every one of its 48
-      layers picks 10 of 512 experts. Red Lite keeps the dense weights in memory and treats the experts as a cache
-      read from the SSD, so the model runs on a MacBook Pro with 24 GB of unified memory. With a raised GPU limit it
-      keeps every expert on the GPU.</p>
-    <div class="facts">
-      <div><b>34 tok/s</b><span>on an M4 Pro 24 GiB, nothing to configure</span></div>
-      <div><b>45–58 tok/s</b><span>with every expert on the GPU, MTP speculative decoding</span></div>
-      <div><b>19% faster</b><span>decode than llama.cpp on the same file, M4 Max</span></div>
+<nav aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="img/logo.svg" alt="">redlite<span>.alfonsodaniello.it</span></a>
+    <div class="links">
+      <a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/README.md">DOCS</a>
+      <a href="#hardware">HARDWARE</a>
+      <a href="#benchmarks">BENCHMARKS</a>
+      <a href="#agents">AGENTS</a>
+      <a href="#faq">FAQ</a>
     </div>
-    <figure>
-      <img src="img/choices_24gb.svg" alt="Decode on a 24 GiB M4 Pro: F2 with every expert resident 44.5 tok/s, F2 streamed from the SSD 34.0, IQ3_XXS streamed 29.3" loading="lazy">
-      <figcaption>Three ways to run it on a 24 GiB Mac, measured on an M4 Pro.</figcaption>
-    </figure>
+    <div class="nav-right">
+      <a class="btn ghost" href="https://github.com/alfofire2/dwarfstar-red-lite">★ GitHub</a>
+      <a class="btn primary" href="#install">Get started</a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <div class="wrap hero">
+    <div>
+      <p class="eyebrow"><b>RED LITE</b> · LOCAL INFERENCE ON A 24 GB MAC</p>
+      <h1>Run an 80B model on a 24&nbsp;GB Mac.</h1>
+      <p class="lede">DwarfStar Red Lite is a narrow C, Objective-C and Metal engine for one model family:
+        Qwen3-Next-80B-A3B and Qwen3-Coder-Next. It streams experts from the SSD, decodes speculatively without
+        changing the answer, and serves an OpenAI-compatible API to your coding agent.</p>
+      <div class="actions">
+        <a class="btn primary" href="#install">Get started →</a>
+        <a class="btn ghost" href="https://github.com/alfofire2/dwarfstar-red-lite">View on GitHub</a>
+      </div>
+      <p class="supported">SUPPORTED: <b>QWEN3-NEXT 80B</b> · <b>QWEN3-CODER-NEXT</b> · APPLE SILICON · METAL ·
+        MIT LICENSE · 24 GB AND UP</p>
+    </div>
+    <div class="term" role="img" aria-label="A Red Lite chat session on an M4 Pro 24 GiB MacBook Pro">
+      <div class="term-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i>
+        <span>redlite · M4 Pro 24 GiB</span></div>
+<pre><span class="p">$</span> redlite chat
+<span class="dim">[redlite] model Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf (best native model … for 24 GiB RAM)
+[redlite] expert cache 16992 MiB (GPU limit 21741 MiB …: full expert residency …)
+[redlite] MTP speculative decoding with Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf (same output as plain decoding; …)</span>
+<span class="you">you&gt;</span> Explain in one sentence why the sky is blue.
+<span class="p">redlite&gt;</span> The sky appears blue because sunlight is scattered by the atmosphere, and shorter blue wavelengths are scattered more than other colors due to Rayleigh scattering.
+<span class="you">you&gt;</span> █</pre>
+    </div>
+  </div>
+
+  <section aria-labelledby="principle">
+    <div class="wrap">
+      <p class="eyebrow"><b>PRINCIPLE</b> · SPARSE MODEL, SMALL MAC</p>
+      <h2 id="principle">An 80B model that touches 3% of itself per token.</h2>
+      <p class="intro">A red dwarf is the smallest true star. Red Lite is the same idea as DwarfStar, made to fit the
+        smallest Mac that can hold an 80B model.</p>
+      <div class="steps">
+        <div class="card"><div class="n">01 · THE MODEL</div><h3>80B parameters</h3>
+          <p>Qwen3-Next has 48 layers, each with 512 experts. At 2 bits the whole file is 19.3 GB.</p></div>
+        <div class="card"><div class="n">02 · THE TOKEN</div><h3>3B in use</h3>
+          <p>Each layer picks 10 of its 512 experts per token. Only about 1.4 GiB of weights is read every time.</p></div>
+        <div class="card"><div class="n">03 · THE MAC</div><h3>24 GB is enough</h3>
+          <p>The dense weights stay in memory and the experts are a cache read from the SSD. With a raised GPU limit,
+            every expert stays on the GPU.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="design">
+    <div class="wrap">
+      <p class="eyebrow"><b>DESIGN</b> · WHAT IS DIFFERENT</p>
+      <h2 id="design">Written for one model, checked against llama.cpp.</h2>
+      <div class="choices">
+        <div><h3>Its own kernels</h3><p>Gated DeltaNet, attention and the 512-expert MoE in Metal, each checked against a CPU
+          reference and llama.cpp before use. llama.cpp is a test oracle, never linked.</p></div>
+        <div><h3>Experts from the SSD</h3><p>A bounded cache with cache-aware routing, at most 0.2% perplexity cost.
+          It is the default on 24 GiB Macs: nothing to configure.</p></div>
+        <div><h3>A better 2-bit file</h3><p>Red Lite's own quantization, F2, has the size of the usual IQ2_XXS and a 6%
+          lower perplexity. It is on Hugging Face.</p></div>
+        <div><h3>Exact speculation</h3><p>MTP drafts a token and checks it in the same pass: up to 30% faster, and the
+          answer never changes.</p></div>
+        <div><h3>An API for agents</h3><p>OpenAI chat completions with tool calling, rendered exactly as the model's
+          own chat template, so agent turns keep the engine state.</p></div>
+        <div><h3>Honest numbers</h3><p>Every result names the Mac it was measured on, and what did not work is written
+          down too.</p></div>
+      </div>
+    </div>
   </section>
 
   <section aria-labelledby="install">
-    <h2 id="install">Install</h2>
-    <pre><code>brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
-brew trust --tap alfofire2/redlite
-brew install redlite
-redlite download 24gb &amp;&amp; redlite download mtp
-redlite chat</code></pre>
-    <p>Or build from source: <a href="https://github.com/alfofire2/dwarfstar-red-lite#install">instructions in the README</a>.
-      Models are standard GGUF files on <a href="https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF">Hugging Face</a>.</p>
+    <div class="wrap">
+      <p class="eyebrow"><b>INSTALL</b> · THREE STEPS</p>
+      <h2 id="install">From zero to a local 80B chat.</h2>
+      <p class="intro">Homebrew installs prebuilt binaries; the model downloads from Hugging Face.</p>
+<pre class="cmd"><span class="c"># 1. install</span>
+<span class="p">$ </span>brew tap alfofire2/redlite https://github.com/alfofire2/dwarfstar-red-lite
+<span class="p">$ </span>brew trust --tap alfofire2/redlite
+<span class="p">$ </span>brew install redlite
+<span class="c"># 2. download the model (19.3 GB) and the MTP head (2.4 GB)</span>
+<span class="p">$ </span>redlite download 24gb &amp;&amp; redlite download mtp
+<span class="c"># 3. check the Mac and chat</span>
+<span class="p">$ </span>redlite doctor &amp;&amp; redlite chat</pre>
+      <p class="note">From source: <a href="https://github.com/alfofire2/dwarfstar-red-lite#install">the README</a>.
+        On a 48 GiB Mac, <code>redlite download 48gb</code> fetches the higher-quality IQ3_XXS file.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="hardware">
+    <div class="wrap">
+      <p class="eyebrow"><b>HARDWARE</b> · WHAT RUNS WHERE</p>
+      <h2 id="hardware">Measured on two Macs.</h2>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>MAC</th><th>FILE</th><th>MODE</th><th>DECODE</th></tr></thead>
+        <tbody>
+          <tr><td>M4 Pro 24 GiB</td><td>F2, 19.3 GB</td><td>4 GiB cache, experts from the SSD (default)</td><td class="num">34 tok/s</td></tr>
+          <tr><td>M4 Pro 24 GiB</td><td>F2, 19.3 GB</td><td>every expert resident (raised GPU limit)</td><td class="num">45 tok/s<br>49–58 with MTP</td></tr>
+          <tr><td>M4 Pro 24 GiB</td><td>IQ3_XXS, 31.7 GB</td><td>4 GiB cache, experts from the SSD</td><td class="num">29 tok/s</td></tr>
+          <tr><td>M4 Max 48 GiB</td><td>IQ3_XXS, 31.7 GB</td><td>every expert resident</td><td class="num">80 tok/s</td></tr>
+          <tr><td>M4 Max 48 GiB</td><td>IQ2_XXS, 19.3 GB</td><td>every expert resident</td><td class="num">86 tok/s<br>97 with MTP</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="note">M1, M2 and M3 are supported by the binaries but not tested yet, and 16 GB was never tried.
+        Reports are welcome.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="benchmarks">
+    <div class="wrap">
+      <p class="eyebrow"><b>BENCHMARKS</b> · FROM THE FINDINGS</p>
+      <h2 id="benchmarks">Faster than llama.cpp on the same file.</h2>
+      <p class="intro">Decode on an M4 Max is 19% faster than the pinned llama.cpp (86.2 vs 72.5 tok/s), and 45–46
+        against 36–38 tok/s on an M4 Pro 24 GiB. Every number has a record in the repository.</p>
+      <div class="charts">
+        <figure><img src="img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB by release, with the llama.cpp launcher" loading="lazy">
+          <figcaption>Decode on the M4 Pro 24 GiB.</figcaption></figure>
+        <figure><img src="img/choices_24gb.svg" alt="Three ways to run it on a 24 GiB Mac" loading="lazy">
+          <figcaption>Three ways to run it on a 24 GiB Mac.</figcaption></figure>
+      </div>
+      <p class="note"><a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">All findings and charts →</a></p>
+    </div>
   </section>
 
   <section aria-labelledby="agents">
-    <h2 id="agents">A local server for coding agents</h2>
-    <p><code>redlite serve --native</code> speaks the OpenAI chat API with tool calling, rendered exactly as the
-      model's own chat template, so an agent's turns keep the engine state instead of re-reading the prompt.</p>
-    <pre><code>npm install -g @earendil-works/pi-coding-agent
-redlite setup-pi --port 8080
-redlite serve --native --context 32768 --port 8080
-pi --provider redlite --model qwen3-next-80b-a3b-redlite</code></pre>
-    <figure>
-      <img src="img/agent_repo_tasks.svg" alt="Harder coding-agent tasks passed: full-precision model 83 percent, Qwen3-Coder-Next at 2 bits 70 percent, F2 50 percent" loading="lazy">
-      <figcaption>Harder tasks on a real repository: the full-precision model through Qwen's API against the 2-bit files on a Mac.</figcaption>
-    </figure>
-  </section>
-
-  <section aria-labelledby="why">
-    <h2 id="why">What makes it different</h2>
-    <ul>
-      <li><strong>Written for one model.</strong> The Gated DeltaNet, attention and 512-expert MoE kernels were each
-        checked against a CPU reference and llama.cpp before use.</li>
-      <li><strong>Expert streaming from the SSD,</strong> with a bounded cache and cache-aware routing (at most 0.2%
-        perplexity cost).</li>
-      <li><strong>A better 2-bit file.</strong> Red Lite's F2 has the size of the usual IQ2_XXS and a 6% lower perplexity.</li>
-      <li><strong>MTP speculative decoding</strong> that never changes the answer.</li>
-      <li><strong>Honest numbers.</strong> Every result names the Mac it was measured on, and what did not work is
-        written down too.</li>
-    </ul>
+    <div class="wrap">
+      <p class="eyebrow"><b>INTEGRATION</b> · CODING AGENTS</p>
+      <h2 id="agents">A local server for your coding agent.</h2>
+      <div class="two">
+        <div>
+          <p><code>redlite serve --native</code> speaks the OpenAI chat API with tool calling. <code>redlite setup-pi</code>
+            configures the pi coding agent in one command.</p>
+          <p>On harder tasks on a real repository, Qwen3-Coder-Next at 2 bits passed <strong>70%</strong> against
+            <strong>83%</strong> for the full-precision model.</p>
+<pre class="cmd"><span class="p">$ </span>npm install -g @earendil-works/pi-coding-agent
+<span class="p">$ </span>redlite setup-pi --port 8080
+<span class="p">$ </span>redlite serve --native --context 32768 --port 8080
+<span class="p">$ </span>pi --provider redlite --model qwen3-next-80b-a3b-redlite</pre>
+        </div>
+        <figure><img src="img/agent_repo_tasks.svg" alt="Harder coding-agent tasks passed: full-precision model 83 percent, Qwen3-Coder-Next at 2 bits 70 percent, F2 50 percent" loading="lazy">
+          <figcaption>Harder agent tasks on a real repository.</figcaption></figure>
+      </div>
+    </div>
   </section>
 
   <section aria-labelledby="faq">
-    <h2 id="faq">FAQ</h2>
-    <details><summary>Can I run an 80B model on a 24 GB Mac?</summary>
-      <p>Yes, Qwen3-Next-80B-A3B. A token uses about 3B of its 80B parameters. By default Red Lite keeps about
-        1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest from the SSD: 34 tok/s on an
-        M4 Pro 24 GiB. With a raised GPU limit every expert stays on the GPU: 45 tok/s, 49–58 with MTP.</p></details>
-    <details><summary>How is it different from DwarfStar?</summary>
-      <p><a href="https://dwarfstar.sh/">DwarfStar</a> (<a href="https://github.com/antirez/ds4">antirez/ds4</a>) by
-        Salvatore Sanfilippo runs DeepSeek V4 and GLM on large Macs. Red Lite applies the same idea to Qwen3-Next and
-        a smaller Mac. It shares no code with DwarfStar and is named after it as a tribute: red dwarfs are the
-        smallest true stars.</p></details>
-    <details><summary>How does it compare with llama.cpp, Ollama, LM Studio or MLX?</summary>
-      <p>Against llama.cpp on the same files: 86.2 vs 72.5 tok/s on an M4 Max 48 GiB, 45–46 vs 36–38 on an M4 Pro
-        24 GiB. Ollama, LM Studio and MLX were not measured.</p></details>
-    <details><summary>Which Mac do I need?</summary>
-      <p>Apple Silicon with 24 GB of memory or more. Tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. M1, M2 and M3
-        should work but have not been tested. Reports are welcome.</p></details>
-    <details><summary>Does it work with Qwen3-Coder and coding agents?</summary>
-      <p>Yes. Qwen3-Coder-Next runs the same way, and on harder agent tasks it passed 70% at 2 bits against 83% for
-        the full-precision model.</p></details>
+    <div class="wrap">
+      <p class="eyebrow"><b>FAQ</b> · COMMON QUESTIONS</p>
+      <h2 id="faq">Questions.</h2>
+      <details><summary>Can I run an 80B model on a 24 GB Mac?</summary>
+        <p>Yes, Qwen3-Next-80B-A3B: a token uses about 3B of its 80B parameters. By default Red Lite keeps about
+          1.4 GiB of dense weights and a 4 GiB expert cache in memory and reads the rest from the SSD: 34 tok/s on an
+          M4 Pro 24 GiB. With a raised GPU limit every expert stays on the GPU: 45 tok/s, 49–58 with MTP.</p></details>
+      <details><summary>How is it different from DwarfStar?</summary>
+        <p><a href="https://dwarfstar.sh/">DwarfStar</a> (<a href="https://github.com/antirez/ds4">antirez/ds4</a>) by
+          Salvatore Sanfilippo is the original project. Red Lite applies its idea to another model, Qwen3-Next, and a
+          smaller Mac. It shares no code with DwarfStar and is not affiliated with it; the name is a tribute.</p></details>
+      <details><summary>How does it compare with llama.cpp, Ollama, LM Studio or MLX?</summary>
+        <p>Against llama.cpp on the same files: 86.2 vs 72.5 tok/s on an M4 Max 48 GiB, 45–46 vs 36–38 on an M4 Pro
+          24 GiB. Ollama, LM Studio and MLX were not measured.</p></details>
+      <details><summary>Which Mac do I need?</summary>
+        <p>Apple Silicon with 24 GB of memory or more. Tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. M1, M2 and M3
+          should work but have not been tested.</p></details>
+      <details><summary>Does it work with Qwen3-Coder and coding agents?</summary>
+        <p>Yes. Qwen3-Coder-Next runs the same way, and on harder agent tasks it passed 70% at 2 bits against 83% for
+          the full-precision model.</p></details>
+    </div>
   </section>
 
-  <footer>
-    <p>DwarfStar Red Lite is open source under the MIT license:
-      <a href="https://github.com/alfofire2/dwarfstar-red-lite">github.com/alfofire2/dwarfstar-red-lite</a>.
-      Model by the Qwen team (Apache-2.0). Q8 sources and importance matrices by bartowski. llama.cpp is used as a
-      test oracle only. Inspired by DwarfStar by Salvatore Sanfilippo.</p>
-  </footer>
+  <section class="cta">
+    <div class="wrap">
+      <h2>Own your local 80B.</h2>
+      <p>Open source, MIT. If it runs on your Mac, a star on GitHub helps other people find it.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/alfofire2/dwarfstar-red-lite">★ Star on GitHub</a>
+        <a class="btn ghost" href="#install">Get started</a>
+      </div>
+    </div>
+  </section>
 </main>
+
+<footer>
+  <div class="wrap">
+    <p>DwarfStar Red Lite · MIT license · <a href="https://github.com/alfofire2/dwarfstar-red-lite">github.com/alfofire2/dwarfstar-red-lite</a></p>
+    <p>Not affiliated with DwarfStar. Inspired by <a href="https://dwarfstar.sh/">DwarfStar</a> by Salvatore Sanfilippo.
+      Model by the Qwen team (Apache-2.0). Q8 sources by bartowski. llama.cpp is used as a test oracle only.</p>
+  </div>
+</footer>
 </body>
 </html>
