@@ -210,6 +210,17 @@ class ToolCallTests(unittest.TestCase):
         status, out = self.chat(self.json_srv, [{"role": "user", "content": "x"}], functions=[{"name": "f"}])
         self.assertEqual(status, 400)
 
+    def test_long_agent_sessions_are_accepted(self):
+        """dev62: an agent session past 256 messages (two per tool call) was rejected with "too many messages"."""
+        msgs = [{"role": "user", "content": "start"}]
+        for i in range(400):
+            msgs.append({"role": "assistant", "content": None, "tool_calls": [
+                {"id": f"c{i}", "type": "function", "function": {"name": "search", "arguments": '{"query": "x"}'}}]})
+            msgs.append({"role": "tool", "tool_call_id": f"c{i}", "content": "nothing"})
+        msgs.append({"role": "user", "content": "done?"})
+        status, out = self.chat(self.json_srv, msgs, [SEARCH], max_tokens=4)
+        self.assertEqual(status, 200, out)
+
     def test_mutated_tool_bodies_get_200_or_400_and_the_servers_stay_up(self):
         import random
         rng = random.Random(59)

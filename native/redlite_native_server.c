@@ -605,6 +605,13 @@ static int parse_messages(jp *j, rl_chat_request *req) {
     if (j->p < j->end && *j->p == ']') { j->p++; j->depth--; return 1; }
     for (;;) {
         if (req->message_count >= RL_SERVER_MAX_MESSAGES) return jfail(j, "too many messages");
+        if (req->message_count == req->message_cap) {
+            const uint32_t cap = req->message_cap ? 2u * req->message_cap : 16u;
+            rl_chat_message *grown = (rl_chat_message *)realloc(req->messages, (size_t)cap * sizeof(*grown));
+            if (!grown) return jfail(j, "out of memory");
+            req->messages = grown;
+            req->message_cap = cap;
+        }
         msg_state m = {0};
         if (!jobject(j, message_member, &m)) { msg_state_free(&m); return 0; }
         if (!m.role) { msg_state_free(&m); return jfail(j, "every message needs a \"role\""); }
@@ -770,7 +777,9 @@ void rl_chat_request_free(rl_chat_request *req) {
         free(req->messages[i].content);
         for (uint32_t k = 0; k < req->messages[i].tool_call_count; ++k) tool_call_clear(&req->messages[i].tool_calls[k]);
     }
-    req->message_count = 0;
+    free(req->messages);
+    req->messages = NULL;
+    req->message_count = req->message_cap = 0;
     rl_json_free(req->tools);
     req->tools = NULL;
     for (uint32_t i = 0; i < req->stop_count; ++i) { free(req->stop[i]); req->stop[i] = NULL; }
