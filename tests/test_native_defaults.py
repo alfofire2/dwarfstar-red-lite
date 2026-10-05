@@ -87,6 +87,7 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
                  patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_generate", return_value=Path("/x/redlite-generate")), \
                  contextlib.redirect_stdout(out):
@@ -120,6 +121,7 @@ class NativeServeCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
                  patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
                  contextlib.redirect_stdout(out):
