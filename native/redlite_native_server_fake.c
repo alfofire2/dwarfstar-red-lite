@@ -86,9 +86,9 @@ static int fake_generate(void *ctx, const rl_chat_request *req, rl_server_emit_f
     char *rendered = NULL;
     const char *reply = buf;
     if (strcmp(last, "__params__") == 0) {
-        snprintf(buf, sizeof(buf), "temperature=%.2f top_p=%.2f top_k=%d min_p=%.2f max_tokens=%u seed=%s%llu",
+        snprintf(buf, sizeof(buf), "temperature=%.2f top_p=%.2f top_k=%d min_p=%.2f max_tokens=%u seed=%s%llu presence=%.2f frequency=%.2f",
             (double)req->temperature, (double)req->top_p, (int)req->top_k, (double)req->min_p, req->max_tokens,
-            req->has_seed ? "" : "none/", (unsigned long long)req->seed);
+            req->has_seed ? "" : "none/", (unsigned long long)req->seed, (double)req->presence_penalty, (double)req->frequency_penalty);
     } else if (strcmp(last, "__prompt__") == 0) {
         char *p = rl_server_prompt(req, f->tool_format);
         rendered = p ? (char *)malloc(2u * strlen(p) + 1u) : NULL;

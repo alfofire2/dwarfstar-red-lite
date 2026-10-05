@@ -57,6 +57,8 @@ typedef struct {
     float top_p;           /* < 0 -> server default */
     int32_t top_k;         /* < 0 -> server default (extension, not in the OpenAI schema) */
     float min_p;           /* < 0 -> server default (extension, as in llama-server) */
+    float presence_penalty;   /* dev63: OpenAI, -2..2; NAN -> server default */
+    float frequency_penalty;  /* dev63: OpenAI, -2..2; NAN -> server default */
     uint64_t seed;
     int has_seed;
     int stream;
@@ -95,6 +97,8 @@ typedef struct {
     float default_top_p;
     uint32_t default_top_k;
     float default_min_p;
+    float default_presence_penalty;    /* dev63 (default 0) */
+    float default_frequency_penalty;
     int read_timeout_s;         /* per-connection receive timeout (default 30) */
     uint32_t queue_max;         /* chat requests waiting behind the running ones before 503 (default 16) */
     uint32_t workers;           /* dev56: generations run at the same time (default 1; the backend must be re-entrant) */

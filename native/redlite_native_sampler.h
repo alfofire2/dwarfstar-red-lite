@@ -19,6 +19,10 @@ typedef struct {
     float top_p;         /* >= 1 -> disabled */
     float min_p;         /* <= 0 -> disabled (llama.cpp default 0.05) */
     uint64_t seed;
+    /* dev63: OpenAI penalties over the tokens generated so far (rl_sampler_accept): every such token's logit is
+     * lowered by presence_penalty + frequency_penalty x its count, before the chain above. 0 = off. */
+    float presence_penalty;
+    float frequency_penalty;
 } rl_sampler_params;
 
 typedef struct {
@@ -28,11 +32,18 @@ typedef struct {
     float *probs;        /* vocab floats: normalized final distribution (rl_sampler_distribution) */
     uint32_t *index;     /* vocab ids: candidates in descending logit order */
     uint32_t vocab;
+    float *penalized;    /* dev63: vocab floats, the logits after the penalties (penalties on only) */
+    uint32_t *counts;    /* per token id, times generated */
+    uint32_t *seen;      /* the distinct ids generated, seen_count of them */
+    uint32_t seen_count;
 } rl_sampler;
 
 void rl_sampler_params_default(rl_sampler_params *p);
 int rl_sampler_init(rl_sampler *s, const rl_sampler_params *p, uint32_t vocab);
 void rl_sampler_free(rl_sampler *s);
+
+/* dev63: records a generated token for the penalties (a no-op when they are off). */
+void rl_sampler_accept(rl_sampler *s, uint32_t token);
 
 /* Returns the selected token id. */
 uint32_t rl_sampler_sample(rl_sampler *s, const float *logits);

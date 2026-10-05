@@ -180,6 +180,22 @@ static int sampler_selftest(char *error, size_t cap) {
     ok = n == 1u && ids[0] == 777u && probs[0] == 1.0f;
     rl_sampler_free(&s);
     if (!ok) { snprintf(error, cap, "greedy distribution must be the argmax with probability 1"); return 0; }
+    /* dev63: penalties. 777 (20.0) beats 4000 (19.5) until 777 has been generated; presence 1.0 drops it to 19.0 */
+    p.temperature = 0.0f; p.presence_penalty = 1.0f;
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    ok = rl_sampler_sample(&s, logits) == 777u;
+    rl_sampler_accept(&s, 777u);
+    ok = ok && rl_sampler_sample(&s, logits) == 4000u && logits[777] == 20.0f;   /* the input is not modified */
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "presence penalty must move the argmax off a generated token"); return 0; }
+    p.presence_penalty = 0.0f; p.frequency_penalty = 0.3f;   /* 20 - 0.3 n: still first after 1, second after 2 */
+    if (!rl_sampler_init(&s, &p, V)) { snprintf(error, cap, "sampler init failed"); return 0; }
+    rl_sampler_accept(&s, 777u);
+    ok = rl_sampler_sample(&s, logits) == 777u;
+    rl_sampler_accept(&s, 777u);
+    ok = ok && rl_sampler_sample(&s, logits) == 4000u;
+    rl_sampler_free(&s);
+    if (!ok) { snprintf(error, cap, "frequency penalty must grow with the count"); return 0; }
     return 1;
 }
 
@@ -234,7 +250,7 @@ int main(int argc, char **argv) {
     if (!synthetic_gguf_test(error, sizeof(error))) { fprintf(stderr, "synthetic GGUF test failed: %s\n", error); return 1; }
     printf("synthetic GGUF parse  : OK (token_type length mismatch rejected)\n");
     if (!sampler_selftest(error, sizeof(error))) { fprintf(stderr, "sampler selftest failed: %s\n", error); return 1; }
-    printf("sampler selftest      : OK (greedy, top-k selection, top-p nucleus, min-p, distribution)\n");
+    printf("sampler selftest      : OK (greedy, top-k selection, top-p nucleus, min-p, distribution, penalties)\n");
     if (argc < 2) return 0;
 
     rl_gguf_model m;
