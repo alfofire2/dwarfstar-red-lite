@@ -92,12 +92,11 @@
   nav .wrap { display: flex; align-items: center; gap: 30px; height: 60px; }
   .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 600 15px var(--mono); }
   .brand img { width: 26px; height: 26px; }
-  .brand span { color: var(--faint); font-weight: 400; }
   .links { display: flex; gap: 24px; font: 12px var(--mono); letter-spacing: 1.3px; }
-  .links a { color: var(--muted); text-decoration: none; transition: color .15s; }
+  .links a { color: var(--muted); text-decoration: none; white-space: nowrap; transition: color .15s; }
   .links a:hover { color: var(--ink); }
   .nav-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 8px; font-weight: 600;
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; white-space: nowrap; border-radius: 8px; font-weight: 600;
          font-size: 14.5px; text-decoration: none; border: 1px solid transparent; transition: background .15s, border-color .15s, transform .15s; }
   .btn.primary { background: var(--dwarf); color: #fff; }
   .btn.primary:hover { background: var(--dwarf-hi); color: #fff; }
@@ -293,8 +292,7 @@
     svg.arch { min-width: 660px; }
   }
   @media (max-width: 480px) {
-    .nav-right .ghost { display: none; }
-    .brand span { display: none; }
+    .nav-right .ghost, .nav-right .primary { display: none; }
     .wrap { padding: 0 16px; }
     .cap p { font-size: 15.5px; }
   }
@@ -308,21 +306,23 @@
     .cap { transition: none; }
   }
 </style>
+<script src="search.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 
 <nav aria-label="Main">
   <div class="wrap">
-    <a class="brand" href="#top"><img src="img/logo.svg" alt="">redlite<span>.alfonsodaniello.it</span></a>
+    <a class="brand" href="#top"><img src="img/logo.svg" alt="">redlite</a>
     <div class="links">
       <a href="#how">HOW IT WORKS</a>
       <a href="#fit">FIT CHECK</a>
       <a href="#benchmarks">BENCHMARKS</a>
       <a href="#agents">AGENTS</a>
-      <a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/README.md">DOCS</a>
+      <a href="docs/">DOCS</a>
     </div>
     <div class="nav-right">
+      <button class="search-btn" type="button" data-search>Search <kbd>⌘K</kbd></button>
       <a class="btn ghost stars" href="https://github.com/alfofire2/dwarfstar-red-lite" data-stars>★ Star</a>
       <a class="btn primary" href="#run">Get started</a>
     </div>
@@ -376,7 +376,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
             <h3>Small, hot, yours</h3>
             <p>Dense weights resident, experts cached from the SSD, a 2-bit file 6% better than the usual one. It fits
               a 24 GB Mac. The 48 rays are the model's layers: the 12 long ones are its full-attention layers.</p>
-            <p><a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">How the collapse works →</a></p>
+            <p><a href="docs/FINDINGS.html">How the collapse works →</a></p>
           </div>
         </div>
         <div class="phase-dots" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
@@ -472,7 +472,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
       <p class="eyebrow"><b>Run it</b></p>
       <h2 id="run">Run Red Lite in three steps.</h2>
       <p class="intro">Homebrew installs prebuilt binaries; the model comes from Hugging Face. From source: see the
-        <a href="https://github.com/alfofire2/dwarfstar-red-lite#install">README</a>.</p>
+        <a href="docs/guide.html#install">README</a>.</p>
       <div class="steps">
         <div class="step"><p class="lbl"><b>STEP 1</b> · INSTALL</p>
           <div class="term"><div class="term-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i><span>zsh</span></div>
@@ -541,7 +541,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
       </div>
       <p class="note">Prefill at 1,100 · 8,192 tokens where two numbers are given, else at 8,192. Against the pinned
         llama.cpp on the same file, generation is 19% faster on the M4 Max (86.2 vs 72.5 tok/s).
-        <a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">All benchmarks →</a></p>
+        <a href="docs/FINDINGS.html">All benchmarks →</a></p>
     </div>
   </section>
 
@@ -610,7 +610,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
       <div><b>ENGINE</b>MIT · <a href="https://github.com/alfofire2/dwarfstar-red-lite">alfofire2/dwarfstar-red-lite</a></div>
       <div><b>BUILT</b>2026-10-05</div>
       <div><b>REFERENCES</b><a href="https://github.com/alfofire2/dwarfstar-red-lite">GitHub</a> ·
-        <a href="https://github.com/alfofire2/dwarfstar-red-lite/blob/main/docs/FINDINGS.md">Findings</a> ·
+        <a href="docs/FINDINGS.html">Findings</a> ·
         <a href="https://huggingface.co/alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF">Hugging Face</a></div>
     </div>
     <p class="foot-note">An independent project inspired by <a href="https://dwarfstar.sh/">DwarfStar</a> by Salvatore
