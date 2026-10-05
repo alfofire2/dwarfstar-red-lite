@@ -1496,7 +1496,7 @@ static void run_chat(int fd, const rl_server_backend *backend, rl_chat_request *
         if (!parse_tool_calls(s.calls.data, s.calls.len, backend->tool_format, req.tools, calls, &call_count)) {
             /* dev62: the model wrote <tool_call> but not a well-formed call; what it wrote goes to the client as text */
             fprintf(stderr, "[redlite-server] request %lu: unparsed tool call (%zu bytes, sent as text): %.*s\n", request_no,
-                    s.calls.len, (int)(s.calls.len < 400u ? s.calls.len : 400u), s.calls.data);
+                    s.calls.len, (int)(s.calls.len < 2000u ? s.calls.len : 2000u), s.calls.data);
             for (uint32_t i = 0; i < RL_SERVER_MAX_TOOL_CALLS; ++i) { free(calls[i].name); free(calls[i].arguments); }
             memset(calls, 0, sizeof(calls));
             call_count = 0;
