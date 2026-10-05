@@ -99,6 +99,71 @@ TASKS = [
     },
 ]
 
+# dev62: harder tasks on a copy of this repository (git archive of HEAD): new code in a large file, reading C,
+# a planted bug, and one long session of four prompts in the same pi session.
+REPO_TASKS = [
+    {
+        "id": "doctor_json",
+        "repo": True,
+        "prompt": "Add a --json option to the `redlite doctor` command (redlite/cli.py) that prints the same "
+                  "information as one JSON object instead of text lines. Add a unit test for it in tests/test_cli.py, "
+                  "then run python3 -m unittest discover -s tests -p test_cli.py and make sure it passes.",
+        "check": "import json, subprocess, sys, os\n"
+                 "env = {**os.environ, 'PYTHONPATH': '.'}\n"
+                 "out = subprocess.run([sys.executable, '-m', 'redlite.cli', 'doctor', '--json'], capture_output=True, text=True, env=env)\n"
+                 "d = json.loads(out.stdout)\n"
+                 "assert isinstance(d, dict) and len(d) >= 3, d\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_cli.py'], capture_output=True, text=True, env=env)\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n"
+                 "assert '--json' in open('tests/test_cli.py').read()\n",
+    },
+    {
+        "id": "explain_stop",
+        "repo": True,
+        "prompt": "In native/redlite_native_server.c, how are stop sequences handled while an answer is streamed? Name "
+                  "the function that finds them, and say what happens to generated text that could be the start of a "
+                  "stop sequence. Answer briefly; do not modify any file.",
+        "unchanged_tree": True,
+        "answer": ["rl_stop_scan"],
+        "answer_any": ["hold", "held", "keep", "kept", "buffer", "pending"],
+    },
+    {
+        "id": "fix_planner",
+        "repo": True,
+        "patch": [("redlite/planner.py", "NATIVE_SLOT_STATE_POSITIONS * (parallel - 1)", "NATIVE_SLOT_STATE_POSITIONS * parallel")],
+        "prompt": "A test in tests/test_native_defaults.py fails. Find the cause in the redlite package and fix it; do "
+                  "not change the tests. Run python3 -m unittest discover -s tests -p test_native_defaults.py to confirm.",
+        "unchanged": ["tests/test_native_defaults.py"],
+        "check": "import subprocess, sys, os\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_defaults.py'],"
+                 " capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n",
+    },
+    {
+        "id": "long_session",
+        "repo": True,
+        "prompts": [
+            "Read redlite/planner.py and explain in three sentences what native_gpu_plan returns and in which order "
+            "it tries the configurations.",
+            "Now read the function _gpu_tuning in redlite/cli.py and say how it uses native_gpu_plan.",
+            "Which test class in tests/test_native_defaults.py covers native_gpu_plan? Name it.",
+            "Add one more test method to that class: with a GPU limit of 1 MiB nothing fits, so native_gpu_plan must "
+            "return None. Then run python3 -m unittest discover -s tests -p test_native_defaults.py.",
+        ],
+        "answer": ["GpuPlanTests"],
+        "check": "import subprocess, sys, os, re\n"
+                 "src = open('tests/test_native_defaults.py').read()\n"
+                 "cls = src[src.index('class GpuPlanTests'):]\n"
+                 "cls = cls[:cls.index('\\nclass ', 1)] if '\\nclass ' in cls[1:] else cls\n"
+                 "assert 'None' in cls and len(re.findall(r'def test_', cls)) >= 2, 'no new test in GpuPlanTests'\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_defaults.py'],"
+                 " capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n",
+    },
+]
+SUITES = {"basic": TASKS, "repo": REPO_TASKS}
+ROOT = Path(__file__).resolve().parents[2]
+
 REQ = re.compile(r"request \d+: prompt=(\d+) cached=(\d+) completion=(\d+) finish=(\w+)")
 
 
@@ -116,19 +181,37 @@ def write_agent_dir(path: Path, port: int, model_id: str, context: int) -> None:
 def run_task(task: dict, args) -> dict:
     with tempfile.TemporaryDirectory() as d:
         work = Path(d)
+        if task.get("repo"):
+            archive = subprocess.run(["git", "-C", str(ROOT), "archive", "HEAD"], capture_output=True, check=True).stdout
+            subprocess.run(["tar", "-x", "-C", str(work)], input=archive, check=True)
+            for name, old, new in task.get("patch", []):
+                text = (work / name).read_text()
+                assert text.count(old) == 1, (name, old)
+                (work / name).write_text(text.replace(old, new))
+            task = {**task, "files": {n: (work / n).read_text() for n in task.get("unchanged", [])}}
+            snapshot = {p: p.read_bytes() for p in work.rglob("*") if p.is_file()} if task.get("unchanged_tree") else None
+        else:
+            snapshot = None
         for name, text in task["files"].items():
             (work / name).write_text(text)
         log_start = Path(args.server_log).stat().st_size
         env = {**os.environ, "PI_CODING_AGENT_DIR": args.agent_dir, "PI_OFFLINE": "1"}
         t0 = time.monotonic()
-        try:
-            out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, "--no-session",
-                                  "--no-extensions", "--no-skills", "--no-context-files", "-p", task["prompt"]],
-                                 cwd=work, env=env, stdin=subprocess.DEVNULL,   # pi -p reads a piped stdin
-                                 capture_output=True, text=True, timeout=args.timeout)
-            answer, rc = out.stdout, out.returncode
-        except subprocess.TimeoutExpired:
-            answer, rc = "", -1
+        answer, rc = "", 0
+        prompts = task.get("prompts") or [task["prompt"]]
+        session = ["--no-session"] if len(prompts) == 1 else ["--session-dir", str(work / ".pi-sessions"), "--session-id", "eval"]
+        for k, prompt in enumerate(prompts):   # several prompts: one pi session, continued
+            try:
+                out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, *session,
+                                      "--no-extensions", "--no-skills", "--no-context-files", "-p", prompt],
+                                     cwd=work, env=env, stdin=subprocess.DEVNULL,   # pi -p reads a piped stdin
+                                     capture_output=True, text=True,
+                                     timeout=max(1, args.timeout - (time.monotonic() - t0)))
+                answer, rc = answer + out.stdout, out.returncode
+            except subprocess.TimeoutExpired:
+                rc = -1
+            if rc != 0:
+                break
         wall = time.monotonic() - t0
         with open(args.server_log, encoding="utf-8", errors="replace") as f:
             f.seek(log_start)
@@ -142,6 +225,12 @@ def run_task(task: dict, args) -> dict:
         for fact in task.get("answer", []):
             if fact not in answer:
                 problems.append(f"answer lacks {fact!r}")
+        if task.get("answer_any") and not any(w in answer.lower() for w in task["answer_any"]):
+            problems.append(f"answer lacks any of {task['answer_any']}")
+        if snapshot is not None:
+            changed = [str(p.relative_to(work)) for p, b in snapshot.items() if not p.exists() or p.read_bytes() != b]
+            if changed:
+                problems.append(f"modified {changed[:3]}")
         if "check" in task:
             (work / "check_task.py").write_text(task["check"])
             r = subprocess.run([sys.executable, "check_task.py"], cwd=work, capture_output=True, text=True, timeout=120)
@@ -161,6 +250,7 @@ def main() -> int:
     ap.add_argument("--model-id", default="qwen3-next-80b-a3b-redlite")
     ap.add_argument("--context", type=int, default=32768)
     ap.add_argument("--agent-dir", help="pi config dir (default: a models.json for --port in a temporary dir)")
+    ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per task")
     ap.add_argument("--json", help="write the results here")
@@ -170,7 +260,7 @@ def main() -> int:
         tmp = tempfile.TemporaryDirectory()
         args.agent_dir = tmp.name
         write_agent_dir(Path(tmp.name), args.port, args.model_id, args.context)
-    tasks = [t for t in TASKS if not args.tasks or t["id"] in args.tasks.split(",")]
+    tasks = [t for t in SUITES[args.suite] if not args.tasks or t["id"] in args.tasks.split(",")]
     results = []
     for t in tasks:
         r = run_task(t, args)
