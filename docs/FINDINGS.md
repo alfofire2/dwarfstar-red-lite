@@ -266,6 +266,23 @@ The first measurement found three problems, all fixed:
 
 <p align="center"><img src="img/coding_agent.svg" alt="Coding-agent tasks passed per model and Mac"></p>
 
+**Harder tasks** (dev62). The full-precision model behind Qwen's API also passes those five tasks, so four harder
+ones were run on a copy of this repository:
+- extend the CLI with a test;
+- explain part of the C server;
+- fix a planted bug;
+- a four-prompt session.
+
+They separate the models:
+- full precision 83 %;
+- Qwen3-Coder-Next at 2 bits 70 %;
+- F2 50 %.
+
+For agents, use the coding model. On the same Mac two agents at once gain only 2–5 % (`--parallel 2`), because an
+agent turn is mostly prompt ingestion. Cache-aware routing costs at most 0.2 % in perplexity.
+
+<p align="center"><img src="img/agent_repo_tasks.svg" alt="Harder agent tasks passed: Qwen API, Qwen3-Coder-Next, F2"></p>
+
 ## 10. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:

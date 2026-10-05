@@ -97,7 +97,10 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
   - Qwen3-Coder-Next IQ2_XXS passed 15 of 15 on the M4 Max and 14 of 15 on the M4 Pro 24 GiB;
   - Red Lite F2 passed 15 of 15 on the M4 Pro 24 GiB, at 6–29 s per task.
 - **State reuse:** each turn reuses the engine state, so the agent's long system prompt is read once per task.
-- Details: `docs/REDLITE_DEV60_CODING_AGENT.md`.
+- **Harder tasks on this repository** (dev62): Qwen3-Coder-Next passed 70 % and F2 50 %, against 83 % for the
+  full-precision model through Qwen's API. For agents, use the coding model.
+- **`--parallel 2`** gains only 2–5 % with agents.
+- Details: `docs/REDLITE_DEV60_CODING_AGENT.md`, `docs/REDLITE_DEV62_AGENT_TESTS.md`.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)

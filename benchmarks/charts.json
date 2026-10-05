@@ -177,6 +177,19 @@
         {"label": "IQ3_XXS, 4 GiB cache (SSD)", "values": [29.29]}
       ],
       "sources": ["benchmarks/m4max-48gb-dev58-dense-precision.json", "benchmarks/m4pro-dev61-streaming.json"]
+    },
+    {
+      "id": "agent_repo_tasks",
+      "title": "Harder coding-agent tasks on a real repository (pi agent, M4 Max)",
+      "unit": "% passed",
+      "note": "4 tasks: add --json to redlite models with a test, explain the C server's stop sequences, fix a planted planner bug, a 4-prompt session. Qwen API 3 runs, Qwen3-Coder-Next 5, F2 3.",
+      "series": ["passed"],
+      "bars": [
+        {"label": "Qwen API, full precision", "values": [83]},
+        {"label": "Qwen3-Coder-Next IQ2_XXS", "values": [70]},
+        {"label": "Red Lite F2", "values": [50]}
+      ],
+      "sources": ["benchmarks/m4-dev62-agent-tests.json"]
     }
   ]
 }

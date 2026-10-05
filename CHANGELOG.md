@@ -2,6 +2,18 @@
 
 ## Unreleased (after 0.6.0)
 
+- dev62: **five follow-up tests.**
+  - **Cache-aware routing** costs +0.19 % (IQ3_XXS) and +0.06 % (F2) engine perplexity with the 4 GiB cache.
+  - **Full-precision reference:** Qwen's API model passes the five dev60 tasks 15/15, so they are too easy.
+  - **Harder tasks** on a copy of this repository (`agent_eval.py --suite repo`): API 10/12, Qwen3-Coder-Next
+    14/20, F2 6/12.
+  - **IQ3_XXS with the agent** on the 24 GiB Mac from the SSD: 15/15, but twice F2's time.
+  - **`--parallel 2` with two agents:** 2–5 %.
+  - **Server fixes found by the runs:**
+    - chat messages on the heap, up to 16,384 (256 were hit by an agent session);
+    - XML calls with `<KEY>` for `<parameter=KEY>` accepted (2-bit Qwen3-Coder);
+    - unparsed calls logged.
+  - `docs/REDLITE_DEV62_AGENT_TESTS.md`, FINDINGS section 9 with a chart.
 - dev61: **the 24 GiB Mac at the default GPU limit** (bounded 4 GiB expert cache, experts streamed from the SSD).
   M4 Pro:
   - **Coding agent:** pi installed on the same Mac; F2 and Qwen3-Coder-Next pass 15/15 each, 20–50 % slower than
