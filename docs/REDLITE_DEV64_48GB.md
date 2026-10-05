@@ -115,14 +115,32 @@ command run twice. Same output on every run, no errors.
 - **A second long run is slower for G2 and not for IQ3_XXS.** The likely cause is memory pressure: the system had
   4.2–5.2 GiB of swap in use during these runs, and G2's footprint is 1.7 GiB larger. This is not proven; the runs
   did not record swap activity during the prefill.
-- **Open:** whether the server, which keeps one process, shows it. These runs started a new process each time.
+
+**In the server** (one process, `redlite-server --cache-mib full --mtp --context 32768`, two different long prompts
+180 s apart, so the second cannot reuse the first's state). Swap-outs are `vm_stat` pages of 16 KiB written to swap
+during the request.
+
+| File, request | Prompt tokens | Prompt tok/s | Decode tok/s | Swapped out during the request |
+|---|---:|---:|---:|---:|
+| IQ3_XXS, 1 | 25,378 | 619.9 | 57.2 | 0 |
+| IQ3_XXS, 2 | 22,518 | 595.5 | 61.0 | 0 |
+| G2, 1 | 25,378 | **400.7** | 58.5 | about 9.5 GiB |
+| G2, 2 | 22,518 | 572.5 | 56.8 | about 1.2 GiB |
+
+- **The cause is memory pressure.** During G2's first long request, macOS swapped out about 9.5 GiB of other
+  processes' memory and prompt ingestion fell by a third. Once the room was made, the second request ran close to
+  IQ3_XXS. IQ3_XXS caused no swap-out.
+- **Decode is unaffected** in every run.
+- **It depends on the rest of the Mac.** This M4 Max had other applications open, with 4–5 GiB of swap in use
+  before the tests. On a Mac with less else running the cost should be smaller, but that was not measured.
 
 ## Choice
 
 **G2** for 48 GiB Macs: perplexity −0.65 % on text and −1.4 % on code against IQ3_XXS, the same decode speed with
 MTP, and inside the planner's 70 % rule. It passes the parity checks. Before it replaces IQ3_XXS in
 `redlite download 48gb`:
-- the second-run slowdown at long context, explained or measured in the server;
+- a decision on long contexts: G2's 1.7 GiB more pushes a 48 GiB Mac into swap above about 20K tokens, which
+  costs a third of prompt speed once;
 - the Hugging Face upload.
 
 ## Scope boundary
