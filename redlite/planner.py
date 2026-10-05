@@ -198,7 +198,9 @@ NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 # the 24 GiB files in preference order: Red Lite F2 (dev58), Red Lite E3 (dev54), then Bartowski's IQ2_XXS
 NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
                        NATIVE_REFERENCE_MODEL)
-NATIVE_MODEL_PREFERENCE = ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",) + NATIVE_SMALL_MODELS
+# dev64: Red Lite G2 (redlite download 48gb-g2) first when present: it is only there when the user chose it
+NATIVE_MODEL_PREFERENCE = ("Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+                           ) + NATIVE_SMALL_MODELS
 
 
 @dataclass(frozen=True)
@@ -242,7 +244,12 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
     if wired_mib > 0:
         return native_full_residency_mib(residency, context, batch, mtp) <= wired_mib
     extra = NATIVE_MTP_MIB * 1024 * 1024 if mtp else 0
-    return residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra <= ram_bytes * NATIVE_WORKING_SET_FRACTION
+    # dev64: the context's KV cache counts too (1.5 GiB at 32K), since it is memory the run really holds. At 25K-token
+    # prompts on the M4 Max 48 GiB, G2 (65.1 % of RAM) swapped and slowed prompt ingestion with or without MTP; this
+    # rule keeps MTP off for it above ~13.5K positions, it does not remove that.
+    kv = int((context or 4096) * NATIVE_KV_MIB_PER_POS * 1024 * 1024)
+    return (residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra + kv
+            <= ram_bytes * NATIVE_WORKING_SET_FRACTION)
 
 
 NATIVE_SLOT_STATE_POSITIONS = 1536   # dev56: a second slot's DeltaNet state (72 MiB) in 48 KiB KV positions

@@ -149,6 +149,7 @@ def _hf_binary() -> list[str]:
 
 
 SERVER_MODEL_ID = "qwen3-next-80b-a3b-redlite"   # the id redlite-server reports in /v1/models
+AGENT_TEMPERATURE = 0.3                          # dev63: setup-pi's sampling temperature for agent loops
 
 
 def pi_provider(port: int, context: int, host: str = "127.0.0.1") -> dict:
@@ -159,6 +160,9 @@ def pi_provider(port: int, context: int, host: str = "127.0.0.1") -> dict:
                    "supportsStrictMode": False, "maxTokensField": "max_tokens"},
         "models": [{"id": SERVER_MODEL_ID, "name": "Red Lite (local)", "reasoning": False, "input": ["text"],
                     "contextWindow": context, "maxTokens": min(4096, context // 4),
+                    # dev63: the 2-bit Qwen3-Coder-Next looped 4 times in 36 agent sessions at temperature >= 0.7 and
+                    # never at 0.3 (M4 Pro, repo suite); pi sends this with every request
+                    "samplingParams": {"temperature": AGENT_TEMPERATURE},
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}],
     }
 
@@ -184,7 +188,8 @@ def cmd_setup_pi(args) -> int:
         f.write(json.dumps(config, indent=2) + "\n")
     os.chmod(tmp, mode)   # the umask may have narrowed it
     tmp.replace(path)
-    print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context})")
+    print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context}, "
+          f"temperature {AGENT_TEMPERATURE})")
     print(f"start the server:  redlite serve --native --context {args.context} --port {args.port}")
     print(f"then:              pi --provider redlite --model {SERVER_MODEL_ID}")
     return 0
@@ -210,6 +215,20 @@ def cmd_download(args) -> int:
 
 
 def cmd_models(args) -> int:
+    if args.json:
+        variants = []
+        for v in VARIANTS.values():
+            variants.append({
+                "key": v.key,
+                "repo": v.repo,
+                "filename": v.filename,
+                "nominal_gb": v.nominal_gb,
+                "quality": v.quality,
+                "recommended_mode": v.recommended_mode
+            })
+        print(json.dumps(variants, indent=2))
+        return 0
+    
     print("variant      approx GB   quality               default mode")
     for v in VARIANTS.values():
         print(f"{v.key:12} {v.nominal_gb:9.2f}   {v.quality:20} {v.recommended_mode}")
@@ -284,6 +303,12 @@ def _gpu_tuning(model, cache_mib, args, context: int):
                 head = None
             if batch != 2048:
                 print(f"[redlite] prefill chunks of {batch} tokens to fit the GPU limit ({wired} MiB) at {where}")
+    if wired == 0 and full and head:   # dev64: at the default limit, MTP must fit the RAM rule at this context too
+        from .planner import NATIVE_WORKING_SET_FRACTION, native_full_residency_fits
+        if not native_full_residency_fits(detect(Path(model).parent).ram_bytes, res, 0, context, mtp=True):
+            print(f"[redlite] MTP off: with it, {Path(model).name} at {where} is above "
+                  f"{NATIVE_WORKING_SET_FRACTION:.0%} of RAM")
+            head = None
     if head:
         print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
     return batch, head
@@ -448,6 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_pressure)
 
     s = sub.add_parser("models", help="List curated Qwen3-Next 80B variants")
+    s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_models)
 
     s = sub.add_parser("plan", help="Calculate RAM/SSD execution plan")

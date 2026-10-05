@@ -1,0 +1,1186 @@
+{
+  "id": "dev63-coder-quant-sampling",
+  "date": "2026-10-05",
+  "source": "docs/REDLITE_DEV63_CODER_QUANT_SAMPLING.md",
+  "files": {
+    "Bartowski IQ2_XXS": {
+      "bytes": 19298975424
+    },
+    "CE3": {
+      "bytes": 19298975424,
+      "recipe": "quant_mix.py --iq2xs-layers 37-47"
+    },
+    "CF2": {
+      "bytes": 19319619264,
+      "recipe": "quant_mix.py --iq2xs-layers 40-47 --dense-type q4_K",
+      "sha256": "17da099e1a7b0f5caff1536ef56f5f616a7e9bccc0216bd1030d1e0855092bac"
+    }
+  },
+  "perplexity_m4max": {
+    "method": "scripts/dev/perplexity.sh, pinned llama.cpp 7798007a2, ctx 512; text = tests/fixtures/perplexity_corpus.txt, code = tests/fixtures/perplexity_code_corpus.txt",
+    "perplexity_corpus": {
+      "perplexity": {
+        "Qwen_Qwen3-Coder-Next-IQ2_XXS": 18.5317,
+        "CE3": 18.2439,
+        "CF2": 18.72
+      },
+      "paired": {
+        "CE3_vs_Bartowski": {
+          "mean_nats": -0.0157,
+          "t": -3.2,
+          "better_chunks": 68,
+          "chunks": 111
+        },
+        "CF2_vs_Bartowski": {
+          "mean_nats": 0.0101,
+          "t": 1.2,
+          "better_chunks": 56,
+          "chunks": 111
+        },
+        "CF2_vs_CE3": {
+          "mean_nats": 0.0258,
+          "t": 3.2,
+          "better_chunks": 40,
+          "chunks": 111
+        }
+      }
+    },
+    "perplexity_code_corpus": {
+      "perplexity": {
+        "Qwen_Qwen3-Coder-Next-IQ2_XXS": 2.6233,
+        "CE3": 2.5843,
+        "CF2": 2.537
+      },
+      "paired": {
+        "CE3_vs_Bartowski": {
+          "mean_nats": -0.015,
+          "t": -2.3,
+          "better_chunks": 55,
+          "chunks": 90
+        },
+        "CF2_vs_Bartowski": {
+          "mean_nats": -0.0335,
+          "t": -4.0,
+          "better_chunks": 67,
+          "chunks": 90
+        },
+        "CF2_vs_CE3": {
+          "mean_nats": -0.0185,
+          "t": -2.4,
+          "better_chunks": 57,
+          "chunks": 90
+        }
+      }
+    }
+  },
+  "agent_repo_suite_m4max": {
+    "method": "agent_eval.py --suite repo --timeout 900, every expert resident, 32K, server defaults, pi 0.84.4",
+    "Bartowski IQ2_XXS": {
+      "passed": 10,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 3,
+        "fix_planner": 2,
+        "long_session": 2
+      },
+      "median_wall_s": {
+        "models_json": 87.7,
+        "explain_stop": 74.2,
+        "fix_planner": 74.5,
+        "long_session": 68.5
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 49,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 120.8,
+            "requests": 20
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 114.0,
+            "requests": 8
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 74.5,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 57.2,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 72.3,
+            "requests": 12
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 74.2,
+            "requests": 6
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 109.8,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": false,
+            "wall_s": 557.3,
+            "requests": 49
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 87.7,
+            "requests": 20
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 69.0,
+            "requests": 5
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 8.2,
+            "requests": 2
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 68.5,
+            "requests": 10
+          }
+        ]
+      ]
+    },
+    "CE3": {
+      "passed": 12,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 3,
+        "fix_planner": 3,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 48.7,
+        "explain_stop": 57.7,
+        "fix_planner": 55.0,
+        "long_session": 49.6
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 20,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 41.0,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 52.7,
+            "requests": 5
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 35.7,
+            "requests": 10
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 46.6,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 91.3,
+            "requests": 20
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 57.7,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 148.0,
+            "requests": 17
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 49.6,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 48.7,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 68.0,
+            "requests": 7
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 55.0,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 52.3,
+            "requests": 9
+          }
+        ]
+      ]
+    },
+    "CF2": {
+      "passed": 12,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 3,
+        "fix_planner": 3,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 42.3,
+        "explain_stop": 71.5,
+        "fix_planner": 66.6,
+        "long_session": 52.3
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 14,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 36.0,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 57.7,
+            "requests": 7
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 66.6,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 49.2,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 47.9,
+            "requests": 10
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 71.5,
+            "requests": 7
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 66.5,
+            "requests": 13
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 52.3,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 42.3,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 74.7,
+            "requests": 10
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 79.8,
+            "requests": 14
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 86.6,
+            "requests": 9
+          }
+        ]
+      ]
+    },
+    "Bartowski IQ2_XXS with pi 1.0.2": {
+      "passed": 10,
+      "of": 12,
+      "per_task": {
+        "models_json": 1,
+        "explain_stop": 3,
+        "fix_planner": 3,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 900.0,
+        "explain_stop": 89.8,
+        "fix_planner": 103.0,
+        "long_session": 54.2
+      },
+      "timeouts": 2,
+      "loops_40plus_requests": [
+        93,
+        49
+      ],
+      "max_requests": 93,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 59.7,
+            "requests": 19
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 52.5,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 110.2,
+            "requests": 17
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 60.7,
+            "requests": 11
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": false,
+            "wall_s": 900.0,
+            "requests": 93
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 89.8,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 82.7,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 54.2,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": false,
+            "wall_s": 900.0,
+            "requests": 49
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 165.7,
+            "requests": 17
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 103.0,
+            "requests": 15
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 50.7,
+            "requests": 9
+          }
+        ]
+      ]
+    }
+  },
+  "agent_repo_suite_m4pro": {
+    "method": "agent_eval.py --suite repo --timeout 600, every expert resident (GPU limit 21741), 32K, server defaults, pi 1.0.2; Bartowski = loop study setting A",
+    "Bartowski IQ2_XXS": {
+      "passed": 7,
+      "of": 12,
+      "per_task": {
+        "models_json": 2,
+        "explain_stop": 0,
+        "fix_planner": 2,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 156.0,
+        "explain_stop": 19.0,
+        "fix_planner": 140.4,
+        "long_session": 103.5
+      },
+      "timeouts": 2,
+      "loops_40plus_requests": [
+        64
+      ],
+      "max_requests": 64,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 64
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 19.0,
+            "requests": 5
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 165.3,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 102.6,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 156.0,
+            "requests": 20
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 14.6,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 17.2,
+            "requests": 4
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 103.5,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 112.8,
+            "requests": 12
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 28
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 140.4,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 113.8,
+            "requests": 11
+          }
+        ]
+      ]
+    },
+    "CE3": {
+      "passed": 11,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 2,
+        "fix_planner": 3,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 102.4,
+        "explain_stop": 123.2,
+        "fix_planner": 134.4,
+        "long_session": 101.8
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 53,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 76.6,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 100.3,
+            "requests": 1
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 148.6,
+            "requests": 15
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 505.5,
+            "requests": 53
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 142.0,
+            "requests": 16
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 192.9,
+            "requests": 11
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 85.3,
+            "requests": 8
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 101.8,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 102.4,
+            "requests": 12
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 123.2,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 134.4,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 100.5,
+            "requests": 9
+          }
+        ]
+      ]
+    },
+    "CF2": {
+      "passed": 12,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 3,
+        "fix_planner": 3,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 119.1,
+        "explain_stop": 204.0,
+        "fix_planner": 168.8,
+        "long_session": 101.8
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 16,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 119.1,
+            "requests": 11
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 204.0,
+            "requests": 8
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 193.1,
+            "requests": 14
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 101.8,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 129.0,
+            "requests": 12
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 270.3,
+            "requests": 16
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 168.8,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 101.7,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 119.1,
+            "requests": 10
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 171.4,
+            "requests": 9
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 107.1,
+            "requests": 8
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 103.1,
+            "requests": 9
+          }
+        ]
+      ]
+    }
+  },
+  "loop_study_m4pro": {
+    "method": "Bartowski's Qwen3-Coder-Next IQ2_XXS, as agent_repo_suite_m4pro; a loop = a 600 s timeout after >= 40 requests. First attempt (A 4/12, B 6/12, C 3/12) invalid: two tests read the machine's GPU limit",
+    "A temperature 0.7": {
+      "passed": 7,
+      "of": 12,
+      "per_task": {
+        "models_json": 2,
+        "explain_stop": 0,
+        "fix_planner": 2,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 156.0,
+        "explain_stop": 19.0,
+        "fix_planner": 140.4,
+        "long_session": 103.5
+      },
+      "timeouts": 2,
+      "loops_40plus_requests": [
+        64
+      ],
+      "max_requests": 64,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 64
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 19.0,
+            "requests": 5
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 165.3,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 102.6,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 156.0,
+            "requests": 20
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 14.6,
+            "requests": 4
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 17.2,
+            "requests": 4
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 103.5,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 112.8,
+            "requests": 12
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 28
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 140.4,
+            "requests": 11
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 113.8,
+            "requests": 11
+          }
+        ]
+      ]
+    },
+    "B temperature 1.0": {
+      "passed": 8,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 2,
+        "fix_planner": 0,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 174.4,
+        "explain_stop": 238.6,
+        "fix_planner": 180.6,
+        "long_session": 115.2
+      },
+      "timeouts": 2,
+      "loops_40plus_requests": [
+        272,
+        349
+      ],
+      "max_requests": 349,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 184.7,
+            "requests": 14
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 272
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 349
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 115.2,
+            "requests": 14
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 174.4,
+            "requests": 24
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 238.6,
+            "requests": 12
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 178.0,
+            "requests": 8
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 113.0,
+            "requests": 11
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 125.0,
+            "requests": 16
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 177.5,
+            "requests": 10
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 180.6,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 241.6,
+            "requests": 15
+          }
+        ]
+      ]
+    },
+    "C temperature 1.0 presence_penalty 1.0": {
+      "passed": 8,
+      "of": 12,
+      "per_task": {
+        "models_json": 3,
+        "explain_stop": 1,
+        "fix_planner": 2,
+        "long_session": 2
+      },
+      "median_wall_s": {
+        "models_json": 157.6,
+        "explain_stop": 192.4,
+        "fix_planner": 226.8,
+        "long_session": 139.5
+      },
+      "timeouts": 2,
+      "loops_40plus_requests": [
+        170
+      ],
+      "max_requests": 170,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 157.6,
+            "requests": 13
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 36.8,
+            "requests": 8
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 226.8,
+            "requests": 22
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 139.5,
+            "requests": 12
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 118.9,
+            "requests": 13
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 192.4,
+            "requests": 7
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 133.0,
+            "requests": 18
+          },
+          {
+            "id": "long_session",
+            "pass": false,
+            "wall_s": 396.0,
+            "requests": 21
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 221.1,
+            "requests": 18
+          },
+          {
+            "id": "explain_stop",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 22
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 600.0,
+            "requests": 170
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 129.3,
+            "requests": 24
+          }
+        ]
+      ]
+    },
+    "D temperature 0.3": {
+      "passed": 9,
+      "of": 12,
+      "per_task": {
+        "models_json": 2,
+        "explain_stop": 3,
+        "fix_planner": 1,
+        "long_session": 3
+      },
+      "median_wall_s": {
+        "models_json": 99.8,
+        "explain_stop": 144.6,
+        "fix_planner": 199.8,
+        "long_session": 99.6
+      },
+      "timeouts": 0,
+      "loops_40plus_requests": [],
+      "max_requests": 19,
+      "runs": [
+        [
+          {
+            "id": "models_json",
+            "pass": false,
+            "wall_s": 99.8,
+            "requests": 1
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 141.6,
+            "requests": 6
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 199.8,
+            "requests": 7
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 99.6,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 116.1,
+            "requests": 19
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 185.3,
+            "requests": 7
+          },
+          {
+            "id": "fix_planner",
+            "pass": false,
+            "wall_s": 271.1,
+            "requests": 12
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 98.2,
+            "requests": 9
+          }
+        ],
+        [
+          {
+            "id": "models_json",
+            "pass": true,
+            "wall_s": 83.9,
+            "requests": 9
+          },
+          {
+            "id": "explain_stop",
+            "pass": true,
+            "wall_s": 144.6,
+            "requests": 9
+          },
+          {
+            "id": "fix_planner",
+            "pass": true,
+            "wall_s": 109.0,
+            "requests": 10
+          },
+          {
+            "id": "long_session",
+            "pass": true,
+            "wall_s": 102.6,
+            "requests": 9
+          }
+        ]
+      ]
+    }
+  }
+}

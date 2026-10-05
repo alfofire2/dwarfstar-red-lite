@@ -206,6 +206,8 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
     sp.top_p = req->top_p;
     sp.top_k = (uint32_t)req->top_k;
     sp.min_p = req->min_p;
+    sp.presence_penalty = req->presence_penalty;
+    sp.frequency_penalty = req->frequency_penalty;
     if (req->has_seed) sp.seed = req->seed;
     rl_sampler sampler;
     if (!rl_sampler_init(&sampler, &sp, c->info->vocab)) { free(ids); snprintf(error, cap, "sampler allocation failed"); return 0; }
@@ -278,6 +280,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         char piece_[512]; const int32_t n_ = rl_tokenizer_decode(c->tokenizer, (tok), piece_, sizeof(piece_)); \
         if (n_ < 0) { snprintf(error, cap, "token decode failed"); ok = 0; fin = 1; break; } \
         generated++; \
+        rl_sampler_accept(&sampler, (tok)); \
         if (!ttft_emit(&ts, piece_, (size_t)n_)) { fin = 1; break; } \
         if (generated >= req->max_tokens) { result->finish_length = 1; fin = 1; break; } \
     } while (0)
@@ -338,6 +341,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             const int32_t n = rl_tokenizer_decode(c->tokenizer, next, piece, sizeof(piece));
             if (n < 0) { snprintf(error, cap, "token decode failed"); ok = 0; break; }
             generated++;
+            rl_sampler_accept(&sampler, next);
             if (!ttft_emit(&ts, piece, (size_t)n)) break;           /* client gone, Ctrl-C or stop sequence */
             if (generated >= req->max_tokens) { result->finish_length = 1; break; }
             if (!(r = eng_step(c, k, next, S->logits, generated, &st, error, cap))) { ok = 0; break; }
@@ -378,6 +382,9 @@ static void usage(FILE *out) {
         "  --top-k K           default top-k (default 40)\n"
         "  --top-p P           default top-p (default 0.95)\n"
         "  --min-p M           default min-p (default 0 = off)\n"
+        "  --presence-penalty P   dev63: default presence penalty, -2..2 (default 0); Qwen advises 0-2 against endless\n"
+        "                      repetitions\n"
+        "  --frequency-penalty F  dev63: default frequency penalty, -2..2 (default 0)\n"
         "  --queue N           chat requests that may wait behind the running one (default 16; more get 503)\n"
         "  --no-reuse          reset the engine for every request (default: a prompt that extends the previous\n"
         "                      conversation exactly only prefills the new tokens)\n"
@@ -459,6 +466,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i - 1], "--steer-tokens") == 0) { if (!parse_u32(v, &steer_tokens)) return 2; }
         else if (strcmp(argv[i - 1], "--steer-layers") == 0) { if (sscanf(v, "%u-%u", &steer_first, &steer_last) != 2) return 2; }
         else if (strcmp(argv[i - 1], "--state-max-mib") == 0) { if (!parse_u32(v, &state_max_mib)) return 2; }
+        else if (strcmp(argv[i - 1], "--presence-penalty") == 0) { if (!parse_f32(v, &scfg.default_presence_penalty) || fabsf(scfg.default_presence_penalty) > 2.0f) return 2; }
+        else if (strcmp(argv[i - 1], "--frequency-penalty") == 0) { if (!parse_f32(v, &scfg.default_frequency_penalty) || fabsf(scfg.default_frequency_penalty) > 2.0f) return 2; }
         else if (strcmp(argv[i - 1], "--min-p") == 0) { if (!parse_f32(v, &scfg.default_min_p) || scfg.default_min_p < 0.0f || scfg.default_min_p > 1.0f) return 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i - 1]); usage(stderr); return 2; }
     }

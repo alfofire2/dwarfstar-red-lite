@@ -156,6 +156,16 @@ them.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 
+- **Agent checks that depend on the machine (dev63).** On the M4 Pro 24 GiB the repository suite of
+  `agent_eval.py` never passed more than 2 of 4 tasks per run (4/12, 6/12, 3/12 for three sampling settings), against
+  10/12 for the same model file on the M4 Max. Two tests in `tests/test_native_defaults.py` patched the RAM but read
+  the machine's real GPU limit, raised to 21,741 MiB there, so they failed in a clean copy of the repository. The
+  `fix_planner` and `long_session` checks run them, so those tasks could not pass, and long `fix_planner` sessions
+  (150 and 321 requests) were partly the model trying to fix failures it had not caused. Found by running the suite
+  in a clean `git archive` copy on the M4 Pro; pi's version (1.0.2 against 0.84.4) was ruled out first. The tests now
+  patch `gpu_wired_limit_mib`. Lesson: before reading an agent pass rate, run the task checks on an untouched copy
+  on the same machine.
+
 ## Not reached, blocked or not attempted
 
 - **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on

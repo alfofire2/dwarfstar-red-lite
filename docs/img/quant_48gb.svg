@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="293" viewBox="0 0 810 293">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="293"/>
+<text class="t" x="10" y="24">48 GiB files of Qwen3-Next-80B-A3B-Instruct: perplexity against Bartowski&#x27;s IQ3_XXS</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">text</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">code</text>
+<text class="l" x="222" y="98" text-anchor="end">G1 (+0.76 GiB)</text>
+<rect x="230" y="76" width="118.2" height="15" rx="2" fill="#d64545"/><text class="v" x="353.2" y="88">0.42</text>
+<rect x="230" y="94" width="92.9" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="327.9" y="106">0.33</text>
+<text class="l" x="222" y="144" text-anchor="end">G2 (+1.69 GiB)</text>
+<rect x="230" y="122" width="182.9" height="15" rx="2" fill="#d64545"/><text class="v" x="417.9" y="134">0.65</text>
+<rect x="230" y="140" width="382.8" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="617.8" y="152">1.36</text>
+<text class="l" x="222" y="190" text-anchor="end">G3 (+2.44 GiB)</text>
+<rect x="230" y="168" width="292.7" height="15" rx="2" fill="#d64545"/><text class="v" x="527.7" y="180">1.04</text>
+<rect x="230" y="186" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="198">1.67</text>
+<text class="n" x="10" y="253">% change in perplexity (lower is better). Frozen text corpus (111 chunks) and code corpus (90 chunks), ctx 512, M4 Max. G1:</text>
+<text class="n" x="10" y="268">Q8_0 dense; G2: IQ3_S experts (31.24 GiB, fits with MTP); G3: both (31.99 GiB, MTP above the 70 % rule). Bars show the</text>
+<text class="n" x="10" y="283">reduction.</text>
+</svg>

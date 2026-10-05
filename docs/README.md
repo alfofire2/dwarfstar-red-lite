@@ -12,16 +12,18 @@ machine). "Tested synthetically" means model-free tests only.
 | [../README.md](../README.md) | The guide: install, FAQ, what runs, measured performance per Mac, correctness, limits, coding agents |
 | [FINDINGS.md](FINDINGS.md) | **Read first.** What we learned, with charts: where a token's time goes, speed by release vs llama.cpp, exact MTP speculation, 24 GiB cache options, long context, correctness, a better 2-bit file, coding agents |
 | [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
-| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.6.1 and the work in progress (agent quality, Qwen3-Coder at 2 bits, 48 GiB Macs) |
+| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.7.0 and what comes next |
 | [../CHANGELOG.md](../CHANGELOG.md) | Every release from 0.6.1 back to 0.3.0, then every dev milestone |
 
 The project site, [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/), renders these pages with a
 search (`scripts/dev/build_site.py`).
 
-## Milestones of 0.5 and 0.6
+## Milestones of 0.5, 0.6 and 0.7
 
 | Milestone | Document |
 |---|---|
+| dev64 a better 48 GiB file (G2: IQ3_S experts, −1.4 % code perplexity, same speed with MTP); a context-aware RAM rule | [REDLITE_DEV64_48GB.md](REDLITE_DEV64_48GB.md) |
+| dev63 presence/frequency penalties, agent loops against temperature, Red Lite CF2 for Qwen3-Coder-Next (12/12 agent tasks on both Macs) | [REDLITE_DEV63_CODER_QUANT_SAMPLING.md](REDLITE_DEV63_CODER_QUANT_SAMPLING.md) |
 | dev62 routing quality, a full-precision agent reference, harder repo tasks, IQ3_XXS with an agent, two agents at once | [REDLITE_DEV62_AGENT_TESTS.md](REDLITE_DEV62_AGENT_TESTS.md) |
 | dev61 24 GiB Mac at the default GPU limit: coding agent from the SSD, IQ3_XXS streamed, `redlite setup-pi` | [REDLITE_DEV61_STREAMING_24GB.md](REDLITE_DEV61_STREAMING_24GB.md) |
 | dev60 the pi coding agent on the native server; agent-loop state reuse fixes | [REDLITE_DEV60_CODING_AGENT.md](REDLITE_DEV60_CODING_AGENT.md) |

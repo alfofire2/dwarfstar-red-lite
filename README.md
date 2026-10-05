@@ -39,8 +39,8 @@ MacBook Pro.
 
 - **An 80B model on a 24 GiB MacBook Pro:** about 45 tok/s decode on an M4 Pro, 49–58 with MTP speculative
   decoding, which never changes the answer. The llama.cpp launcher reaches 36–38 on the same Mac.
-- **A better 2-bit file:** Red Lite's own quantization, F2, has the size of Bartowski's IQ2_XXS (19.3 GB) and a
-  6 % lower perplexity.
+- **Better 2-bit files:** Red Lite's own quantizations have the size of Bartowski's IQ2_XXS (19.3 GB). F2 has a
+  6 % lower perplexity; CF2, for Qwen3-Coder-Next, passed 12 of 12 harder agent tasks on a 24 GiB Mac against 7.
 - **Checked against llama.cpp** on every change: logits, greedy tokens and long contexts, with llama.cpp used as an
   oracle only, never linked.
 - **A local OpenAI-compatible server:** tool calling for coding agents such as pi, two requests at once, steering,
@@ -105,13 +105,19 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
 - **State reuse:** each turn reuses the engine state, so the agent's long system prompt is read once per task.
 - **Harder tasks on this repository** (dev62): Qwen3-Coder-Next passed 70 % and F2 50 %, against 83 % for the
   full-precision model through Qwen's API. For agents, use the coding model.
+- **Red Lite CF2** (dev63), the Qwen3-Coder-Next file of `redlite download coder`: 12 of 12 harder tasks on both the
+  M4 Pro 24 GiB and the M4 Max, against 7 and 10 for Bartowski's IQ2_XXS, with no task over 270 s.
+- **Temperature 0.3:** the 2-bit Coder looped (the same tool call until the time limit) 4 times in 36 sessions at
+  0.7 and above, never at 0.3. `redlite setup-pi` sets 0.3 for the agent; chat keeps 0.7.
 - **`--parallel 2`** gains only 2–5 % with agents.
-- Details: `docs/REDLITE_DEV60_CODING_AGENT.md`, `docs/REDLITE_DEV62_AGENT_TESTS.md`.
+- Details: `docs/REDLITE_DEV60_CODING_AGENT.md`, `docs/REDLITE_DEV62_AGENT_TESTS.md`,
+  `docs/REDLITE_DEV63_CODER_QUANT_SAMPLING.md`.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)
-redlite setup-pi --port 8080                          # adds a "redlite" provider to ~/.pi/agent/models.json
-redlite serve --native --context 32768 --port 8080    # or name a file: redlite serve --native PATH/Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf ...
+redlite download coder                                # Red Lite CF2, Qwen3-Coder-Next (19.3 GB)
+redlite setup-pi --port 8080                          # adds a "redlite" provider (temperature 0.3) to ~/.pi/agent/models.json
+redlite serve --native ~/.redlite/models/Qwen3-Coder-Next-RedLite-CF2.gguf --context 32768 --port 8080
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```
 
@@ -146,14 +152,20 @@ prefix to disk; the next run, or a restarted server, with the same prefix skips 
 session is bit-identical to a cold one.
 
 On a Mac with 40 GiB or more, put Bartowski's `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf`
-in `models/` too: `redlite chat` then picks it (see *Chat defaults*). A release tarball of
+in `models/` too (`redlite download 48gb`): `redlite chat` then picks it (see *Chat defaults*).
+
+**48 GiB Macs: Red Lite G2** (dev64, `redlite download 48gb-g2`, 31.24 GiB). IQ3_XXS with IQ3_S experts on more
+layers: perplexity −0.65 % on text and −1.4 % on code, the same decode speed with MTP (90.7 against 89.3 tok/s on the
+M4 Max), parity checks passed. `redlite chat` prefers it when it is present. With 25K-token prompts it fills the Mac:
+prompt ingestion varied from 401 to 676 tok/s with swapping, IQ3_XXS stayed at 596–638. Above about 13.5K positions
+of context `chat` and `serve` run it without MTP. Details: `docs/REDLITE_DEV64_48GB.md`. A release tarball of
 the three binaries is built by `scripts/package_release.sh`.
 
 **Chat defaults.**
 
-- Model (when no path is given): the best file in `models/` for this machine — IQ3_XXS
-  when RAM ≥ 40 GiB and its experts plus dense weights stay below 75 % of RAM, else
-  IQ2_XXS.
+- Model (when no path is given): the best file in `models/` for this machine — G2, then IQ3_XXS,
+  when RAM ≥ 40 GiB and its experts plus dense weights plus the context's KV cache stay below 70 % of RAM
+  (with MTP, its head too, or MTP is turned off); else F2, E3 or IQ2_XXS.
 - Context: 4096 positions (`--context`).
 - Answer length: 256 tokens.
 - Temperature: 0.7 (`--temperature 0` is greedy and deterministic).
@@ -221,9 +233,10 @@ coding agent. On harder tasks Qwen3-Coder-Next at 2 bits passed 70 % against 83 
 - **Model:** Qwen3-Next-80B-A3B-Instruct.
   - **24 GiB Macs:** Red Lite's F2 file (19.3 GB, `redlite download 24gb`), or the reference file it was validated
     against, Bartowski's `Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf` (17.97 GiB).
-  - **48 GiB Macs:** Bartowski's `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29), with every expert resident.
+  - **48 GiB Macs:** Bartowski's `…-IQ3_XXS.gguf` (29.55 GiB, perplexity 14.29), with every expert resident, or
+    Red Lite G2 (31.24 GiB, perplexity 14.20, `redlite download 48gb-g2`).
   - **Since dev42 also `Qwen/Qwen3-Coder-Next`:** same architecture, Bartowski IQ2_XXS / IQ3_XXS, validated against
-    llama.cpp.
+    llama.cpp, and Red Lite CF2 (dev63, `redlite download coder`).
 - **Hardware:** Apple Silicon, macOS only. Designed for 24 GiB of unified memory, and
   developed since September 2026 on a 48 GiB M4 Max.
 - **Goal:** run an 80B-total / 3B-active sparse MoE locally without pretending that the

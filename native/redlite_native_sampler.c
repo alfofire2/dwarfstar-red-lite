@@ -11,6 +11,8 @@ void rl_sampler_params_default(rl_sampler_params *p) {
     p->top_p = 0.95f;
     p->min_p = 0.0f;
     p->seed = 0u;
+    p->presence_penalty = 0.0f;
+    p->frequency_penalty = 0.0f;
 }
 
 static uint64_t splitmix64(uint64_t *state) {
@@ -30,12 +32,35 @@ int rl_sampler_init(rl_sampler *s, const rl_sampler_params *p, uint32_t vocab) {
     s->probs = (float *)malloc((size_t)vocab * sizeof(float));
     s->index = (uint32_t *)malloc((size_t)vocab * sizeof(uint32_t));
     if (!s->scratch || !s->probs || !s->index) { rl_sampler_free(s); return 0; }
+    if (s->params.presence_penalty != 0.0f || s->params.frequency_penalty != 0.0f) {
+        s->penalized = (float *)malloc((size_t)vocab * sizeof(float));
+        s->counts = (uint32_t *)calloc(vocab, sizeof(uint32_t));
+        s->seen = (uint32_t *)malloc((size_t)vocab * sizeof(uint32_t));
+        if (!s->penalized || !s->counts || !s->seen) { rl_sampler_free(s); return 0; }
+    }
     return 1;
+}
+
+void rl_sampler_accept(rl_sampler *s, uint32_t token) {
+    if (!s || !s->counts || token >= s->vocab) return;
+    if (s->counts[token]++ == 0u) s->seen[s->seen_count++] = token;
+}
+
+/* The logits the chain works on: the input, or a penalized copy (only the generated ids change). */
+static const float *penalize(rl_sampler *s, const float *logits) {
+    if (!s->counts || !s->seen_count) return logits;
+    memcpy(s->penalized, logits, (size_t)s->vocab * sizeof(float));
+    for (uint32_t i = 0; i < s->seen_count; ++i) {
+        const uint32_t t = s->seen[i];
+        s->penalized[t] -= s->params.presence_penalty + s->params.frequency_penalty * (float)s->counts[t];
+    }
+    return s->penalized;
 }
 
 void rl_sampler_free(rl_sampler *s) {
     if (!s) return;
     free(s->scratch); free(s->probs); free(s->index);
+    free(s->penalized); free(s->counts); free(s->seen);
     memset(s, 0, sizeof(*s));
 }
 
@@ -132,6 +157,7 @@ static uint32_t argmax(const float *logits, uint32_t n) {
 }
 
 uint32_t rl_sampler_distribution(rl_sampler *s, const float *logits, const uint32_t **ids, const float **probs) {
+    logits = penalize(s, logits);
     double sum = 0.0;
     uint32_t count = candidates(s, logits, &sum);
     if (!count) {
@@ -147,6 +173,7 @@ uint32_t rl_sampler_distribution(rl_sampler *s, const float *logits, const uint3
 }
 
 uint32_t rl_sampler_sample(rl_sampler *s, const float *logits) {
+    logits = penalize(s, logits);
     double sum = 0.0;
     const uint32_t count = candidates(s, logits, &sum);
     if (!count) return argmax(logits, s->vocab);

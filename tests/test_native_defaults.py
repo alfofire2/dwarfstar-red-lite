@@ -87,6 +87,7 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
                  patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_generate", return_value=Path("/x/redlite-generate")), \
                  contextlib.redirect_stdout(out):
@@ -120,6 +121,7 @@ class NativeServeCliTests(unittest.TestCase):
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
                  patch("redlite.planner.native_residency", return_value=IQ2), \
                  patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
                  contextlib.redirect_stdout(out):
@@ -250,6 +252,38 @@ class GpuPlanTests(unittest.TestCase):
         self.assertIsNone(native_gpu_plan(self.RES, 19000, 4096, True))
 
 
+class ContextAwareFitTests(unittest.TestCase):
+    """dev64: at the default GPU limit the 70 % RAM rule counts the context's KV cache (G2 on the M4 Max 48 GiB)."""
+    G2 = NativeResidency(30528, 1457 * 1024 * 1024)       # measured: swapped with MTP and a 25K prompt, not without
+    IQ3_XXS = NativeResidency(28800, 1457 * 1024 * 1024)  # measured: no swap with MTP and a 25K prompt
+
+    def test_g2_keeps_mtp_at_short_context_only(self):
+        from redlite.planner import native_full_residency_fits
+        self.assertTrue(native_full_residency_fits(48 * GIB, self.G2, 0, 4096, mtp=True))
+        self.assertFalse(native_full_residency_fits(48 * GIB, self.G2, 0, 32768, mtp=True))
+        self.assertTrue(native_full_residency_fits(48 * GIB, self.G2, 0, 32768, mtp=False))
+
+    def test_iq3_xxs_keeps_mtp_at_32k(self):
+        from redlite.planner import native_full_residency_fits
+        self.assertTrue(native_full_residency_fits(48 * GIB, self.IQ3_XXS, 0, 32768, mtp=True))
+
+    def test_serve_drops_mtp_for_g2_at_32k(self):
+        from redlite import cli
+        args = type("A", (), {"no_mtp": False, "batch": None, "parallel": 1, "context": 32768})()
+        with tempfile.TemporaryDirectory() as t:
+            model = Path(t) / "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf"
+            model.write_bytes(b"x")
+            (Path(t) / "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf").write_bytes(b"x")
+            out = io.StringIO()
+            with patch("redlite.planner.native_residency", return_value=self.G2), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
+                 patch("redlite.cli.detect", return_value=_hw(48)), contextlib.redirect_stdout(out):
+                self.assertEqual(cli._gpu_tuning(model, "full", args, 32768)[1], None)
+                args.context = 4096
+                self.assertIsNotNone(cli._gpu_tuning(model, "full", args, 4096)[1])
+        self.assertIn("MTP off", out.getvalue())
+
+
 class MtpMaxContextTests(unittest.TestCase):
     def test_limit_only_below_40gb(self):
         from redlite.planner import native_mtp_max_context
@@ -285,6 +319,29 @@ class RedLiteF2PreferenceTests(unittest.TestCase):
         from redlite.model_catalog import resolve_variant
         self.assertEqual(resolve_variant("24gb").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
         self.assertEqual(resolve_variant("e3").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf")
+        # dev63/dev64
+        self.assertEqual(resolve_variant("coder").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+        self.assertEqual(resolve_variant("coder").repo, "alfodaniello/Qwen3-Coder-Next-RedLite-GGUF")
+        self.assertEqual(resolve_variant("bartowski-coder").filename, "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf")
+        self.assertEqual(resolve_variant("48gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
+        self.assertEqual(resolve_variant("48gb-g2").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
+
+    def test_g2_preferred_on_48gb_when_present(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from redlite import planner
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            for n in ("Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+                      "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf"):
+                (d / n).write_bytes(b"x")
+            g2 = NativeResidency(30528, 1457 * 1024 * 1024)
+            with patch.object(planner, "native_residency", return_value=g2):
+                self.assertEqual(planner.select_native_model(d, 48 * GIB).name, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
+                # 24 GiB with a raised limit: G2 does not fit, F2 is chosen
+                self.assertEqual(planner.select_native_model(d, 24 * GIB, 21741).name,
+                                 "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
 
 
 class PreferenceUnderGpuLimitTests(unittest.TestCase):

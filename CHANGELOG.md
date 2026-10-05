@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.7.0 — 2026-10-06
+
+**A better Qwen3-Coder file, an agent temperature that avoids loops, and a better option for 48 GiB Macs.**
+- `redlite download coder` fetches **Red Lite CF2**, Qwen3-Coder-Next at the size of Bartowski's IQ2_XXS (19.32 GB):
+  code perplexity −3.3 %, 12 of 12 harder agent tasks on the M4 Pro 24 GiB (Bartowski's file 7) and on the M4 Max
+  (10). `bartowski-coder` keeps the previous file.
+- `redlite setup-pi` sets **temperature 0.3** for the agent: the 2-bit Coder looped 4 times in 36 sessions at 0.7
+  and above, never at 0.3.
+- The server honours **`presence_penalty` and `frequency_penalty`** (OpenAI semantics), with server-wide defaults.
+- `redlite download 48gb-g2` fetches **Red Lite G2** (31.24 GiB) for 48 GiB Macs: perplexity −0.65 % on text and
+  −1.4 % on code against IQ3_XXS, the same decode speed with MTP. `redlite chat` prefers it when present. `48gb`
+  stays IQ3_XXS, because G2 fills the Mac with 25K-token prompts.
+- At the default GPU limit the planner's 70 %-of-RAM rule counts the context's KV cache; `chat` and `serve` turn
+  MTP off when it does not fit at the chosen context.
+- **The project site** has the documentation and a search: https://redlite.alfonsodaniello.it/.
+- Validation:
+  - local CI;
+  - `regress_m4.sh` on G2 (39/3/13, the three failures explained), `quick_parity.sh` 4/4, `server_check.py` with
+    MTP (M4 Max);
+  - agent runs on both Macs.
+
+
+- dev64: **a better file for 48 GiB Macs.**
+  - Variants of Bartowski's IQ3_XXS from the same Q8_0 source (`quant_mix.py` dev63 options):
+    - G1, Q8_0 dense, −0.4 %;
+    - G2, IQ3_S experts, −0.65 % text / −1.4 % code;
+    - G3, both, −1.0 % / −1.7 %, but above the 70 % rule with MTP.
+  - **G2:** decode with MTP 90.7 tok/s against 89.3 for IQ3_XXS (M4 Max, six prompts). It passes the parity checks;
+    its two long-context argmax swaps are near-ties.
+  - **Long prompts:** with 25K tokens G2's prompt ingestion varied from 401 to 676 tok/s with the Mac swapping
+    (IQ3_XXS 596–638).
+  - **Planner:** `native_full_residency_fits` counts the KV cache, and `chat` / `serve` print "MTP off" when the head
+    does not fit at the context.
+  - `docs/REDLITE_DEV64_48GB.md`, FINDINGS section 10 with a chart.
+- dev63: **penalties, agent loops against sampling, a Red Lite quantization of Qwen3-Coder-Next.**
+  - **Penalties:** `presence_penalty` / `frequency_penalty` in the sampler (over the generated tokens) and the server
+    (request fields, `--presence-penalty`, `--frequency-penalty`).
+  - **Coder quantization:** CE3 and CF2, from Bartowski's Q8_0 with F2's and E3's recipes. They were judged by
+    perplexity on text and on a new frozen code corpus (`perplexity.sh --corpus`), then by the agent suite on both
+    Macs. **CF2** is published at `alfodaniello/Qwen3-Coder-Next-RedLite-GGUF`.
+  - **Loops:** four sampling settings × 12 tasks on the M4 Pro. Pass rates 7–9 of 12 (noise); loops 4 in 36
+    sessions at temperature ≥ 0.7, none at 0.3.
+  - **A trap:** the first run of that study measured two tests that read the machine's GPU limit (raised on the
+    M4 Pro), so two tasks could not pass there. The tests now patch it (`WHAT_DID_NOT_WORK.md`).
+  - **Also:**
+    - `quant_mix.py --keep-experts / --set / --dense-map / --base-type / --print-types`;
+    - a load-proof two-worker server test;
+    - `scripts/dev/build_site.py` for the site's docs and search.
+  - `docs/REDLITE_DEV63_CODER_QUANT_SAMPLING.md`, FINDINGS section 9 with two charts.
+
 ## 0.6.1 — 2026-10-05
 
 **Agents on a 24 GiB Mac without `sudo`, and sturdier tool calls.**

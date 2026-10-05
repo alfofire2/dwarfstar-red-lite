@@ -283,7 +283,49 @@ agent turn is mostly prompt ingestion. Cache-aware routing costs at most 0.2 % i
 
 <p align="center"><img src="img/agent_repo_tasks.svg" alt="Harder agent tasks passed: Qwen API, Qwen3-Coder-Next, F2"></p>
 
-## 10. What did not work
+**A better Qwen3-Coder-Next file** (dev63). F2's recipe applied to the coding model gives **CF2**, the same size as
+Bartowski's IQ2_XXS (19.32 GB):
+- **perplexity on code −3.3 %** (t = −4.0), and no better than Bartowski's on prose;
+- **the harder tasks:** 12 of 12 on both Macs, against 7 (M4 Pro) and 10 (M4 Max) for Bartowski's file, with no
+  task over 270 s and never more than 16 requests;
+- `redlite download coder` fetches it.
+
+<p align="center"><img src="img/coder_agents.svg" alt="Qwen3-Coder-Next files on the harder agent tasks, both Macs"></p>
+
+**Loops and temperature** (dev63). The 2-bit models sometimes repeat the same tool call until the time limit.
+On the M4 Pro, twelve tasks per setting with Bartowski's Coder file:
+- four loops in 36 sessions at temperature 0.7 and above, the longest 349 requests at 1.0 (the value Qwen's card
+  suggests);
+- **none at 0.3**, where no task needed more than 19 requests;
+- `presence_penalty` (now supported by the server) shortened a loop but did not remove it.
+
+The pass rates (7–9 of 12) are within noise, so this is a direction, not a proof. `redlite setup-pi` now sets
+temperature 0.3 for the agent.
+
+<p align="center"><img src="img/agent_loops.svg" alt="Tasks passed and loops at four sampling settings"></p>
+
+**A trap on the way.** The first run of this study passed at most 2 of 4 tasks on the M4 Pro. Two of the repository's
+own tests read the machine's GPU limit, raised on that Mac, so they failed before the agent did anything, and the
+tasks that run them could not pass. Running the checks on an untouched copy on the same machine found it.
+
+## 10. 48 GiB Macs: a better file in the remaining room
+
+Bartowski's IQ3_XXS (29.55 GiB) leaves room on a 48 GiB Mac, so dev64 tried spending it, from the same Q8_0 source:
+- **G1, the dense weights at Q8_0:** −0.4 % perplexity. At 3 bits the dense part is not the bottleneck.
+- **G2, IQ3_S experts** on more layers (31.24 GiB): −0.65 % on text and −1.4 % on code, both clearly beyond noise,
+  and the same decode speed as IQ3_XXS with MTP (90.7 against 89.3 tok/s on the M4 Max). It passes the parity
+  checks.
+- **G3, both:** the best perplexity, but with MTP it is above the planner's 70 %-of-RAM rule, so it would run without
+  MTP, 20 % slower.
+
+<p align="center"><img src="img/quant_48gb.svg" alt="Perplexity reduction of G1, G2 and G3 against IQ3_XXS"></p>
+
+**Long prompts show the limit.** With 25K-token prompts G2's prompt ingestion ranged from 401 to 676 tok/s, each slow
+request with the Mac swapping, while IQ3_XXS stayed at 596–638. Decode was unaffected. So G2 is an option
+(`redlite download 48gb-g2`), and `48gb` stays IQ3_XXS. The 70 % rule now also counts the context's KV cache, and
+`chat` / `serve` turn MTP off when it does not fit at the chosen context.
+
+## 11. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:
 
@@ -297,6 +339,7 @@ agent turn is mostly prompt ingestion. Cache-aware routing costs at most 0.2 % i
 | 32-pair prefill expert tiles instead of 16 | 400 vs 872 tok/s | register pressure; per-thread work, not decode reuse, sets the speed |
 | chunk-parallel DeltaNet prefill (as in MLX) | not built: at most ~2 % | measured first: the recurrence is 6.7 % of an 8K-token ingestion |
 | IQ3_M (a larger quant) on 48 GiB | slower than IQ3_XXS, perplexity within the error bar | full residency ran out of GPU memory; the planner rule went from 75 % to 70 % of RAM |
+| agent pass rates on the M4 Pro (dev63) | at most 2 of 4 tasks per run | two tests read the machine's raised GPU limit; check the task checks on an untouched copy first |
 
 Traps that cost time and are now guarded:
 

@@ -1,9 +1,9 @@
 # Roadmap
 
-Agreed with the project owner on 2026-10-03, updated on 2026-10-05. Updated as steps finish: each step links its milestone document when
+Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.6.1, 2026-10-05)
+## Where things stand (0.7.0, 2026-10-06)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -13,31 +13,28 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 - **48 GiB Mac** (M4 Max), every expert resident:
   - IQ3_XXS 80 tok/s;
   - IQ2_XXS 86 tok/s, 97 with MTP (llama.cpp 72.5);
-  - prompt ingestion about 900 tok/s.
-- **Coding agents:** OpenAI tool calling in the server and `redlite setup-pi` (dev59–dev62). On the harder repository
-  tasks: Qwen3-Coder-Next IQ2_XXS 70 %, F2 50 %, Qwen's full-precision API model 83 %.
+  - prompt ingestion about 900 tok/s;
+  - Red Lite G2 (dev64) is an option with better perplexity at the same speed.
+- **Coding agents:** Red Lite CF2 (dev63), Qwen3-Coder-Next at 2 bits, passes 12 of 12 harder repository tasks on
+  both Macs. `redlite setup-pi` uses temperature 0.3, where the 2-bit Coder did not loop.
 - **Project site** with the docs and a search: [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/).
-- **Prompt ingestion on the M4 Pro** is bound by its 16 GPU cores, at the same efficiency as the M4 Max (dev49, dev50).
-  More kernel work there gives a few percent at a time.
 
-## In progress (dev63, dev64)
+## Next
 
-- **Agent loops at 2 bits (dev63).** Some failed agent tasks are loops: the model repeats the same tool call until the
-  timeout (one run made 176 requests). How often this happens, and whether sampling changes it, is what this step
-  measures. On the M4 Pro, Qwen3-Coder-Next, three runs per setting of the repository suite:
-  - the server defaults;
-  - Qwen's recommended temperature 1.0;
-  - temperature 1.0 with `presence_penalty` 1.0, new in dev63 (OpenAI semantics, server and sampler);
-  - temperature 0.3.
-- **A Red Lite quantization of Qwen3-Coder-Next (dev63).** The F2 recipe (Q4_K dense projections, IQ2_XS experts
-  on the last layers) and E3 applied to the Coder. They are judged by perplexity on text and on a frozen code
-  corpus (`perplexity.sh --corpus`), then by the agent suite.
-- **48 GiB Macs (dev64).** A higher-quality file than Bartowski's IQ3_XXS that still fits the default GPU limit
-  (37.4 GiB on the M4 Max) with MTP:
-  - Q8_0 dense weights;
-  - IQ3_S experts on more layers.
+- **Harder agent tasks:** the repository suite no longer separates the Red Lite files (12/12). A harder suite is
+  needed to compare files and sampling settings.
+- **G2 at long context:** why a 25K-token prompt makes the 48 GiB Mac swap with G2 and not with IQ3_XXS, and whether
+  a smaller IQ3_S variant keeps most of the gain.
+- **Qwen3-Coder-Next for 48 GiB Macs:** the dev64 recipe on the Coder.
 
-  Judged by perplexity on both corpora, then speed and fit.
+## Done in 0.7.0 (dev63, dev64)
+
+- **Agent loops at 2 bits (dev63):** pass rates 7–9 of 12 at four sampling settings; loops only at temperature 0.7
+  and above.
+- **A Red Lite quantization of Qwen3-Coder-Next (dev63):** CF2, code perplexity −3.3 %, agent suite 12/12 on both
+  Macs.
+- **48 GiB Macs (dev64):** G2 (IQ3_S experts), −0.65 % text / −1.4 % code, same speed with MTP; an option because of
+  long prompts.
 
 ## Phase 1 — release 0.5.0 (done 2026-10-03)
 

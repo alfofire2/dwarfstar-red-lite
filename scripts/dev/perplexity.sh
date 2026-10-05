@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # dev31: perplexity of one or more GGUF files with the pinned llama.cpp (oracle only, never a runtime).
 #
-#   scripts/dev/perplexity.sh MODEL.gguf [MODEL2.gguf ...] [--ctx 512]
+#   scripts/dev/perplexity.sh MODEL.gguf [MODEL2.gguf ...] [--ctx 512] [--corpus FILE]
+#
+# dev63: --corpus tests/fixtures/perplexity_code_corpus.txt is code: src/llama-vocab.cpp of the pinned llama.cpp
+# (7798007a2, MIT, see NOTICE.md), frozen as it is, for coding models.
 #
 # Text: tests/fixtures/perplexity_corpus.txt, frozen (the docs/*.md of commit 8cbdffe concatenated in
 # name order; sha256 6948b2c3...). The same text, context and llama.cpp build are used for every file,
@@ -18,6 +21,7 @@ MODELS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ctx) CTX="$2"; shift 2;;
+    --corpus) CORPUS="$2"; shift 2;;
     *) MODELS+=("$1"); shift;;
   esac
 done
@@ -29,7 +33,8 @@ if [[ ! -x "$BUILD/bin/llama-perplexity" ]]; then
 fi
 echo "llama.cpp $(git -C "$LLAMA" rev-parse --short HEAD), corpus sha256 $(shasum -a 256 "$CORPUS" | cut -c1-12), ctx $CTX"
 for M in "${MODELS[@]}"; do
-  LOG="$ROOT/.deps/ppl.$(basename "$M" .gguf).ctx$CTX.log"
+  TAG=""; [[ "$CORPUS" != "$ROOT/tests/fixtures/perplexity_corpus.txt" ]] && TAG=".$(basename "$CORPUS" .txt)"
+  LOG="$ROOT/.deps/ppl.$(basename "$M" .gguf)$TAG.ctx$CTX.log"
   "$BUILD/bin/llama-perplexity" -m "$M" -f "$CORPUS" -c "$CTX" -ngl 999 >"$LOG" 2>&1
   echo "$(basename "$M"): $(grep -o 'Final estimate: PPL = .*' "$LOG" || echo "no estimate, see $LOG")"
 done

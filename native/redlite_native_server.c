@@ -708,6 +708,13 @@ static int request_member(jp *j, const char *key, void *user) {
         req->min_p = (float)v;
         return 1;
     }
+    if (strcmp(key, "presence_penalty") == 0 || strcmp(key, "frequency_penalty") == 0) {   /* dev63 */
+        if (!number_member(j, &v, key)) return 0;
+        if (isnan(v)) return 1;
+        if (v < -2.0 || v > 2.0) return jfail(j, "presence_penalty and frequency_penalty must be between -2 and 2");
+        if (key[0] == 'p') req->presence_penalty = (float)v; else req->frequency_penalty = (float)v;
+        return 1;
+    }
     if (strcmp(key, "seed") == 0) {
         if (!number_member(j, &v, key)) return 0;
         if (isnan(v)) return 1;
@@ -767,7 +774,7 @@ static int request_member(jp *j, const char *key, void *user) {
         if (jis_null(j)) return jliteral(j, "null");
         return jfail(j, "\"functions\" is not supported; use \"tools\"");
     }
-    return jskip(j); /* model, user, stream_options, presence_penalty, ... are accepted and ignored */
+    return jskip(j); /* model, user, stream_options, ... are accepted and ignored */
 }
 
 void rl_chat_request_free(rl_chat_request *req) {
@@ -813,6 +820,8 @@ int rl_chat_request_parse(const char *body, size_t len, rl_chat_request *out, ch
     out->top_p = -1.0f;
     out->top_k = -1;
     out->min_p = -1.0f;
+    out->presence_penalty = NAN;
+    out->frequency_penalty = NAN;
     if (error && error_cap) error[0] = '\0';
     jp j = {body, body + len, 0, error, error_cap};
     int ok = jobject(&j, request_member, out);
@@ -1673,6 +1682,8 @@ static void handle_connection(int fd, const rl_server_config *cfg, const rl_serv
         if (r->top_p < 0.0f) r->top_p = cfg->default_top_p;
         if (r->top_k < 0) r->top_k = (int32_t)cfg->default_top_k;
         if (r->min_p < 0.0f) r->min_p = cfg->default_min_p;
+        if (isnan(r->presence_penalty)) r->presence_penalty = cfg->default_presence_penalty;
+        if (isnan(r->frequency_penalty)) r->frequency_penalty = cfg->default_frequency_penalty;
         job->fd = fd;
         job->request_no = request_no;
         pthread_mutex_lock(&q->mu);

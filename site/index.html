@@ -44,7 +44,7 @@
     {"@type": "Question", "name": "How does it compare with llama.cpp?",
      "acceptedAnswer": {"@type": "Answer", "text": "On the same files, Red Lite decodes 19% faster than the pinned llama.cpp on an M4 Max 48 GiB (86.2 vs 72.5 tokens per second), and 45 to 46 against 36 to 38 tokens per second on an M4 Pro 24 GiB. Ollama, LM Studio and MLX were not measured."}},
     {"@type": "Question", "name": "Does it work with coding agents?",
-     "acceptedAnswer": {"@type": "Answer", "text": "Yes. The server speaks the OpenAI chat API with tool calling, and redlite setup-pi configures the pi coding agent. On harder tasks on a real repository, Qwen3-Coder-Next at 2 bits passed 70% against 83% for the full-precision model."}},
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes. The server speaks the OpenAI chat API with tool calling, and redlite setup-pi configures the pi coding agent. On harder tasks on a real repository, Red Lite CF2 (Qwen3-Coder-Next at 2 bits) passed 12 of 12 on a 24 GB M4 Pro, against 7 for the usual 2-bit file."}},
     {"@type": "Question", "name": "Which Mac do I need?",
      "acceptedAnswer": {"@type": "Answer", "text": "An Apple Silicon Mac with 24 GB of memory or more. It was tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. The binaries are built for M1 and later, but M1, M2 and M3 have not been tested yet."}}
   ]
@@ -484,7 +484,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
           <div class="term"><div class="term-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i><span>zsh</span></div>
 <pre><span class="k-prompt">$</span> redlite download 24gb   <span class="c"># 19.3 GB</span>
 <span class="k-prompt">$</span> redlite download mtp    <span class="c"># 2.4 GB</span>
-<span class="c"># 48 GB Mac: redlite download 48gb</span></pre></div></div>
+<span class="c"># 48 GB Mac: redlite download 48gb (or 48gb-g2)</span></pre></div></div>
         <div class="step"><p class="lbl"><b>STEP 3</b> · TALK TO IT</p>
           <div class="term"><div class="term-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i><span>zsh</span></div>
 <pre><span class="k-prompt">$</span> redlite doctor
@@ -556,11 +556,12 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
             <code>redlite setup-pi</code> configures the pi agent in one command.</p>
           <div class="logos"><span>pi</span><span>any OpenAI-compatible client</span></div>
           <p class="endpoints"><b>/v1/chat/completions</b> · /v1/models · tools · streaming</p>
-          <p>On harder tasks on a real repository, Qwen3-Coder-Next at 2 bits passed <strong>70%</strong> against
-            <strong>83%</strong> for the full-precision model.</p>
+          <p>On harder tasks on a real repository, Red Lite <strong>CF2</strong>, Qwen3-Coder-Next at 2 bits, passed
+            <strong>12 of 12</strong> on a 24 GB M4 Pro, against 7 for the usual 2-bit file. <code>redlite download
+            coder</code> fetches it; <code>setup-pi</code> sets temperature 0.3, where it did not loop.</p>
         </div>
-        <figure><img src="img/agent_repo_tasks.svg" alt="Harder coding-agent tasks passed: full-precision model 83 percent, Qwen3-Coder-Next at 2 bits 70 percent, F2 50 percent" loading="lazy">
-          <figcaption>Harder agent tasks on a copy of the Red Lite repository.</figcaption></figure>
+        <figure><img src="img/coder_agents.svg" alt="Harder coding-agent tasks passed by three Qwen3-Coder-Next files: Bartowski IQ2_XXS 58 percent on the M4 Pro and 83 on the M4 Max, Red Lite CE3 92 and 100, Red Lite CF2 100 and 100" loading="lazy">
+          <figcaption>Harder agent tasks on a copy of the Red Lite repository, both Macs.</figcaption></figure>
       </div>
     </div>
   </section>
@@ -829,7 +830,7 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
     "16": { s: "unk", t: "Not tested", d: "The 19.3 GB file with a 4 GiB expert cache might run from the SSD, but nobody has tried it on 16 GB. A report would be welcome.", c: "redlite download 24gb && redlite chat", r: "NO MEASUREMENT" },
     "24": { s: "good", t: "✓ Runs well", d: "F2 streams its experts from the SSD by default, with nothing to configure. Raise the GPU limit (redlite doctor prints how) and every expert stays on the GPU, with MTP.", c: "redlite download 24gb && redlite download mtp && redlite chat", r: "REF · M4 PRO 24 GB: 34 T/S FROM THE SSD · 45 T/S RESIDENT · 49–58 T/S WITH MTP" },
     "32": { s: "ok", t: "Should run well (not measured)", d: "F2 streams from the SSD by default; with a raised GPU limit every expert can stay resident, with room for longer contexts than on 24 GB.", c: "redlite download 24gb && redlite download mtp && redlite chat", r: "NOT MEASURED · CLOSEST REFERENCE: M4 PRO 24 GB" },
-    "48": { s: "good", t: "✓ Runs great", d: "The higher-quality IQ3_XXS file (perplexity 14.29 against 15.38 for F2) with every expert resident, inside the default GPU limit, with MTP.", c: "redlite download 48gb && redlite download mtp && redlite chat", r: "REF · M4 MAX 48 GB: 80 T/S IQ3_XXS · 97 T/S IQ2_XXS WITH MTP · ~900 T/S PREFILL" },
+    "48": { s: "good", t: "✓ Runs great", d: "The higher-quality IQ3_XXS file (perplexity 14.29 against 15.38 for F2) with every expert resident, inside the default GPU limit, with MTP. Red Lite G2 (redlite download 48gb-g2) is better still at the same speed, but very long prompts make the Mac swap.", c: "redlite download 48gb && redlite download mtp && redlite chat", r: "REF · M4 MAX 48 GB: 80 T/S IQ3_XXS · 97 T/S IQ2_XXS WITH MTP · ~900 T/S PREFILL" },
     "64": { s: "ok", t: "Runs great (not measured)", d: "The same IQ3_XXS setup as 48 GB, with more room for long contexts and other applications.", c: "redlite download 48gb && redlite download mtp && redlite chat", r: "NOT MEASURED · CLOSEST REFERENCE: M4 MAX 48 GB" },
   };
   function render() {

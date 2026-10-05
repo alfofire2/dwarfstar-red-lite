@@ -1,195 +1,688 @@
 {
-  "_readme": "Data of the charts in docs/img/, drawn by scripts/dev/make_charts.py. Every value is copied from the measured record named in its chart's sources; add a row when a milestone measures something new, then run the script. Bars: label, values (one per series), optional text shown instead of the first value, optional muted (grey: a comparison, not Red Lite).",
-  "charts": [
+ "_readme": "Data of the charts in docs/img/, drawn by scripts/dev/make_charts.py. Every value is copied from the measured record named in its chart's sources; add a row when a milestone measures something new, then run the script. Bars: label, values (one per series), optional text shown instead of the first value, optional muted (grey: a comparison, not Red Lite).",
+ "charts": [
+  {
+   "id": "decode_m4max",
+   "title": "Decode speed, M4 Max 48 GiB, IQ2_XXS, every expert resident",
+   "unit": "tok/s",
+   "note": "bench_m4.sh: 256 greedy tokens, median of 3 cooled runs. MTP: median of six prompts, 256 tokens each, output identical.",
+   "series": [
+    "Red Lite"
+   ],
+   "reference": {
+    "label": "llama.cpp (pinned)",
+    "value": 72.46
+   },
+   "bars": [
     {
-      "id": "decode_m4max",
-      "title": "Decode speed, M4 Max 48 GiB, IQ2_XXS, every expert resident",
-      "unit": "tok/s",
-      "note": "bench_m4.sh: 256 greedy tokens, median of 3 cooled runs. MTP: median of six prompts, 256 tokens each, output identical.",
-      "series": ["Red Lite"],
-      "reference": {"label": "llama.cpp (pinned)", "value": 72.46},
-      "bars": [
-        {"label": "0.3.0", "values": [71.5]},
-        {"label": "0.4.0", "values": [71.15]},
-        {"label": "0.4.1", "values": [81.15]},
-        {"label": "0.5.0", "values": [86.24]},
-        {"label": "0.5.0 + MTP (dev45, 6-prompt median)", "values": [97.07]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json", "benchmarks/m4max-48gb-0.5.0.json", "benchmarks/m4max-48gb-dev45-mtp.json"]
+     "label": "0.3.0",
+     "values": [
+      71.5
+     ]
     },
     {
-      "id": "prefill_m4max",
-      "title": "Prompt ingestion, 8192 tokens, M4 Max 48 GiB, IQ2_XXS, 4 GiB expert cache",
-      "unit": "tok/s",
-      "note": "bench_m4.sh prefill8192, median of 3 cooled runs; llama.cpp holds every weight resident.",
-      "series": ["Red Lite"],
-      "reference": {"label": "llama.cpp (pinned)", "value": 893.71},
-      "bars": [
-        {"label": "0.3.0", "values": [212.6]},
-        {"label": "0.4.0", "values": [645.6]},
-        {"label": "0.4.1", "values": [898.9]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-0.4.0.json", "benchmarks/m4max-48gb-0.4.1.json"]
+     "label": "0.4.0",
+     "values": [
+      71.15
+     ]
     },
     {
-      "id": "mtp",
-      "title": "MTP speculative decoding, M4 Max 48 GiB, IQ2_XXS, every expert resident",
-      "unit": "tok/s",
-      "note": "256 greedy tokens per prompt, alternated runs with 40 s cooling; output identical token for token.",
-      "series": ["plain", "--mtp"],
-      "bars": [
-        {"label": "transformer explanation", "values": [80.77, 94.26]},
-        {"label": "Python LRU cache", "values": [81.20, 102.25]},
-        {"label": "train arithmetic", "values": [79.88, 103.84]},
-        {"label": "Italian short story", "values": [80.45, 87.28]},
-        {"label": "fantasy story", "values": [80.60, 88.64]},
-        {"label": "40 sleep tips", "values": [80.61, 99.87]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-dev45-mtp.json"]
+     "label": "0.4.1",
+     "values": [
+      81.15
+     ]
     },
     {
-      "id": "decode_m4pro",
-      "title": "Decode speed, M4 Pro 24 GiB, IQ2_XXS",
-      "unit": "tok/s",
-      "note": "4 GiB cache: about 5 GiB in use. All resident: GPU limit raised with sudo sysctl iogpu.wired_limit_mb (18-20 GiB in use). llama.cpp launcher: whole model resident, range of its sweep. Six-prompt medians except dev18 and llama.cpp.",
-      "series": ["decode"],
-      "bars": [
-        {"label": "native dev18 (Sep 2026)", "values": [27.77]},
-        {"label": "native, 4 GiB cache (0.5.0)", "values": [32.48]},
-        {"label": "native, all experts resident (dev51)", "values": [45.98]},
-        {"label": "all resident + MTP (dev51)", "values": [52.65]},
-        {"label": "llama.cpp launcher 0.2", "values": [36.4], "text": "36.4-38.0", "muted": true}
-      ],
-      "sources": ["benchmarks/m4pro-24gb-native-dev18.json", "benchmarks/m4pro-24gb-dev51-cache-sweep.json", "benchmarks/m4pro-24gb-dev51-full-residency.json", "benchmarks/m4pro-24gb-sweep-2026-09-02.json"]
+     "label": "0.5.0",
+     "values": [
+      86.24
+     ]
     },
     {
-      "id": "cache_ab_m4pro",
-      "title": "Expert cache options on a 24 GiB Mac (M4 Pro, 4 GiB cache, IQ2_XXS)",
-      "unit": "tok/s",
-      "note": "small_mac_ab.sh: six prompts x 256 tokens, 60 s cooling, median decode. Cache bias changes the output (opt-in).",
-      "series": ["decode"],
-      "bars": [
-        {"label": "no prefetch", "values": [29.22]},
-        {"label": "uniform slots (0.4.0)", "values": [32.18]},
-        {"label": "F_NOCACHE reads", "values": [32.60]},
-        {"label": "default (slot classes)", "values": [32.68]},
-        {"label": "cache bias 0.5 (opt-in)", "values": [34.31]}
-      ],
-      "sources": ["benchmarks/m4pro-24gb-2026-10-02.json"]
-    },
-    {
-      "id": "token_time",
-      "title": "Where one decode token's GPU time goes (M4 Max, IQ2_XXS, dev38)",
-      "unit": "ms",
-      "note": "RL_ENGINE_PROFILE=1, every expert resident, each stage timed on its own (sum 12.0 ms). A real token takes 12.1 ms wall, 11.7 ms of GPU.",
-      "series": ["ms per token"],
-      "bars": [
-        {"label": "routed experts", "values": [4.071]},
-        {"label": "DeltaNet projections", "values": [1.748]},
-        {"label": "shared expert", "values": [1.071]},
-        {"label": "DeltaNet tail", "values": [0.890]},
-        {"label": "DeltaNet state", "values": [0.583]},
-        {"label": "output head", "values": [0.567]},
-        {"label": "attention", "values": [0.551]},
-        {"label": "router", "values": [0.512]},
-        {"label": "attention projections", "values": [0.488]},
-        {"label": "norms, residuals, small steps", "values": [1.496]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-dev38-decode.json"]
-    },
-    {
-      "id": "api_agreement",
-      "title": "Greedy answers vs Qwen's own API, 235 prompts (M4 Max, every expert resident)",
-      "unit": "%",
-      "note": "Word for word against Alibaba Cloud's qwen3-next-80b-a3b-instruct (temperature 0, top_k 1, 128 tokens). Same engine for both files: the difference between them is the quantization.",
-      "series": ["identical answers", "median share of words matching from the start"],
-      "bars": [
-        {"label": "IQ2_XXS (17.97 GiB)", "values": [0.9, 7.8]},
-        {"label": "IQ3_XXS (29.55 GiB)", "values": [4.3, 15.6]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-dev48-api-reference.json"]
-    },
-    {
-      "id": "mtp_context",
-      "title": "MTP against prompt length, M4 Pro 24 GiB (every expert resident, E3 file)",
-      "unit": "tok/s",
-      "note": "160 greedy tokens, 16K context, 512-token chunks, GPU limit 21,741 MiB. At 16.8K MTP was slower (37.2 -> 32.6, dev53). The M4 Max still gains +2 % at 16.8K.",
-      "series": ["plain", "--mtp"],
-      "bars": [
-        {"label": "20 prompt tokens", "values": [46.25, 57.51]},
-        {"label": "1,407", "values": [44.82, 49.69]},
-        {"label": "2,805", "values": [44.66, 48.12]},
-        {"label": "5,601", "values": [41.77, 43.61]},
-        {"label": "11,193", "values": [38.74, 38.97]}
-      ],
-      "sources": ["benchmarks/m4-dev55-gpu-budget.json"]
-    },
-    {
-      "id": "parallel_server",
-      "title": "Two server requests, M4 Pro 24 GiB (every expert resident, E3 file)",
-      "unit": "tok/s",
-      "note": "Total throughput of two greedy 200-token answers, one after the other vs at the same time (--parallel 2). One run each; identical answers.",
-      "series": ["one after the other", "at the same time"],
-      "bars": [
-        {"label": "plain decode", "values": [43.5, 55.9]},
-        {"label": "with MTP", "values": [51.0, 56.0]}
-      ],
-      "sources": ["benchmarks/m4pro-dev56-parallel-server.json"]
-    },
-    {
-      "id": "quant_ppl",
-      "title": "Perplexity of 19.3 GB files of the same model (lower is better)",
-      "unit": "perplexity",
-      "note": "Frozen corpus, ctx 512, 111 chunks, M4 Max. R: Bartowski's IQ2_XXS scheme rebuilt; E3: precise expert layers moved to 37-47 (dev54); F1/F2: dense weights at IQ3_XXS / Q4_K (dev58).",
-      "series": ["perplexity"],
-      "bars": [
-        {"label": "R (Bartowski scheme)", "values": [16.370]},
-        {"label": "E3 (dev54)", "values": [16.216]},
-        {"label": "F1 (dev58)", "values": [15.419]},
-        {"label": "F2 (dev58)", "values": [15.379]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-dev54-quant-mix.json", "benchmarks/m4max-48gb-dev58-dense-precision.json"]
-    },
-    {
-      "id": "coding_agent",
-      "title": "Coding-agent tasks passed (pi agent, 5 tasks x 3 runs)",
-      "unit": "of 15",
-      "note": "Scripted grading, every expert resident, 32K context. F2 before dev59b/dev60: arguments re-serialized by the agent broke the state reuse, and wrong closing brackets were not repaired.",
-      "series": ["passed"],
-      "bars": [
-        {"label": "F2, M4 Max, before the fixes", "values": [11]},
-        {"label": "F2, M4 Max", "values": [14]},
-        {"label": "Coder-Next, M4 Max", "values": [15]},
-        {"label": "F2, M4 Pro 24 GiB", "values": [15]},
-        {"label": "Coder-Next, M4 Pro 24 GiB", "values": [14]}
-      ],
-      "sources": ["benchmarks/m4-dev60-coding-agent.json"]
-    },
-    {
-      "id": "choices_24gb",
-      "title": "Decode on a 24 GiB Mac: three ways to run it (M4 Pro)",
-      "unit": "tok/s",
-      "note": "F2 perplexity 15.38, IQ3_XXS 14.29 (lower is better). Resident: raised GPU limit, 256 tokens, median of 3 (dev58). 4 GiB cache: default GPU limit, six prompts x 256 tokens, cache-aware routing (dev61).",
-      "series": ["decode"],
-      "bars": [
-        {"label": "F2, every expert resident", "values": [44.52]},
-        {"label": "F2, 4 GiB cache (SSD)", "values": [33.97]},
-        {"label": "IQ3_XXS, 4 GiB cache (SSD)", "values": [29.29]}
-      ],
-      "sources": ["benchmarks/m4max-48gb-dev58-dense-precision.json", "benchmarks/m4pro-dev61-streaming.json"]
-    },
-    {
-      "id": "agent_repo_tasks",
-      "title": "Harder coding-agent tasks on a real repository (pi agent, M4 Max)",
-      "unit": "% passed",
-      "note": "4 tasks: add --json to redlite models with a test, explain the C server's stop sequences, fix a planted planner bug, a 4-prompt session. Qwen API 3 runs, Qwen3-Coder-Next 5, F2 3.",
-      "series": ["passed"],
-      "bars": [
-        {"label": "Qwen API, full precision", "values": [83]},
-        {"label": "Qwen3-Coder-Next IQ2_XXS", "values": [70]},
-        {"label": "Red Lite F2", "values": [50]}
-      ],
-      "sources": ["benchmarks/m4-dev62-agent-tests.json"]
+     "label": "0.5.0 + MTP (dev45, 6-prompt median)",
+     "values": [
+      97.07
+     ]
     }
-  ]
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-0.4.0.json",
+    "benchmarks/m4max-48gb-0.4.1.json",
+    "benchmarks/m4max-48gb-0.5.0.json",
+    "benchmarks/m4max-48gb-dev45-mtp.json"
+   ]
+  },
+  {
+   "id": "prefill_m4max",
+   "title": "Prompt ingestion, 8192 tokens, M4 Max 48 GiB, IQ2_XXS, 4 GiB expert cache",
+   "unit": "tok/s",
+   "note": "bench_m4.sh prefill8192, median of 3 cooled runs; llama.cpp holds every weight resident.",
+   "series": [
+    "Red Lite"
+   ],
+   "reference": {
+    "label": "llama.cpp (pinned)",
+    "value": 893.71
+   },
+   "bars": [
+    {
+     "label": "0.3.0",
+     "values": [
+      212.6
+     ]
+    },
+    {
+     "label": "0.4.0",
+     "values": [
+      645.6
+     ]
+    },
+    {
+     "label": "0.4.1",
+     "values": [
+      898.9
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-0.4.0.json",
+    "benchmarks/m4max-48gb-0.4.1.json"
+   ]
+  },
+  {
+   "id": "mtp",
+   "title": "MTP speculative decoding, M4 Max 48 GiB, IQ2_XXS, every expert resident",
+   "unit": "tok/s",
+   "note": "256 greedy tokens per prompt, alternated runs with 40 s cooling; output identical token for token.",
+   "series": [
+    "plain",
+    "--mtp"
+   ],
+   "bars": [
+    {
+     "label": "transformer explanation",
+     "values": [
+      80.77,
+      94.26
+     ]
+    },
+    {
+     "label": "Python LRU cache",
+     "values": [
+      81.2,
+      102.25
+     ]
+    },
+    {
+     "label": "train arithmetic",
+     "values": [
+      79.88,
+      103.84
+     ]
+    },
+    {
+     "label": "Italian short story",
+     "values": [
+      80.45,
+      87.28
+     ]
+    },
+    {
+     "label": "fantasy story",
+     "values": [
+      80.6,
+      88.64
+     ]
+    },
+    {
+     "label": "40 sleep tips",
+     "values": [
+      80.61,
+      99.87
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev45-mtp.json"
+   ]
+  },
+  {
+   "id": "decode_m4pro",
+   "title": "Decode speed, M4 Pro 24 GiB, IQ2_XXS",
+   "unit": "tok/s",
+   "note": "4 GiB cache: about 5 GiB in use. All resident: GPU limit raised with sudo sysctl iogpu.wired_limit_mb (18-20 GiB in use). llama.cpp launcher: whole model resident, range of its sweep. Six-prompt medians except dev18 and llama.cpp.",
+   "series": [
+    "decode"
+   ],
+   "bars": [
+    {
+     "label": "native dev18 (Sep 2026)",
+     "values": [
+      27.77
+     ]
+    },
+    {
+     "label": "native, 4 GiB cache (0.5.0)",
+     "values": [
+      32.48
+     ]
+    },
+    {
+     "label": "native, all experts resident (dev51)",
+     "values": [
+      45.98
+     ]
+    },
+    {
+     "label": "all resident + MTP (dev51)",
+     "values": [
+      52.65
+     ]
+    },
+    {
+     "label": "llama.cpp launcher 0.2",
+     "values": [
+      36.4
+     ],
+     "text": "36.4-38.0",
+     "muted": true
+    }
+   ],
+   "sources": [
+    "benchmarks/m4pro-24gb-native-dev18.json",
+    "benchmarks/m4pro-24gb-dev51-cache-sweep.json",
+    "benchmarks/m4pro-24gb-dev51-full-residency.json",
+    "benchmarks/m4pro-24gb-sweep-2026-09-02.json"
+   ]
+  },
+  {
+   "id": "cache_ab_m4pro",
+   "title": "Expert cache options on a 24 GiB Mac (M4 Pro, 4 GiB cache, IQ2_XXS)",
+   "unit": "tok/s",
+   "note": "small_mac_ab.sh: six prompts x 256 tokens, 60 s cooling, median decode. Cache bias changes the output (opt-in).",
+   "series": [
+    "decode"
+   ],
+   "bars": [
+    {
+     "label": "no prefetch",
+     "values": [
+      29.22
+     ]
+    },
+    {
+     "label": "uniform slots (0.4.0)",
+     "values": [
+      32.18
+     ]
+    },
+    {
+     "label": "F_NOCACHE reads",
+     "values": [
+      32.6
+     ]
+    },
+    {
+     "label": "default (slot classes)",
+     "values": [
+      32.68
+     ]
+    },
+    {
+     "label": "cache bias 0.5 (opt-in)",
+     "values": [
+      34.31
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4pro-24gb-2026-10-02.json"
+   ]
+  },
+  {
+   "id": "token_time",
+   "title": "Where one decode token's GPU time goes (M4 Max, IQ2_XXS, dev38)",
+   "unit": "ms",
+   "note": "RL_ENGINE_PROFILE=1, every expert resident, each stage timed on its own (sum 12.0 ms). A real token takes 12.1 ms wall, 11.7 ms of GPU.",
+   "series": [
+    "ms per token"
+   ],
+   "bars": [
+    {
+     "label": "routed experts",
+     "values": [
+      4.071
+     ]
+    },
+    {
+     "label": "DeltaNet projections",
+     "values": [
+      1.748
+     ]
+    },
+    {
+     "label": "shared expert",
+     "values": [
+      1.071
+     ]
+    },
+    {
+     "label": "DeltaNet tail",
+     "values": [
+      0.89
+     ]
+    },
+    {
+     "label": "DeltaNet state",
+     "values": [
+      0.583
+     ]
+    },
+    {
+     "label": "output head",
+     "values": [
+      0.567
+     ]
+    },
+    {
+     "label": "attention",
+     "values": [
+      0.551
+     ]
+    },
+    {
+     "label": "router",
+     "values": [
+      0.512
+     ]
+    },
+    {
+     "label": "attention projections",
+     "values": [
+      0.488
+     ]
+    },
+    {
+     "label": "norms, residuals, small steps",
+     "values": [
+      1.496
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev38-decode.json"
+   ]
+  },
+  {
+   "id": "api_agreement",
+   "title": "Greedy answers vs Qwen's own API, 235 prompts (M4 Max, every expert resident)",
+   "unit": "%",
+   "note": "Word for word against Alibaba Cloud's qwen3-next-80b-a3b-instruct (temperature 0, top_k 1, 128 tokens). Same engine for both files: the difference between them is the quantization.",
+   "series": [
+    "identical answers",
+    "median share of words matching from the start"
+   ],
+   "bars": [
+    {
+     "label": "IQ2_XXS (17.97 GiB)",
+     "values": [
+      0.9,
+      7.8
+     ]
+    },
+    {
+     "label": "IQ3_XXS (29.55 GiB)",
+     "values": [
+      4.3,
+      15.6
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev48-api-reference.json"
+   ]
+  },
+  {
+   "id": "mtp_context",
+   "title": "MTP against prompt length, M4 Pro 24 GiB (every expert resident, E3 file)",
+   "unit": "tok/s",
+   "note": "160 greedy tokens, 16K context, 512-token chunks, GPU limit 21,741 MiB. At 16.8K MTP was slower (37.2 -> 32.6, dev53). The M4 Max still gains +2 % at 16.8K.",
+   "series": [
+    "plain",
+    "--mtp"
+   ],
+   "bars": [
+    {
+     "label": "20 prompt tokens",
+     "values": [
+      46.25,
+      57.51
+     ]
+    },
+    {
+     "label": "1,407",
+     "values": [
+      44.82,
+      49.69
+     ]
+    },
+    {
+     "label": "2,805",
+     "values": [
+      44.66,
+      48.12
+     ]
+    },
+    {
+     "label": "5,601",
+     "values": [
+      41.77,
+      43.61
+     ]
+    },
+    {
+     "label": "11,193",
+     "values": [
+      38.74,
+      38.97
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev55-gpu-budget.json"
+   ]
+  },
+  {
+   "id": "parallel_server",
+   "title": "Two server requests, M4 Pro 24 GiB (every expert resident, E3 file)",
+   "unit": "tok/s",
+   "note": "Total throughput of two greedy 200-token answers, one after the other vs at the same time (--parallel 2). One run each; identical answers.",
+   "series": [
+    "one after the other",
+    "at the same time"
+   ],
+   "bars": [
+    {
+     "label": "plain decode",
+     "values": [
+      43.5,
+      55.9
+     ]
+    },
+    {
+     "label": "with MTP",
+     "values": [
+      51.0,
+      56.0
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4pro-dev56-parallel-server.json"
+   ]
+  },
+  {
+   "id": "quant_ppl",
+   "title": "Perplexity of 19.3 GB files of the same model (lower is better)",
+   "unit": "perplexity",
+   "note": "Frozen corpus, ctx 512, 111 chunks, M4 Max. R: Bartowski's IQ2_XXS scheme rebuilt; E3: precise expert layers moved to 37-47 (dev54); F1/F2: dense weights at IQ3_XXS / Q4_K (dev58).",
+   "series": [
+    "perplexity"
+   ],
+   "bars": [
+    {
+     "label": "R (Bartowski scheme)",
+     "values": [
+      16.37
+     ]
+    },
+    {
+     "label": "E3 (dev54)",
+     "values": [
+      16.216
+     ]
+    },
+    {
+     "label": "F1 (dev58)",
+     "values": [
+      15.419
+     ]
+    },
+    {
+     "label": "F2 (dev58)",
+     "values": [
+      15.379
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev54-quant-mix.json",
+    "benchmarks/m4max-48gb-dev58-dense-precision.json"
+   ]
+  },
+  {
+   "id": "coding_agent",
+   "title": "Coding-agent tasks passed (pi agent, 5 tasks x 3 runs)",
+   "unit": "of 15",
+   "note": "Scripted grading, every expert resident, 32K context. F2 before dev59b/dev60: arguments re-serialized by the agent broke the state reuse, and wrong closing brackets were not repaired.",
+   "series": [
+    "passed"
+   ],
+   "bars": [
+    {
+     "label": "F2, M4 Max, before the fixes",
+     "values": [
+      11
+     ]
+    },
+    {
+     "label": "F2, M4 Max",
+     "values": [
+      14
+     ]
+    },
+    {
+     "label": "Coder-Next, M4 Max",
+     "values": [
+      15
+     ]
+    },
+    {
+     "label": "F2, M4 Pro 24 GiB",
+     "values": [
+      15
+     ]
+    },
+    {
+     "label": "Coder-Next, M4 Pro 24 GiB",
+     "values": [
+      14
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev60-coding-agent.json"
+   ]
+  },
+  {
+   "id": "choices_24gb",
+   "title": "Decode on a 24 GiB Mac: three ways to run it (M4 Pro)",
+   "unit": "tok/s",
+   "note": "F2 perplexity 15.38, IQ3_XXS 14.29 (lower is better). Resident: raised GPU limit, 256 tokens, median of 3 (dev58). 4 GiB cache: default GPU limit, six prompts x 256 tokens, cache-aware routing (dev61).",
+   "series": [
+    "decode"
+   ],
+   "bars": [
+    {
+     "label": "F2, every expert resident",
+     "values": [
+      44.52
+     ]
+    },
+    {
+     "label": "F2, 4 GiB cache (SSD)",
+     "values": [
+      33.97
+     ]
+    },
+    {
+     "label": "IQ3_XXS, 4 GiB cache (SSD)",
+     "values": [
+      29.29
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev58-dense-precision.json",
+    "benchmarks/m4pro-dev61-streaming.json"
+   ]
+  },
+  {
+   "id": "agent_repo_tasks",
+   "title": "Harder coding-agent tasks on a real repository (pi agent, M4 Max)",
+   "unit": "% passed",
+   "note": "4 tasks: add --json to redlite models with a test, explain the C server's stop sequences, fix a planted planner bug, a 4-prompt session. Qwen API 3 runs, Qwen3-Coder-Next 5, F2 3.",
+   "series": [
+    "passed"
+   ],
+   "bars": [
+    {
+     "label": "Qwen API, full precision",
+     "values": [
+      83
+     ]
+    },
+    {
+     "label": "Qwen3-Coder-Next IQ2_XXS",
+     "values": [
+      70
+     ]
+    },
+    {
+     "label": "Red Lite F2",
+     "values": [
+      50
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev62-agent-tests.json"
+   ]
+  },
+  {
+   "id": "coder_agents",
+   "title": "Qwen3-Coder-Next 2-bit files on harder agent tasks (pi agent, repository suite)",
+   "unit": "% of tasks passed",
+   "note": "4 tasks x 3 runs per file and Mac, every expert resident, 32K context, server sampling defaults. M4 Pro 24 GiB: 600 s limit, pi 1.0.2; M4 Max 48 GiB: 900 s, pi 0.84.4. CE3 and CF2 are Red Lite quantizations of the same size (dev63).",
+   "series": [
+    "M4 Pro 24 GiB",
+    "M4 Max 48 GiB"
+   ],
+   "bars": [
+    {
+     "label": "Bartowski IQ2_XXS",
+     "values": [
+      58,
+      83
+     ]
+    },
+    {
+     "label": "Red Lite CE3",
+     "values": [
+      92,
+      100
+     ]
+    },
+    {
+     "label": "Red Lite CF2",
+     "values": [
+      100,
+      100
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev63-coder-quant-sampling.json"
+   ]
+  },
+  {
+   "id": "agent_loops",
+   "title": "Agent loops against sampling temperature (Qwen3-Coder-Next IQ2_XXS, M4 Pro 24 GiB)",
+   "unit": "count over 12 agent tasks",
+   "note": "A loop: a task stopped at the 600 s limit after 40 or more requests. Repository suite, 3 runs per setting. C adds presence_penalty 1.0 to temperature 1.0. Passes 7-9 of 12 are within noise.",
+   "series": [
+    "tasks passed",
+    "loops"
+   ],
+   "bars": [
+    {
+     "label": "temperature 0.3",
+     "values": [
+      9,
+      0
+     ]
+    },
+    {
+     "label": "temperature 0.7 (server default)",
+     "values": [
+      7,
+      1
+     ]
+    },
+    {
+     "label": "temperature 1.0",
+     "values": [
+      8,
+      2
+     ]
+    },
+    {
+     "label": "temperature 1.0 + presence_penalty",
+     "values": [
+      8,
+      1
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev63-coder-quant-sampling.json"
+   ]
+  },
+  {
+   "id": "quant_48gb",
+   "title": "48 GiB files of Qwen3-Next-80B-A3B-Instruct: perplexity against Bartowski's IQ3_XXS",
+   "unit": "% change in perplexity (lower is better)",
+   "note": "Frozen text corpus (111 chunks) and code corpus (90 chunks), ctx 512, M4 Max. G1: Q8_0 dense; G2: IQ3_S experts (31.24 GiB, fits with MTP); G3: both (31.99 GiB, MTP above the 70 % rule). Bars show the reduction.",
+   "series": [
+    "text",
+    "code"
+   ],
+   "bars": [
+    {
+     "label": "G1 (+0.76 GiB)",
+     "values": [
+      0.42,
+      0.33
+     ]
+    },
+    {
+     "label": "G2 (+1.69 GiB)",
+     "values": [
+      0.65,
+      1.36
+     ]
+    },
+    {
+     "label": "G3 (+2.44 GiB)",
+     "values": [
+      1.04,
+      1.67
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-48gb-dev64-g2.json"
+   ]
+  }
+ ]
 }
