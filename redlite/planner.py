@@ -242,8 +242,9 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
     if wired_mib > 0:
         return native_full_residency_mib(residency, context, batch, mtp) <= wired_mib
     extra = NATIVE_MTP_MIB * 1024 * 1024 if mtp else 0
-    # dev64: the context's KV cache counts too. On the M4 Max 48 GiB, G2 (65.1 % of RAM) with MTP and a 25K-token
-    # prompt swapped out ~9.5 GiB and ingested at 401 tok/s; without MTP it did not swap (IQ3_XXS with MTP neither).
+    # dev64: the context's KV cache counts too (1.5 GiB at 32K), since it is memory the run really holds. At 25K-token
+    # prompts on the M4 Max 48 GiB, G2 (65.1 % of RAM) swapped and slowed prompt ingestion with or without MTP; this
+    # rule keeps MTP off for it above ~13.5K positions, it does not remove that.
     kv = int((context or 4096) * NATIVE_KV_MIB_PER_POS * 1024 * 1024)
     return (residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra + kv
             <= ram_bytes * NATIVE_WORKING_SET_FRACTION)

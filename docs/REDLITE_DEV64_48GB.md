@@ -116,31 +116,41 @@ command run twice. Same output on every run, no errors.
   4.2–5.2 GiB of swap in use during these runs, and G2's footprint is 1.7 GiB larger. This is not proven; the runs
   did not record swap activity during the prefill.
 
-**In the server** (one process, `redlite-server --cache-mib full --mtp --context 32768`, two different long prompts
-180 s apart, so the second cannot reuse the first's state). Swap-outs are `vm_stat` pages of 16 KiB written to swap
-during the request.
+**In the server** (one process, `redlite-server --cache-mib full --context 32768`, two different long prompts 180 s
+apart, so the second cannot reuse the first's state). Swapped out: the change of `vm_stat`'s swap-out counter
+(16 KiB pages) across the request, or across the pause between the two requests.
 
-| File, request | Prompt tokens | Prompt tok/s | Decode tok/s | Swapped out during the request |
-|---|---:|---:|---:|---:|
-| IQ3_XXS, 1 | 25,378 | 619.9 | 57.2 | 0 |
-| IQ3_XXS, 2 | 22,518 | 595.5 | 61.0 | 0 |
-| G2, 1 | 25,378 | **400.7** | 58.5 | about 9.5 GiB |
-| G2, 2 | 22,518 | 572.5 | 56.8 | about 1.2 GiB |
+| File, mode | Request 1: prompt tok/s, swapped out | Request 2: prompt tok/s, swapped out | Swapped out in the pause |
+|---|---|---|---|
+| IQ3_XXS, MTP | 619.9, 1.3 GiB | 595.5, 0 | 0 |
+| G2, MTP | **400.7, 4.3 GiB** | 572.5, 0.5 GiB | 0.8 GiB |
+| G2, no MTP | 676.1, 0 | **514.3, 1.6 GiB** | 3.8 GiB (server idle) |
 
-- **The cause is memory pressure.** During G2's first long request, macOS swapped out about 9.5 GiB of other
-  processes' memory and prompt ingestion fell by a third. Once the room was made, the second request ran close to
-  IQ3_XXS. IQ3_XXS caused no swap-out.
-- **Decode is unaffected** in every run.
-- **It depends on the rest of the Mac.** This M4 Max had other applications open, with 4–5 GiB of swap in use
-  before the tests. On a Mac with less else running the cost should be smaller, but that was not measured.
+Decode was 55.9–62.3 tok/s in every request, with or without MTP (at 25K positions MTP gains little, dev55).
+
+- **G2 at long context is at the edge of memory** on this Mac, which had other applications open and 3.4–8.2 GiB
+  of swap in use before the requests. Its prompt ingestion ranged from 401 to 676 tok/s, each slow request with
+  swap activity. IQ3_XXS stayed at 596–638 tok/s in six long requests (two in the server, four in
+  `redlite-generate`).
+- **MTP is not shown to be the cause:** without MTP, G2's first request was the fastest of all, but its second was
+  slow, and 3.8 GiB were swapped out while the server sat idle. Two requests per setting, on a machine whose swap
+  changes between tests, cannot separate the two.
+- An earlier version of this section said "about 9.5 GiB swapped out, none without MTP". That figure included the
+  server start and the pause, and the second request without MTP had not run yet; the table above replaces it.
+
+**Planner change.** At the default GPU limit the 70 % RAM rule now counts the context's KV cache
+(`native_full_residency_fits`; `chat` and `serve` print "MTP off" when the head does not fit at the context). G2
+keeps MTP up to about 13.5K positions, IQ3_XXS keeps it at 32K, the 2-bit files are far below. This is the memory a
+run really holds; it does not by itself remove G2's slow long requests.
 
 ## Choice
 
 **G2** for 48 GiB Macs: perplexity −0.65 % on text and −1.4 % on code against IQ3_XXS, the same decode speed with
 MTP, and inside the planner's 70 % rule. It passes the parity checks. Before it replaces IQ3_XXS in
 `redlite download 48gb`:
-- a decision on long contexts: G2's 1.7 GiB more pushed this 48 GiB Mac into swap with a 25K-token prompt, which
-  costs a third of prompt speed once;
+- a decision on long contexts: with 25K-token prompts G2's prompt ingestion varied from 401 to 676 tok/s with
+  swap activity, while IQ3_XXS stayed at 596–638. Recommended: G2 as an option (`redlite download 48gb-g2`),
+  IQ3_XXS stays the default;
 - the Hugging Face upload.
 
 ## Scope boundary
