@@ -103,19 +103,24 @@ TASKS = [
 # a planted bug, and one long session of four prompts in the same pi session.
 REPO_TASKS = [
     {
-        "id": "doctor_json",
+        "id": "models_json",
         "repo": True,
-        "prompt": "Add a --json option to the `redlite doctor` command (redlite/cli.py) that prints the same "
-                  "information as one JSON object instead of text lines. Add a unit test for it in tests/test_cli.py, "
-                  "then run python3 -m unittest discover -s tests -p test_cli.py and make sure it passes.",
+        "prompt": "Add a --json option to the `redlite models` command (redlite/cli.py): instead of the table it prints "
+                  "a JSON list with one object per variant (key, repo, filename, nominal_gb, quality, recommended_mode). "
+                  "Add a unit test for it in tests/test_cli.py, then run "
+                  "python3 -m unittest discover -s tests -p test_cli.py and make sure it passes.",
         "check": "import json, subprocess, sys, os\n"
+                 "sys.path.insert(0, '.')\n"
+                 "from redlite.model_catalog import VARIANTS\n"
                  "env = {**os.environ, 'PYTHONPATH': '.'}\n"
-                 "out = subprocess.run([sys.executable, '-m', 'redlite.cli', 'doctor', '--json'], capture_output=True, text=True, env=env)\n"
+                 "out = subprocess.run([sys.executable, '-m', 'redlite.cli', 'models', '--json'], capture_output=True, text=True, env=env)\n"
                  "d = json.loads(out.stdout)\n"
-                 "assert isinstance(d, dict) and len(d) >= 3, d\n"
+                 "assert isinstance(d, list) and len(d) == len(VARIANTS), out.stdout[:200]\n"
+                 "assert {x['key'] for x in d} == set(VARIANTS) and all('filename' in x and 'repo' in x for x in d)\n"
                  "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_cli.py'], capture_output=True, text=True, env=env)\n"
                  "assert r.returncode == 0, r.stderr[-400:]\n"
-                 "assert '--json' in open('tests/test_cli.py').read()\n",
+                 "t = open('tests/test_cli.py').read()\n"
+                 "assert 'models' in t and '--json' in t\n",
     },
     {
         "id": "explain_stop",
