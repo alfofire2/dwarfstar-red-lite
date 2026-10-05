@@ -1,21 +1,43 @@
 # Roadmap
 
-Agreed with the project owner on 2026-10-03. Updated as steps finish: each step links its milestone document when
+Agreed with the project owner on 2026-10-03, updated on 2026-10-05. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand
+## Where things stand (0.6.1, 2026-10-05)
 
-- **Unreleased on `main` since 0.4.1:**
-  - MTP speculation (+8–30 %, identical output; server and chat use it automatically);
-  - disk checkpoints of the session state;
-  - Qwen3-Coder-Next;
-  - the comparison with Qwen's own API;
-  - prompt ingestion +3.4 %;
-  - the findings page with charts.
-- **24 GiB Mac** (M4 Pro, 4 GiB expert cache): decode 33 tok/s, prompt ingestion 360 tok/s. The llama.cpp launcher
-  decodes 36–38 tok/s there with the whole 18 GiB model resident.
+- **24 GiB Mac** (M4 Pro), file F2:
+  - default, experts from the SSD: decode 34 tok/s;
+  - every expert resident (raised GPU limit): 45–46 tok/s, 49–58 with MTP;
+  - prompt ingestion about 360 tok/s;
+  - the llama.cpp launcher decodes 36–38 tok/s there.
+- **48 GiB Mac** (M4 Max), every expert resident:
+  - IQ3_XXS 80 tok/s;
+  - IQ2_XXS 86 tok/s, 97 with MTP (llama.cpp 72.5);
+  - prompt ingestion about 900 tok/s.
+- **Coding agents:** OpenAI tool calling in the server and `redlite setup-pi` (dev59–dev62). On the harder repository
+  tasks: Qwen3-Coder-Next IQ2_XXS 70 %, F2 50 %, Qwen's full-precision API model 83 %.
+- **Project site** with the docs and a search: [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/).
 - **Prompt ingestion on the M4 Pro** is bound by its 16 GPU cores, at the same efficiency as the M4 Max (dev49, dev50).
   More kernel work there gives a few percent at a time.
+
+## In progress (dev63, dev64)
+
+- **Agent loops at 2 bits (dev63).** Some failed agent tasks are loops: the model repeats the same tool call until the
+  timeout (one run made 176 requests). How often this happens, and whether sampling changes it, is what this step
+  measures. On the M4 Pro, Qwen3-Coder-Next, three runs per setting of the repository suite:
+  - the server defaults;
+  - Qwen's recommended temperature 1.0;
+  - temperature 1.0 with `presence_penalty` 1.0, new in dev63 (OpenAI semantics, server and sampler);
+  - temperature 0.3.
+- **A Red Lite quantization of Qwen3-Coder-Next (dev63).** The F2 recipe (Q4_K dense projections, IQ2_XS experts
+  on the last layers) and E3 applied to the Coder. They are judged by perplexity on text and on a frozen code
+  corpus (`perplexity.sh --corpus`), then by the agent suite.
+- **48 GiB Macs (dev64).** A higher-quality file than Bartowski's IQ3_XXS that still fits the default GPU limit
+  (37.4 GiB on the M4 Max) with MTP:
+  - Q8_0 dense weights;
+  - IQ3_S experts on more layers.
+
+  Judged by perplexity on both corpora, then speed and fit.
 
 ## Phase 1 — release 0.5.0 (done 2026-10-03)
 
