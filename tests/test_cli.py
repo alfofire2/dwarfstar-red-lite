@@ -144,6 +144,7 @@ class SetupPiTests(unittest.TestCase):
             red = cfg["providers"]["redlite"]
             self.assertEqual(red["baseUrl"], "http://127.0.0.1:8091/v1")
             self.assertEqual(red["models"][0]["contextWindow"], 16384)
+            self.assertEqual(red["models"][0]["samplingParams"], {"temperature": 0.3})   # dev63: no agent loops at 0.3
 
     def test_permissions_are_kept_or_private(self):
         import os

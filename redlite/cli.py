@@ -149,6 +149,7 @@ def _hf_binary() -> list[str]:
 
 
 SERVER_MODEL_ID = "qwen3-next-80b-a3b-redlite"   # the id redlite-server reports in /v1/models
+AGENT_TEMPERATURE = 0.3                          # dev63: setup-pi's sampling temperature for agent loops
 
 
 def pi_provider(port: int, context: int, host: str = "127.0.0.1") -> dict:
@@ -159,6 +160,9 @@ def pi_provider(port: int, context: int, host: str = "127.0.0.1") -> dict:
                    "supportsStrictMode": False, "maxTokensField": "max_tokens"},
         "models": [{"id": SERVER_MODEL_ID, "name": "Red Lite (local)", "reasoning": False, "input": ["text"],
                     "contextWindow": context, "maxTokens": min(4096, context // 4),
+                    # dev63: the 2-bit Qwen3-Coder-Next looped 4 times in 36 agent sessions at temperature >= 0.7 and
+                    # never at 0.3 (M4 Pro, repo suite); pi sends this with every request
+                    "samplingParams": {"temperature": AGENT_TEMPERATURE},
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}],
     }
 
@@ -184,7 +188,8 @@ def cmd_setup_pi(args) -> int:
         f.write(json.dumps(config, indent=2) + "\n")
     os.chmod(tmp, mode)   # the umask may have narrowed it
     tmp.replace(path)
-    print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context})")
+    print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context}, "
+          f"temperature {AGENT_TEMPERATURE})")
     print(f"start the server:  redlite serve --native --context {args.context} --port {args.port}")
     print(f"then:              pi --provider redlite --model {SERVER_MODEL_ID}")
     return 0

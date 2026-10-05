@@ -319,6 +319,29 @@ class RedLiteF2PreferenceTests(unittest.TestCase):
         from redlite.model_catalog import resolve_variant
         self.assertEqual(resolve_variant("24gb").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
         self.assertEqual(resolve_variant("e3").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf")
+        # dev63/dev64
+        self.assertEqual(resolve_variant("coder").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+        self.assertEqual(resolve_variant("coder").repo, "alfodaniello/Qwen3-Coder-Next-RedLite-GGUF")
+        self.assertEqual(resolve_variant("bartowski-coder").filename, "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf")
+        self.assertEqual(resolve_variant("48gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
+        self.assertEqual(resolve_variant("48gb-g2").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
+
+    def test_g2_preferred_on_48gb_when_present(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from redlite import planner
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            for n in ("Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+                      "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf"):
+                (d / n).write_bytes(b"x")
+            g2 = NativeResidency(30528, 1457 * 1024 * 1024)
+            with patch.object(planner, "native_residency", return_value=g2):
+                self.assertEqual(planner.select_native_model(d, 48 * GIB).name, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
+                # 24 GiB with a raised limit: G2 does not fit, F2 is chosen
+                self.assertEqual(planner.select_native_model(d, 24 * GIB, 21741).name,
+                                 "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
 
 
 class PreferenceUnderGpuLimitTests(unittest.TestCase):

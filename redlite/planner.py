@@ -198,7 +198,9 @@ NATIVE_REFERENCE_MODEL = "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf"
 # the 24 GiB files in preference order: Red Lite F2 (dev58), Red Lite E3 (dev54), then Bartowski's IQ2_XXS
 NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf", "Qwen3-Next-80B-A3B-Instruct-RedLite-E3.gguf",
                        NATIVE_REFERENCE_MODEL)
-NATIVE_MODEL_PREFERENCE = ("Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",) + NATIVE_SMALL_MODELS
+# dev64: Red Lite G2 (redlite download 48gb-g2) first when present: it is only there when the user chose it
+NATIVE_MODEL_PREFERENCE = ("Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
+                           ) + NATIVE_SMALL_MODELS
 
 
 @dataclass(frozen=True)

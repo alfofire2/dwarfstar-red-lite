@@ -38,6 +38,16 @@ VARIANTS = {
         quality="very-low",
         recommended_mode="metal-resident",
     ),
+    # dev64: IQ3_XXS with IQ3_S experts (ffn_down on every layer, gate/up on 24-47): perplexity 14.292 -> 14.199 (text),
+    # 1.975 -> 1.948 (code), same decode speed with MTP on the M4 Max; an option for 48 GiB Macs (long prompts swap)
+    "redlite_g2": ModelVariant(
+        key="redlite_g2",
+        repo="alfodaniello/Qwen3-Next-80B-A3B-Instruct-RedLite-GGUF",
+        filename="Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf",
+        nominal_gb=33.54,
+        quality="medium",
+        recommended_mode="native-full-residency",
+    ),
     "iq2_xs": ModelVariant(
         key="iq2_xs",
         repo="bartowski/Qwen_Qwen3-Next-80B-A3B-Instruct-GGUF",
@@ -70,6 +80,16 @@ VARIANTS = {
         nominal_gb=19.30,
         quality="very-low",
         recommended_mode="native-bounded-cache",
+    ),
+    # dev63: F2's recipe on Qwen3-Coder-Next: code perplexity -3.3 %, agent repo suite 12/12 on both Macs
+    # (Bartowski's IQ2_XXS 7/12 on the M4 Pro, 10/12 on the M4 Max)
+    "redlite_coder_cf2": ModelVariant(
+        key="redlite_coder_cf2",
+        repo="alfodaniello/Qwen3-Coder-Next-RedLite-GGUF",
+        filename="Qwen3-Coder-Next-RedLite-CF2.gguf",
+        nominal_gb=19.32,
+        quality="very-low",
+        recommended_mode="native-full-residency",
     ),
     "coder_iq3_xxs": ModelVariant(
         key="coder_iq3_xxs",
@@ -109,7 +129,11 @@ ALIASES = {
     "quality": "q4_k_m",
     "q4": "q4_k_m",
     "48gb": "iq3_xxs",
-    "coder": "coder_iq2_xxs",
+    "48gb-g2": "redlite_g2",
+    "g2": "redlite_g2",
+    "coder": "redlite_coder_cf2",
+    "cf2": "redlite_coder_cf2",
+    "bartowski-coder": "coder_iq2_xxs",
     "coder-48gb": "coder_iq3_xxs",
     "mtp": "mtp_q8_0",
 }
