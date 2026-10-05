@@ -1,7 +1,8 @@
 # Red Lite dev64 — a better file for 48 GiB Macs
 
 Status: in progress. Quantization, perplexity and decode speed measured on the Apple M4 Max 48 GiB, 2026-10-05.
-G2 is the candidate; native parity and long-context checks are not run yet.
+G2 is the candidate. Validation and a long-context test on the M4 Max are done; repeated long runs slow G2's
+prompt ingestion (below).
 
 ## Goal
 
@@ -86,12 +87,42 @@ experts with IQ3_XXS's dense weights and fits with MTP, at 68.7 %.
   fixed prompt, so the two numbers are not comparable. Every row of this table was measured in one session under
   the same conditions.
 
+## Validation (M4 Max)
+
+- **`regress_m4.sh models/quant/G2.gguf`: 39 PASS, 3 FAIL, 13 SKIP.** The three failures are not regressions:
+  - `logits.long_context_vs_llama` and `logits.long_context_full_residency` fail argmax agreement at 2 of 100
+    positions. Both are near-ties: llama.cpp's top-1 and top-2 logits differ by 0.0003 at position 18 and by
+    0.012 at position 39, the smallest and fourth-smallest gaps of the 100 (median 1.8). The logit and KL limits
+    pass (worst |Δlogit| 0.57 against 2.0, worst KL 6e-4 against 2e-2), and the swap does not propagate.
+  - `generate.greedy` looks for the words "Rayleigh scattering". G2's correct answer says "molecules … scatter
+    shorter wavelengths" instead; `generate.vs_llama` (24 greedy tokens identical to llama.cpp) passes.
+- **`quick_parity.sh`: 4/4 PASS**, including the GPU-routed greedy identical to llama.cpp.
+- **`server_check.py --cache-mib full --mtp`: SERVER CHECK: YES** (stream and blocking answers identical to
+  `redlite-generate`, a warm second turn identical to a cold server).
+
+## Long context, run twice (M4 Max, MTP, `--context 32768`)
+
+A 25,274-token prompt (the first 95,000 bytes of the code corpus and a question), 128 tokens of answer, the same
+command run twice. Same output on every run, no errors.
+
+| File, pause before run 2 | Prompt tok/s, run 1 → 2 | Decode tok/s, run 1 → 2 | Footprint |
+|---|---|---|---:|
+| G2, 60 s | 553 → 314 (−43 %) | 57.6 → 36.6 (−36 %) | 35,084 MiB |
+| IQ3_XXS, 180 s | 638 → 624 (−2 %) | 52.6 → 52.0 (−1 %) | 33,354 MiB |
+| G2, 180 s | 639 → 492 (−23 %) | 57.9 → 55.2 (−5 %) | 35,084 MiB |
+
+- **G2 is stable** at this length (no failure, unlike IQ3_M in dev36), and its first run is as fast as IQ3_XXS's.
+- **A second long run is slower for G2 and not for IQ3_XXS.** The likely cause is memory pressure: the system had
+  4.2–5.2 GiB of swap in use during these runs, and G2's footprint is 1.7 GiB larger. This is not proven; the runs
+  did not record swap activity during the prefill.
+- **Open:** whether the server, which keeps one process, shows it. These runs started a new process each time.
+
 ## Choice
 
 **G2** for 48 GiB Macs: perplexity −0.65 % on text and −1.4 % on code against IQ3_XXS, the same decode speed with
-MTP, and inside the planner's 70 % rule. Before it replaces IQ3_XXS in `redlite download 48gb`:
-- `regress_m4.sh` and `quick_parity.sh` on G2;
-- the server at a 32K context with MTP, twice (the IQ3_M failure of dev36 came on the second run);
+MTP, and inside the planner's 70 % rule. It passes the parity checks. Before it replaces IQ3_XXS in
+`redlite download 48gb`:
+- the second-run slowdown at long context, explained or measured in the server;
 - the Hugging Face upload.
 
 ## Scope boundary
