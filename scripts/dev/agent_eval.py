@@ -202,7 +202,7 @@ def run_task(task: dict, args) -> dict:
         log_start = Path(args.server_log).stat().st_size
         env = {**os.environ, "PI_CODING_AGENT_DIR": args.agent_dir, "PI_OFFLINE": "1"}
         t0 = time.monotonic()
-        answer, rc = "", 0
+        answer, rc, err = "", 0, ""
         prompts = task.get("prompts") or [task["prompt"]]
         session = ["--no-session"] if len(prompts) == 1 else ["--session-dir", str(work / ".pi-sessions"), "--session-id", "eval"]
         for k, prompt in enumerate(prompts):   # several prompts: one pi session, continued
@@ -212,7 +212,7 @@ def run_task(task: dict, args) -> dict:
                                      cwd=work, env=env, stdin=subprocess.DEVNULL,   # pi -p reads a piped stdin
                                      capture_output=True, text=True,
                                      timeout=max(1, args.timeout - (time.monotonic() - t0)))
-                answer, rc = answer + out.stdout, out.returncode
+                answer, rc, err = answer + out.stdout, out.returncode, out.stderr
             except subprocess.TimeoutExpired:
                 rc = -1
             if rc != 0:
@@ -223,7 +223,7 @@ def run_task(task: dict, args) -> dict:
             reqs = [tuple(int(x) for x in m.groups()[:3]) for m in REQ.finditer(f.read())]
         problems = []
         if rc != 0:
-            problems.append(f"pi exit {rc}")
+            problems.append(f"pi exit {rc}" + (": " + err.strip().splitlines()[-1][:160] if err.strip() else ""))
         for name in task.get("unchanged", []):
             if (work / name).read_text() != task["files"][name]:
                 problems.append(f"{name} was modified")
