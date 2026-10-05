@@ -5,9 +5,11 @@ are not measured yet.
 
 ## Goal
 
-On a 48 GiB Mac, Bartowski's IQ3_XXS (29.55 GiB) runs with every expert resident and MTP inside the default GPU
-limit of the M4 Max (`recommendedMaxWorkingSetSize`, 38,338 MiB): 31,601 MiB without MTP, 33,388 MiB with MTP at a
-4K context. The goal is a better file in the remaining room, without raising the limit.
+On a 48 GiB Mac at the default GPU limit, `redlite chat` and `serve` keep every expert resident when the expert
+cache plus the dense weights (plus the MTP block, 1,787 MiB) stay under 70 % of RAM, 34,406 MiB
+(`native_full_residency_fits`; 70 % since dev36, when IQ3_M at 74 % ran out of GPU memory on the M4 Max).
+Bartowski's IQ3_XXS (29.55 GiB) is at 61.6 %, 65.2 % with MTP. The goal is a better file in the remaining room, still
+with MTP.
 
 ## Variants
 
@@ -44,12 +46,19 @@ Paired per chunk: mean difference in nats/token, t, chunks where the first file 
 - **The experts at IQ3_S (G3)** carry the gain: −1.0 % on text, −1.7 % on code, both clearly beyond noise, for
   2.44 GiB more than IQ3_XXS.
 
-## Fit, estimated (to be measured)
+## Fit on a 48 GiB Mac (planner rule, computed)
 
-The GPU need should grow by the file's growth (G3: +2,496 MiB): about 35,900 MiB with MTP at 4K and about
-37,230 MiB at 32K, from IQ3_XXS's measured 33,388 and 34,732 MiB. That is under
-the default limit of 38,338 MiB, but only about 1 GiB below it at 32K. To be measured with `redlite-generate --stats`
-and the server at 4K and 32K, with and without MTP, together with decode and prompt speed against IQ3_XXS.
+| File | Expert cache | Dense | Share of 48 GiB | With MTP |
+|---|---:|---:|---:|---:|
+| IQ3_XXS | 28,800 MiB | 1,457 MiB | 61.6 % | 65.2 % |
+| G3 | 30,528 MiB | 2,225 MiB | 66.6 % | **70.3 %** |
+
+G3 with MTP is above the 70 % rule, so the planner would run it without MTP, and MTP is worth +8–30 % of decode
+(dev45). G3 was not run with MTP forced: the rule comes from a real out-of-memory failure, and on macOS 27.0.1 the
+M4 Max has had GPU driver panics under Red Lite.
+
+The gain of G3 comes from the experts: the Q8_0 dense weights cost 768 MiB and gain 0.3–0.4 % (G1). Next variant,
+**G2**: G3's IQ3_S experts with IQ3_XXS's dense weights, 68.7 % with MTP (computed).
 
 ## Scope boundary
 
