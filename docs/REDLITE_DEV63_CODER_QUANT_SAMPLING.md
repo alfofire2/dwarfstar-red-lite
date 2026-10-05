@@ -57,14 +57,26 @@ Bartowski's Q8_0 and his importance matrix. The other tensors keep the types of 
 - **Code corpus:** `tests/fixtures/perplexity_code_corpus.txt`, new in dev63 (`perplexity.sh --corpus`). It is
   `src/llama-vocab.cpp` of the pinned llama.cpp, frozen as a fixture (MIT).
 
-| File | Text | Code |
+| File | Text (111 chunks) | Code (90 chunks) |
 |---|---:|---:|
-| Bartowski IQ2_XXS | 18.53 ± 0.37 | pending |
-| CE3 | 18.24 ± 0.36 | pending |
-| CF2 | 18.72 ± 0.39 | pending |
+| Bartowski IQ2_XXS | 18.53 ± 0.37 | 2.623 ± 0.039 |
+| CE3 | 18.24 ± 0.36 | 2.584 ± 0.038 |
+| CF2 | 18.72 ± 0.39 | **2.537 ± 0.039** |
 
-On text, CE3 is 1.6 % better than Bartowski's file. CF2 is 1.0 % worse, the opposite of the Instruct model, where F2
-was the best. The error bars overlap; the paired comparison and the code corpus decide.
+Paired per chunk: mean difference in nats/token, t, chunks where the first file is better. The per-chunk losses are
+recovered from llama.cpp's running perplexity.
+
+| Pair | Text | Code |
+|---|---|---|
+| CE3 vs Bartowski | −0.016, t = −3.2, 68/111 | −0.015, t = −2.3, 55/90 |
+| CF2 vs Bartowski | +0.010, t = +1.2, 56/111 | −0.034, t = −4.0, 67/90 |
+| CF2 vs CE3 | +0.026, t = +3.2, 40/111 | −0.019, t = −2.4, 57/90 |
+
+- **CE3** is better than Bartowski's file on both corpora, at exactly the same size.
+- **CF2** is the best on code but no better than Bartowski's on text, and worse than CE3 there. This is unlike the
+  Instruct model, where F2 won on text (dev58). For the Coder, the Q4_K dense projections help code and not prose.
+- **Choice:** an agent's prompts are mostly code and tool output, so CF2 is the candidate. The agent suite (CE3 and
+  CF2 against Bartowski's file) decides; pending.
 
 ## 4. `quant_mix.py` for other sizes
 
