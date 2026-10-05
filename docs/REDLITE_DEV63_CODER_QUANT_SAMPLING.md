@@ -75,8 +75,24 @@ recovered from llama.cpp's running perplexity.
 - **CE3** is better than Bartowski's file on both corpora, at exactly the same size.
 - **CF2** is the best on code but no better than Bartowski's on text, and worse than CE3 there. This is unlike the
   Instruct model, where F2 won on text (dev58). For the Coder, the Q4_K dense projections help code and not prose.
-- **Choice:** an agent's prompts are mostly code and tool output, so CF2 is the candidate. The agent suite (CE3 and
-  CF2 against Bartowski's file) decides; pending.
+
+### Agent suite (M4 Max 48 GiB)
+
+dev62's settings: `agent_eval.py --suite repo --timeout 900`, every expert resident, 32K context, the server's
+sampling defaults, pi 0.84.4, three runs per file, one server at a time.
+
+| File | Passed | models_json | explain_stop | fix_planner | long_session | median / slowest task | most requests |
+|---|---:|---:|---:|---:|---:|---|---:|
+| Bartowski IQ2_XXS | 10/12 | 3/3 | 3/3 | 2/3 | 2/3 | 74 s / 557 s | 49 |
+| CE3 | **12/12** | 3/3 | 3/3 | 3/3 | 3/3 | 52 s / 148 s | 20 |
+| CF2 | **12/12** | 3/3 | 3/3 | 3/3 | 3/3 | 62 s / **87 s** | **14** |
+
+- **Both Red Lite files pass every task.** On this Mac the suite no longer separates CE3 from CF2, and 12/12
+  against 10/12 is a small sample.
+- **Choice: CF2.** It has the best code perplexity (−3.3 % against Bartowski's file, t = −4.0) and the tightest
+  agent runs: no task above 87 s, at most 14 requests.
+- The M4 Pro runs of section 2 used the same Bartowski file and failed far more (4/12 and 6/12). The machines also
+  differ in pi's version (1.0.2 there, 0.84.4 here); see section 2.
 
 ## 4. `quant_mix.py` for other sizes
 
