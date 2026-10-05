@@ -119,8 +119,22 @@ sampling defaults, pi 0.84.4, three runs per file, one server at a time.
   against 10/12 is a small sample.
 - **Choice: CF2.** It has the best code perplexity (−3.3 % against Bartowski's file, t = −4.0) and the tightest
   agent runs: no task above 87 s, at most 14 requests.
-- The M4 Pro runs of section 2 used the same Bartowski file and failed far more (4/12 and 6/12). The machines also
-  differ in pi's version (1.0.2 there, 0.84.4 here); see section 2.
+
+### Agent suite (M4 Pro 24 GiB)
+
+Section 2's setting A on the fixed checkout: server defaults, every expert resident (GPU limit 21,741 MiB), 32K
+context, repository suite, 600 s, pi 1.0.2, three runs per file. Bartowski's row is setting A of section 2.
+
+| File | Passed | models_json | explain_stop | fix_planner | long_session | timeouts | slowest task | most requests |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Bartowski IQ2_XXS | 7/12 | 2/3 | 0/3 | 2/3 | 3/3 | 2 | 600 s | 64 |
+| CE3 | 11/12 | 3/3 | 2/3 | 3/3 | 3/3 | 0 | 506 s | 53 |
+| CF2 | **12/12** | 3/3 | 3/3 | 3/3 | 3/3 | **0** | **270 s** | **16** |
+
+- **The same order on both Macs:** CF2, then CE3, then Bartowski's file. On the 24 GiB Mac the gap is wide: 12 of
+  12 against 7.
+- **CF2 is also the steadiest:** no task above 270 s, never more than 16 requests.
+- **CF2 is the file to publish** for Qwen3-Coder-Next on 24 GiB Macs.
 
 ## 4. `quant_mix.py` for other sizes
 
