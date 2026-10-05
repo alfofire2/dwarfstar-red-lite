@@ -27,16 +27,31 @@ measures whether it helps an agent.
 
 ## 2. Agent loops versus sampling (M4 Pro 24 GiB)
 
-Some failed agent tasks in dev62 were loops: the model repeated the same tool call until the timeout (one run made
-176 requests). Here, Qwen3-Coder-Next IQ2_XXS with every expert resident, a 32K context, the repository suite of
+Some failed agent tasks in dev62 were loops: the model repeated the same tool call until the timeout. Here,
+Qwen3-Coder-Next IQ2_XXS with every expert resident, a 32K context, the repository suite of
 `scripts/dev/agent_eval.py` (four tasks, 600 s timeout), three runs per setting:
+- A, the server defaults (temperature 0.7, top-p 0.95, top-k 40);
+- B, temperature 1.0 (Qwen3-Coder-Next's card);
+- C, temperature 1.0 with `presence_penalty` 1.0;
+- D, temperature 0.3.
+
+**The first attempt measured a test bug, not the model.** A, B and C passed 4/12, 6/12 and 3/12, never more than
+2 of 4 tasks in a run, while the same file passed 10/12 on the M4 Max.
+- **Not pi's version:** pi 1.0.2, the M4 Pro's, passed on the M4 Max too.
+- **The cause:** two tests of `tests/test_native_defaults.py` read the machine's real GPU limit. On the M4 Pro it is
+  raised to 21,741 MiB, and in a clean copy of the repository the two tests fail before the agent does anything.
+- **The effect:** the checks of `fix_planner` and `long_session` run these tests, so on the M4 Pro those two tasks
+  could not pass. Part of the "loops" there (150 and 321 requests on `fix_planner`) was the model trying to fix
+  failures it had not caused.
+- **Fixed:** the tests now patch the GPU limit. The study was restarted on the fixed checkout; its results replace
+  this paragraph's.
 
 | Setting | Tasks passed per run | Loops |
 |---|---|---|
-| A: server defaults (temperature 0.7, top-p 0.95, top-k 40) | 1, 1, 2 of 4 | pending |
-| B: temperature 1.0 (Qwen3-Coder-Next's card) | 0, 2, 2 of 4 | pending |
-| C: temperature 1.0, `presence_penalty` 1.0 | 2 of 4, pending | pending |
-| D: temperature 0.3 | pending | pending |
+| A | pending | pending |
+| B | pending | pending |
+| C | pending | pending |
+| D | pending | pending |
 
 ## 3. Red Lite quantizations of Qwen3-Coder-Next (M4 Max)
 
