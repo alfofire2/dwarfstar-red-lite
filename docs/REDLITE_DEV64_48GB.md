@@ -1,7 +1,7 @@
 # Red Lite dev64 — a better file for 48 GiB Macs
 
-Status: in progress. Quantization and perplexity measured on the Apple M4 Max 48 GiB, 2026-10-05. Speed and memory
-are not measured yet.
+Status: in progress. Quantization, perplexity and decode speed measured on the Apple M4 Max 48 GiB, 2026-10-05.
+G2 is the candidate; native parity and long-context checks are not run yet.
 
 ## Goal
 
@@ -66,9 +66,38 @@ M4 Max has had GPU driver panics under Red Lite.
 The gain of G3 comes from the experts: the Q8_0 dense weights cost 768 MiB and gain 0.3–0.4 % (G1). G2 keeps G3's
 experts with IQ3_XXS's dense weights and fits with MTP, at 68.7 %.
 
+## Decode speed (M4 Max 48 GiB, every expert resident)
+
+`redlite-generate MODEL --cache-mib full --max-tokens 256 --temperature 0 --json`, the six prompts of
+`tests/fixtures/cache_trace_prompts.txt`, one process per prompt, 30 s apart, nothing else running. MTP with
+`models/Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf`. Footprint: `phys_footprint_mib`, the largest of the six.
+
+| File, mode | tok/s per prompt | median | footprint |
+|---|---|---:|---:|
+| IQ3_XXS, plain | 69.3, 75.4, 73.9, 74.2, 74.7, 74.7 | 74.4 | 29,945 MiB |
+| IQ3_XXS, MTP | 88.5, 93.9, 97.0, 83.5, 81.3, 90.1 | 89.3 | 31,685 MiB |
+| **G2, MTP** | 88.7, 92.7, 95.3, 84.9, 83.2, 96.4 | **90.7** | 33,415 MiB |
+| G3, plain (how the planner runs it) | 72.8, 72.2, 72.8, 71.9, 72.3, 73.0 | 72.5 | 31,674 MiB |
+
+- **G2 with MTP decodes as fast as IQ3_XXS with MTP.** The per-prompt differences follow the drafts accepted, since
+  the two files' answers differ.
+- **G3 without MTP is 25 % slower than G2.** Its 0.4 % better text perplexity does not pay for that.
+- **IQ3_XXS plain** is 74.4 tok/s here against 79.9 in the 0.5.0 record. That record used `bench_m4.sh` with one
+  fixed prompt, so the two numbers are not comparable. Every row of this table was measured in one session under
+  the same conditions.
+
+## Choice
+
+**G2** for 48 GiB Macs: perplexity −0.65 % on text and −1.4 % on code against IQ3_XXS, the same decode speed with
+MTP, and inside the planner's 70 % rule. Before it replaces IQ3_XXS in `redlite download 48gb`:
+- `regress_m4.sh` and `quick_parity.sh` on G2;
+- the server at a 32K context with MTP, twice (the IQ3_M failure of dev36 came on the second run);
+- the Hugging Face upload.
+
 ## Scope boundary
 
 - **Quality** is perplexity on two corpora of about 190 KB each. The API comparison (dev48) and the agent suite have
   not been run on G1, G2 or G3.
-- **Speed and memory** are estimates until measured; nothing about G2 or G3 is validated on a Mac yet.
+- **Speed** is decode at short context on the M4 Max only. Prompt ingestion, long contexts and the M4 Pro are not
+  measured, and G2 is not validated against llama.cpp yet.
 - **Coverage:** only the Instruct model. Qwen3-Coder-Next at 3 bits is a later step.
