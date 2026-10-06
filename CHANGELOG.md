@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.2 — 2026-10-07
+
+**Decode attention closer to the memory bandwidth.**
+- **Faster decode at 64K–256K tokens:** +4 % at 64K, +13 % at 128K and +11 % at 256K on the M4 Max (`decode-bench`,
+  CF2). The decode attention now reads the KV cache at about 480 GB/s.
+- **How:**
+  - the score pass reads each key row in whole 128-byte lines, eight threads per row;
+  - the merge of the per-block results finds its maximum with every thread, and keeps four loads in flight.
+- Validation:
+  - `regress_m4.sh` 55 / 0 / 0 and `quick_parity.sh --long` 5 / 5 on the reference file (M4 Max);
+  - needles at 62K and 127K;
+  - local CI.
+
+
+- dev67: **decode attention, score pass and merge** (`docs/REDLITE_DEV67_DECODE_ATTENTION_MERGE.md`).
+  - **Kernel:** `attn_gqa_merge` 4.2 → 1.3 ms at 256K, bit-identical. `kernel-bench` −13 / −14 % at 64K–256K
+    (M4 Max), −8 to −16 % on the M4 Pro.
+  - **RoPE probe:** RoPE precision is not the cause of the KL drift from llama.cpp past 64K.
+
 ## 0.8.1 — 2026-10-07
 
 **Faster decode at long contexts.**

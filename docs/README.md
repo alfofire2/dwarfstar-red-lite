@@ -12,7 +12,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [../README.md](../README.md) | The guide: install, FAQ, what runs, measured performance per Mac, correctness, limits, coding agents |
 | [FINDINGS.md](FINDINGS.md) | **Read first.** What we learned, with charts: where a token's time goes, speed by release vs llama.cpp, exact MTP speculation, 24 GiB cache options, long context, correctness, a better 2-bit file, coding agents |
 | [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
-| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.8.1 and what comes next |
+| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.8.2 and what comes next |
 | [../CHANGELOG.md](../CHANGELOG.md) | Every release from 0.6.1 back to 0.3.0, then every dev milestone |
 
 The project site, [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/), renders these pages with a
@@ -22,6 +22,7 @@ search (`scripts/dev/build_site.py`).
 
 | Milestone | Document |
 |---|---|
+| dev67 decode attention: whole-line key reads and a parallel merge (+4–13 % decode at 64K–256K), RoPE precision probe | [REDLITE_DEV67_DECODE_ATTENTION_MERGE.md](REDLITE_DEV67_DECODE_ATTENTION_MERGE.md) |
 | dev66 faster decode attention at long contexts (+16–35 % decode at 62K–256K) | [REDLITE_DEV66_DECODE_ATTENTION.md](REDLITE_DEV66_DECODE_ATTENTION.md) |
 | dev65 long contexts to 262K (needles, speed, llama.cpp agreement), a harder agent suite, the 64K agent window | [REDLITE_DEV65_LONG_CONTEXT_AGENTS.md](REDLITE_DEV65_LONG_CONTEXT_AGENTS.md) |
 | dev64 a better 48 GiB file (G2: IQ3_S experts, −1.4 % code perplexity, same speed with MTP); a context-aware RAM rule | [REDLITE_DEV64_48GB.md](REDLITE_DEV64_48GB.md) |
