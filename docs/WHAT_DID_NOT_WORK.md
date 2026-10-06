@@ -236,8 +236,12 @@ them.
 - **OLED-MoE (2609.33385): not applicable.** Its inter-iteration expert retention targets diffusion LLMs.
 - **Overlapping CPU encoding with GPU execution (dev38): not attempted.** At full residency the CPU
   gap between GPU-routed tokens is 0.44 ms of 12.1 ms.
-- **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan
-  accepts and add ~0.5 GB of scratch (dev34).
+- **4096- and 8192-token prefill chunks (dev68, measured).** dev34 left them untried (they exceed the 32,768 pairs one
+  expert plan accepts, a sanity bound; the pair buffers grow on demand). With the bound raised, an 8,191-token prompt
+  (CF2, every expert resident, M4 Max, alternated) took 8.69 / 8.99 s in chunks of 2048, 8.51 / 8.74 s in 4096 and
+  8.43 / 8.57 s in 8192: 3–5 %, all in the expert stage (4.0 → 3.7 s), for about 0.5 / 1.6 GB more scratch. The
+  expert kernels are not starved of tokens per expert at 2048; they are bound by their own arithmetic. Dumps were
+  byte-identical across chunk sizes. Not kept.
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)
   after relinking one oracle library from the same pinned source; it is built in its own tree
   (`.deps/llama.cpp/build-ppl`) by `scripts/dev/perplexity.sh` (dev31).
