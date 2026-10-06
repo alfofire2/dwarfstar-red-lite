@@ -166,6 +166,20 @@ them.
   patch `gpu_wired_limit_mib`. Lesson: before reading an agent pass rate, run the task checks on an untouched copy
   on the same machine.
 
+- **A 25 W charger on the M4 Max (dev65).** Under GPU load the battery fell from 80 % to 7 % in one night, and
+  macOS slowed the Mac: 256K-token decode measured 5.0 tok/s instead of 16.0, ingestion 44.9 tok/s instead of 182.
+  A decode bench without the prefill disagreed, which led to the cause (`pmset -g batt`, `system_profiler
+  SPPowerDataType`). Check the charger's wattage before long runs; the scripts now pause below 30 % battery.
+- **llama.cpp's batched path as the oracle (dev65).** To make the long-context comparison faster, the oracle first
+  decoded the prefix in batches of 256. It then disagreed with its own token-by-token output already at 1,200 ids
+  (KL 0.094, top token different), so it was not a reference. Decoding the prefix token by token with nothing
+  captured (`--prefix-batch 1`) is byte-identical to the full oracle and still fast enough (13 minutes at 32K).
+- **A decode attention kernel with one simdgroup per position (dev65).** Coalesced key reads made it 6–7 % faster
+  in `kernel-bench` with one shared KV buffer, but 34 % slower at 256K with distinct buffers per layer, as the
+  engine has them. Not kept.
+- **`redlite-engine tokenize --text` truncated to 16,384 ids silently**, which turned a "64K" test prompt into 32K.
+  It now warns.
+
 ## Not reached, blocked or not attempted
 
 - **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on
