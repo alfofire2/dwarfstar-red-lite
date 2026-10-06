@@ -192,7 +192,9 @@ the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from 
 
 - **Decode** reads the whole attention cache for every token, so it slows down with length: 48 tok/s at 62K, 33 at
   127K, 22 at 256K on the M4 Max. dev66 made it 16–35 % faster: the value pass of the decode attention kernel waited
-  on one load at a time; with four in flight, the cache is read at about 415 GB/s instead of 290.
+  on one load at a time; with four in flight, the cache is read at about 415 GB/s instead of 290. dev67 added 4–13 %
+  at 64K–256K (`decode-bench`: 56, 42 and 27 tok/s at 64K, 128K and 256K) by reading key rows in whole cache lines
+  and parallelizing the merge of the partial results; the attention now reads about 480 GB/s.
 - **The first ingestion** is the long wait: 2 minutes at 62K, 7 at 127K, 24 at 256K. An agent pays it once, since
   later turns reuse the state. A prefill attention kernel with 16-token tiles made it 20–29 % faster at 32–64K
   (dev65), bit-identical to the old one.

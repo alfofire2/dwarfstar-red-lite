@@ -3,7 +3,7 @@
 Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.8.1, 2026-10-07)
+## Where things stand (0.8.2, 2026-10-07)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -27,8 +27,13 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   (dev66, WHAT_DID_NOT_WORK), and so did more threadgroups per core. Half precision is not an obvious lever either:
   M1–M4 GPUs run FP16 arithmetic at the FP32 rate (not measured here). At 32K the prefill splits into attention
   17.5 s, DeltaNet layers 14.7 s, experts 19.6 s.
-- **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts.
+- **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts (RoPE precision is
+  ruled out, dev67).
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
+
+## Done in 0.8.2 (dev67)
+
+- Decode attention reads about 480 GB/s: +4–13 % decode at 64K–256K.
 
 ## Done in 0.8.1 (dev66)
 
