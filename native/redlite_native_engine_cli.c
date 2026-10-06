@@ -34,6 +34,29 @@ static int parse_u32(const char *s, uint32_t *out) {
     return 1;
 }
 
+/* dev65: --tokens @FILE reads the comma-separated ids from a file (long contexts exceed the argument size limit) */
+static char *read_text_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    char *buf = NULL;
+    size_t len = 0, cap = 0;
+    for (;;) {
+        if (len + 65536u + 1u > cap) {
+            cap = (len + 65536u + 1u) * 2u;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); fclose(f); return NULL; }
+            buf = nb;
+        }
+        const size_t got = fread(buf + len, 1, 65536u, f);
+        len += got;
+        if (got < 65536u) break;
+    }
+    fclose(f);
+    while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r' || buf[len - 1] == ' ')) --len;
+    buf[len] = '\0';
+    return buf;
+}
+
 static uint32_t parse_tokens(const char *list, uint32_t *out, uint32_t cap) {
     uint32_t n = 0;
     const char *p = list;
@@ -146,7 +169,7 @@ int main(int argc, char **argv) {
     rl_engine_config cfg;
     rl_engine_config_default(&cfg);
     /* long-position parity (dev26) needs prompts well beyond 4096 ids */
-    enum { RL_CLI_MAX_TOKENS = 65536 };
+    enum { RL_CLI_MAX_TOKENS = 524288 };   /* dev65: up to 512K ids (2 MiB static), for 262K-position checks */
     static uint32_t tokens[RL_CLI_MAX_TOKENS];
     uint32_t token_count = 0;
     const char *backend_name = "gpu";
@@ -164,7 +187,11 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--cpu") == 0) { with_cpu = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--tokens") == 0) {
-            token_count = parse_tokens(argv[++i], tokens, RL_CLI_MAX_TOKENS);
+            const char *arg = argv[++i];
+            char *file_text = arg[0] == '@' ? read_text_file(arg + 1) : NULL;
+            if (arg[0] == '@' && !file_text) { fprintf(stderr, "cannot read %s\n", arg + 1); return 2; }
+            token_count = parse_tokens(file_text ? file_text : arg, tokens, RL_CLI_MAX_TOKENS);
+            free(file_text);
             if (!token_count) { fprintf(stderr, "invalid --tokens list\n"); return 2; }
         } else if (strcmp(argv[i], "--context") == 0) { if (!parse_u32(argv[++i], &cfg.context)) return 2; }
         else if (strcmp(argv[i], "--cache-mib") == 0) { if (!rl_engine_parse_cache_mib(argv[++i], &cfg.cache_mib)) return 2; }
