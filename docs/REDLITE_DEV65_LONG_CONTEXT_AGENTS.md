@@ -27,6 +27,15 @@ Red Lite CF2 (Qwen3-Coder-Next, 2 bits), every expert resident, M4 Max.
 
 Qwen3-Coder-Next uses its whole native context (262,144) in Red Lite: the three needles are found at every length.
 
+**On the 24 GiB M4 Pro** (CF2, the default 4 GiB expert cache, experts from the SSD; battery steady at 79 %):
+
+| Prompt tokens | Passphrases found | Ingestion | Decode |
+|---:|---|---:|---:|
+| 62,197 | **3 / 3** | 168.1 tok/s (6 min) | 15.1 tok/s |
+| 127,390 | **3 / 3** | 95.5 tok/s (22 min) | 10.5 tok/s |
+
+A 24 GiB Mac reads a 128K-token context too. The first ingestion is slow; a later turn reuses the state.
+
 ### Decode speed against position (M4 Max, valid)
 
 `redlite-engine decode-bench MODEL --start-position N --fill-state FIFO` (new in dev65) loads the state of a
