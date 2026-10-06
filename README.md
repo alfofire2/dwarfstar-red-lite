@@ -45,6 +45,8 @@ MacBook Pro.
   oracle only, never linked.
 - **A local OpenAI-compatible server:** tool calling for coding agents such as pi, two requests at once, steering,
   and prompt states saved to disk.
+- **The model's full 262K context:** a 256K-token prompt of real code is read and searched correctly on a 48 GiB
+  Mac (24 minutes, 30 GiB); 128K works on a 24 GiB Mac too.
 
 <p align="center">
   <img src="docs/img/decode_m4pro.svg" alt="Decode speed on the M4 Pro 24 GiB: 27.8 tok/s in September, 32.5 with the 4 GiB cache, 46.0 with every expert resident, 52.7 with MTP; llama.cpp launcher 36.4">
@@ -275,6 +277,8 @@ In short:
   limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
   52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about
   360 tok/s.
+- **Long prompts** (dev65, M4 Max, Red Lite CF2): ingestion / decode 518 / 41 tok/s at 62K tokens, 320 / 26 at
+  127K, 182 / 16 at 256K. On the 24 GiB M4 Pro with the 4 GiB cache: 168 / 15 at 62K, 96 / 10.5 at 127K.
 - Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from
   `benchmarks/charts.json` by `scripts/dev/make_charts.py`.
 

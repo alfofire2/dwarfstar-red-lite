@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.0 — 2026-10-06
+
+**The model's full 262K context, and a 64K window for coding agents.**
+- **Long contexts, measured:** a prompt of this repository's code with three hidden passphrases is searched
+  correctly at 62K, 127K and 256K tokens on the M4 Max (ingestion 518 / 320 / 182 tok/s, decode 41 / 26 / 16), and at
+  62K and 127K on a 24 GiB M4 Pro with experts streamed from the SSD.
+- **Faster long prompts:** a prefill attention kernel with 16-token tiles and the softmax on every simdgroup,
+  bit-identical to the old one, cuts prefill attention by 20 % at 32K and 29 % at 64K.
+- **A 64K agent window by default:** on the M4 Max CF2 passed 16 of 18 harder agent tasks with 64K and 10 of 18
+  with 32K. `redlite setup-pi` writes 64K. With 64K, CF2 matches Bartowski's 3-bit Coder (16 / 18) at 12 GB less.
+- **Agreement with llama.cpp up to 128K:** the top token agrees at every position checked. The KL drifts to 0.025
+  at 128K.
+- Validation:
+  - local CI;
+  - `regress_m4.sh` 55 / 0 / 0 and `quick_parity.sh --long` 5 / 5 on the reference file (M4 Max);
+  - agent runs and needle runs on both Macs.
+
+
+- dev65: **long contexts, a harder agent suite, the context window.**
+  - **Tools:**
+    - `scripts/dev/needle_check.py`;
+    - `redlite-engine decode-bench` (`--start-position`, `--fill-state`);
+    - a decode-attention section in `kernel-bench`;
+    - `agent_eval.py --suite hard` (six tasks, each validated), `--temperature`, `--append-system`;
+    - oracle `--prefix-batch` and `--tokens @FILE`.
+  - **Prefill:** `attn_fa_b2` by default (`RL_PREFILL_FA2=0` for A/B).
+  - **Agents:** hard suite on both Macs, 16 / 18 for CF2 and IQ3_XXS at 64K, CF2 10 / 18 at 32K. On the M4 Pro: CF2
+    12 / 18 at 32K and at 64K, Bartowski's IQ2_XXS 6 / 18.
+  - **Fixes:** `tokenize --text` warns when it truncates.
+  - **Traps** (WHAT_DID_NOT_WORK):
+    - a 25 W charger that slowed the night's runs;
+    - llama.cpp's batched path as an oracle;
+    - a decode attention variant.
+  - `docs/REDLITE_DEV65_LONG_CONTEXT_AGENTS.md`, FINDINGS sections 6 and 9 with two charts.
+
 ## 0.7.0 — 2026-10-06
 
 **A better Qwen3-Coder file, an agent temperature that avoids loops, and a better option for 48 GiB Macs.**

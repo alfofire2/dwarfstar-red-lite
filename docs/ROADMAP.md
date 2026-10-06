@@ -3,7 +3,7 @@
 Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.7.0, 2026-10-06)
+## Where things stand (0.8.0, 2026-10-06)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -17,15 +17,22 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   - Red Lite G2 (dev64) is an option with better perplexity at the same speed.
 - **Coding agents:** Red Lite CF2 (dev63), Qwen3-Coder-Next at 2 bits, passes 12 of 12 harder repository tasks on
   both Macs. `redlite setup-pi` uses temperature 0.3, where the 2-bit Coder did not loop.
+- **Long contexts:** the model's 262K are read correctly (needles at 256K); 64K is the agent window by default.
 - **Project site** with the docs and a search: [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/).
 
 ## Next
 
-- **Harder agent tasks:** the repository suite no longer separates the Red Lite files (12/12). A harder suite is
-  needed to compare files and sampling settings.
-- **G2 at long context:** why a 25K-token prompt makes the 48 GiB Mac swap with G2 and not with IQ3_XXS, and whether
-  a smaller IQ3_S variant keeps most of the gain.
-- **Qwen3-Coder-Next for 48 GiB Macs:** the dev64 recipe on the Coder.
+- **Faster first ingestion of long prompts:** at 256K it takes 24 minutes. The prefill attention still reads each
+  key/value block once per query head; sharing it across the 8 heads of a KV head needs Q in registers (Metal's
+  32 KiB threadgroup memory does not hold the tile).
+- **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts.
+- **G2 at long context** and a 48 GiB Coder mix (dev64).
+
+## Done in 0.8.0 (dev65)
+
+- Needles at 62K, 127K and 256K tokens (3 / 3 each), speeds on both Macs, llama.cpp agreement to 128K.
+- A harder agent suite. The 64K window is the default for agents (16 / 18 against 10 / 18 at 32K).
+- Prefill attention −20 % / −29 % at 32K / 64K, bit-identical.
 
 ## Done in 0.7.0 (dev63, dev64)
 

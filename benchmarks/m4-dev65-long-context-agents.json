@@ -1,0 +1,226 @@
+{
+  "id": "dev65-long-context-agents",
+  "date": "2026-10-06",
+  "source": "docs/REDLITE_DEV65_LONG_CONTEXT_AGENTS.md",
+  "needles_m4max_cf2_server": {
+    "method": "scripts/dev/needle_check.py through redlite-server --cache-mib full, 90 W charger, attn_fa_b2",
+    "runs": [
+      {
+        "context": 65536,
+        "prompt_tokens": 62197,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 517.9,
+        "decode_tok_s": 41.2,
+        "wall_s": 121.0,
+        "peak_footprint_mib": 21504,
+        "battery": 67
+      },
+      {
+        "context": 131072,
+        "prompt_tokens": 127183,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 319.5,
+        "decode_tok_s": 26.3,
+        "wall_s": 399.5,
+        "peak_footprint_mib": 24576,
+        "battery": 68
+      },
+      {
+        "context": 262144,
+        "prompt_tokens": 256155,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 182.1,
+        "decode_tok_s": 16.0,
+        "wall_s": 1408.7,
+        "peak_footprint_mib": 30720,
+        "battery": 68
+      }
+    ]
+  },
+  "needles_m4pro_cf2_4gib_cache": {
+    "method": "same, redlite-server --cache-mib 4096, M4 Pro 24 GiB",
+    "runs": [
+      {
+        "context": 65536,
+        "prompt_tokens": 62197,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 168.1,
+        "decode_tok_s": 15.1
+      },
+      {
+        "context": 131072,
+        "prompt_tokens": 127390,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 95.5,
+        "decode_tok_s": 10.5
+      }
+    ]
+  },
+  "decode_bench_m4max_cf2": {
+    "method": "redlite-engine decode-bench --cache-mib full --fill-state FIFO (random state), 16 tokens",
+    "ms_per_token": {
+      "4096": 11.5,
+      "65536": 21.67,
+      "131072": 32.77,
+      "262000": 64.31
+    }
+  },
+  "prefill_attention_fa2_m4max": {
+    "method": "redlite-engine logits --dump-from N-1 --batch 2048, attention seconds of the prefill split, alternated",
+    "32767": {
+      "attn_fa_b": 91.7,
+      "attn_fa_b2": 73.4
+    },
+    "65535": {
+      "attn_fa_b": 541.1,
+      "attn_fa_b2": 384.7
+    },
+    "dumps": "byte-identical at 2048, 32768, 65536"
+  },
+  "parity_vs_llama_m4max_cf2": {
+    "method": "last 50 positions, oracle --prefix-batch 1",
+    "32768": {
+      "argmax_agree": "50/50",
+      "kl": 0.0001523,
+      "max_abs": 2.27
+    },
+    "65536": {
+      "argmax_agree": "50/50",
+      "kl": 0.001227,
+      "max_abs": 2.58
+    },
+    "131072": {
+      "argmax_agree": "50/50",
+      "kl": 0.02546,
+      "max_abs": 3.77
+    }
+  },
+  "hard_suite": {
+    "method": "agent_eval.py --suite hard --timeout 900 --temperature 0.3 (0.7 where named), three runs",
+    "m4max_64k_coder_iq3_xxs": {
+      "passed": 16,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 2,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 2,
+        "explain_kv_pad": 3,
+        "debug_session": 3
+      },
+      "timeouts": 1,
+      "median_wall_s": 125.7,
+      "max_requests": 225
+    },
+    "m4max_64k_cf2": {
+      "passed": 16,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 2,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 3,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 1,
+      "median_wall_s": 112.0,
+      "max_requests": 456
+    },
+    "m4max_32k_cf2": {
+      "passed": 10,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 0,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 1,
+        "explain_kv_pad": 2,
+        "debug_session": 1
+      },
+      "timeouts": 3,
+      "median_wall_s": 123.2,
+      "max_requests": 158
+    },
+    "m4pro_32k_cf2": {
+      "passed": 12,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 1,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 0,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 2,
+      "median_wall_s": 446.7,
+      "max_requests": 54
+    },
+    "m4pro_32k_cf2_t07": {
+      "passed": 11,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 0,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 0,
+        "explain_kv_pad": 2,
+        "debug_session": 3
+      },
+      "timeouts": 2,
+      "median_wall_s": 411.8,
+      "max_requests": 47
+    },
+    "m4pro_32k_bartowski_iq2_xxs": {
+      "passed": 6,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 0,
+        "rename": 3,
+        "write_tests": 1,
+        "c_limit": 0,
+        "explain_kv_pad": 2,
+        "debug_session": 0
+      },
+      "timeouts": 1,
+      "median_wall_s": 390.8,
+      "max_requests": 358
+    },
+    "m4pro_64k_cf2_4gib_cache": {
+      "passed": 12,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 1,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 0,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 4,
+      "median_wall_s": 392.1,
+      "max_requests": 60
+    }
+  }
+}
