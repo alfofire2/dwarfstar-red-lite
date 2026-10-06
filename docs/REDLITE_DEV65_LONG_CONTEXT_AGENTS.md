@@ -98,6 +98,9 @@ Every check was validated: it fails on the planted copy and passes with a refere
 | Red Lite CF2, M4 Pro 24 GiB (temperature 0.3, 32K) | 12 / 18 | 4, 3, 5 |
 | Bartowski's Qwen3-Coder-Next IQ2_XXS, same settings | 6 / 18 | 3, 1, 2 |
 | Red Lite CF2, temperature 0.7 | 11 / 18 | 3, 4, 4 |
+| **M4 Max 48 GiB**, 64K context, temperature 0.3, 900 s: | | |
+| Bartowski's Qwen3-Coder-Next IQ3_XXS (31.7 GB) | **16 / 18** | 6, 6, 4 |
+| Red Lite CF2 (19.3 GB) | **16 / 18** | 6, 5, 5 |
 
 - **CF2 passes twice as many hard tasks** as Bartowski's file of the same size. The repository suite (dev63) showed the
   same order, 12 against 7 of 12.
@@ -109,8 +112,14 @@ Every check was validated: it fails on the planted copy and passes with a refere
 
 ## 3. Qwen3-Coder-Next at 3 bits on the M4 Max
 
-Bartowski's `Qwen3-Coder-Next-IQ3_XXS` with the repository suite (dev62's settings): **12 / 12**, as CF2. That suite
-no longer separates the files; the hard suite will.
+- **Repository suite** (dev62's settings): Bartowski's `Qwen3-Coder-Next-IQ3_XXS` passed **12 / 12**, as CF2.
+- **Hard suite** (section 2): both passed **16 / 18** on the M4 Max at a 64K context.
+  - **IQ3_XXS:** median 126 s per task, one timeout (225 requests).
+  - **CF2:** median 112 s, one timeout (456 requests).
+- **On this Mac, the 3-bit file does not pass more hard tasks than CF2.** CF2 is 12.4 GB smaller, which leaves room
+  for a 256K context with every expert resident.
+- **The same CF2 passed 12 / 18 on the M4 Pro**, at a 32K context and about half the speed. A run of CF2 on the M4 Max
+  at 32K separates the two causes; pending.
 
 ## 4. Smaller findings
 
