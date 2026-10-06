@@ -53,16 +53,19 @@ The cost grows by about 0.2 ms per 1,000 positions, all of it decode attention. 
 (`kernel-bench`, 12 layers) reads the KV cache at 255–300 GB/s at every length. With 12 distinct KV buffer pairs,
 as the engine has them, 256K costs 50 ms against 45 ms with one shared pair.
 
-### Prompt ingestion
+### Prompt ingestion and decode through the server (M4 Max, valid)
 
-Prompt ingestion slows with the context length, because the attention of every new token covers all the positions
-before it. In the server, with the dev64 kernel:
+The needle runs again on a 90 W charger (battery 67–68 %, charging), with `attn_fa_b2`, through `redlite-server`:
 
-| Prompt | Ingestion | Note |
-|---:|---:|---|
-| 62,197 | 370 tok/s | before the battery fell below 47 % |
-| 127,390 | 176 tok/s | battery about 47 % |
-| 256,189 | 44.9 tok/s (95 minutes) | battery falling; to be measured again |
+| Prompt tokens | Passphrases | Ingestion | Decode | Request time | Peak footprint |
+|---:|---|---:|---:|---:|---:|
+| 62,197 | 3 / 3 | 517.9 tok/s | 41.2 tok/s | 2.0 min | 21.0 GiB |
+| 127,183 | 3 / 3 | 319.5 tok/s | 26.3 tok/s | 6.7 min | 24.0 GiB |
+| 256,155 | 3 / 3 | 182.1 tok/s | 16.0 tok/s | 23.5 min | 30.0 GiB |
+
+- The 256K decode equals `decode-bench`'s 15.6 tok/s, so the slow numbers of the first run came from the battery.
+- **The first run of the night** (25 W charger, falling battery) measured 370 / 176 / 44.9 tok/s ingestion and
+  26.7 / 23.5 / 5.0 tok/s decode, with the dev64 prefill kernel. They are kept only as the record of that trap.
 
 **A faster prefill attention kernel** (`attn_fa_b2`, now the default; `RL_PREFILL_FA2=0` restores `attn_fa_b`):
 - **Tiles of 16 tokens instead of 8:** every key/value block serves twice the tokens.
