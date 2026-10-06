@@ -1,0 +1,147 @@
+{
+  "id": "dev66-decode-attention",
+  "date": "2026-10-06",
+  "source": "docs/REDLITE_DEV66_DECODE_ATTENTION.md",
+  "kernel_bench_m4max_12_kv_pairs_ms": {
+    "before": {
+      "32768": 5.52,
+      "65536": 11.52,
+      "131072": 22.05,
+      "262144": 42.7
+    },
+    "after": {
+      "32768": 4.08,
+      "65536": 7.55,
+      "131072": 15.71,
+      "262144": 31.05
+    }
+  },
+  "decode_bench_m4max_cf2_tok_s": {
+    "method": "decode-bench --cache-mib full --fill-state random, median of 16, alternated before/after/after/before",
+    "4096": {
+      "before": [
+        81.1,
+        86.4
+      ],
+      "after": [
+        84.0,
+        85.1
+      ]
+    },
+    "65536": {
+      "before": [
+        46.0,
+        45.8
+      ],
+      "after": [
+        53.9,
+        53.9
+      ]
+    },
+    "131072": {
+      "before": [
+        31.4,
+        30.3
+      ],
+      "after": [
+        39.0,
+        37.6
+      ]
+    },
+    "262000": {
+      "before": [
+        18.6,
+        18.6
+      ],
+      "after": [
+        23.8,
+        24.6
+      ]
+    }
+  },
+  "needles_m4max_cf2_server": {
+    "before_dev65_decode_tok_s": {
+      "62197": 41.2,
+      "127183": 26.3,
+      "256155": 16.0
+    },
+    "after": [
+      {
+        "prompt_tokens": 62197,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 513.4,
+        "decode_tok_s": 47.6,
+        "peak_footprint_mib": 21504
+      },
+      {
+        "prompt_tokens": 127183,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 317.6,
+        "decode_tok_s": 33.3,
+        "peak_footprint_mib": 24576
+      },
+      {
+        "prompt_tokens": 256155,
+        "found": [
+          true,
+          true,
+          true
+        ],
+        "prefill_tok_s": 173.9,
+        "decode_tok_s": 21.6,
+        "peak_footprint_mib": 30720
+      }
+    ]
+  },
+  "kernel_bench_m4pro_1_kv_pair_ms": {
+    "before": {
+      "32768": 11.59,
+      "65536": 22.48,
+      "131072": 44.37,
+      "262144": 87.91
+    },
+    "after": {
+      "32768": 7.63,
+      "65536": 14.37,
+      "131072": 28.17,
+      "262144": 55.72
+    }
+  },
+  "decode_bench_m4pro_cf2_4gib_cache_tok_s": {
+    "note": "second pair (both warm) only; first pairs read cold experts",
+    "32768": {
+      "before": 21.9,
+      "after": [
+        24.6,
+        24.4
+      ]
+    },
+    "65536": {
+      "before": 17.4,
+      "after": [
+        20.7,
+        20.4
+      ]
+    },
+    "131072": {
+      "before": 12.6,
+      "after": [
+        16.1
+      ],
+      "outlier_after": 10.9
+    }
+  },
+  "validation": {
+    "regress_m4": "55/0/0",
+    "quick_parity_long": "5/5",
+    "local_ci": "PASS"
+  }
+}

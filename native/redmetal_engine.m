@@ -735,7 +735,12 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (tid < head_dim) {\n"
 "        device const float *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
 "        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
-"        for (uint p = 0; p < len; ++p) { const float v = vc[ulong(p) * stride]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
+"        uint p = 0;\n"
+"        for (; p + 4u <= len; p += 4u) {   /* dev66: four loads in flight (-18 % at 256K); same summation order */\n"
+"            float v[4]; for (uint j = 0; j < 4u; ++j) v[j] = vc[ulong(p + j) * stride];\n"
+"            for (uint h = 0; h < 8u; ++h) if (h < G) for (uint j = 0; j < 4u; ++j) a[h] = fma(sc[h * 256u + p + j], v[j], a[h]);\n"
+"        }\n"
+"        for (; p < len; ++p) { const float v = vc[ulong(p) * stride]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
 "        for (uint h = 0; h < 8u; ++h) if (h < G) part_acc[(ulong(kvh * G + h) * nblocks + block) * 256u + tid] = a[h];\n"
 "    }\n"
 "}\n"
@@ -1163,7 +1168,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
         { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
-        { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u; }
+        { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u; }
         if (m->attn_split) {
             const size_t nblocks = ((size_t)in->context + 31u) / 32u;   /* dev35: blocks of down to 32 positions */
             m->attn_ml = new_buf(m, (size_t)in->n_head * nblocks * 2u * sizeof(float));
@@ -1533,7 +1538,8 @@ static void emit_attention_mid(rl_engine *e, emitter *em, const rl_layer_tensors
          * single-threadgroup kernel has the same parallelism without the merge dispatch, and measured faster. */
         /* dev35: grouped kernel (one threadgroup per KV head and block, blocks of m->attn_blk positions) */
         const int grouped = m->attn_group && m->p_attn_split_g && head_dim == 256u && qheads % kvheads == 0u && qheads / kvheads <= 8u;
-        const uint32_t blk = grouped ? m->attn_blk : 256u;
+        /* dev66: 0 = by length, 256-position blocks from 12K positions (kernel-bench: 16K -16 %, 256K -12 %), 128 below */
+        const uint32_t blk = grouped ? (m->attn_blk ? m->attn_blk : rl_attn_auto_blk(seq_len)) : 256u;
         const uint32_t nblocks = (seq_len + blk - 1u) / blk;
         [enc setComputePipelineState:grouped ? m->p_attn_split_g : m->p_attn_split];
         [enc setBuffer:m->query_rope offset:0 atIndex:0]; [enc setBuffer:m->kcache[a] offset:0 atIndex:1]; [enc setBuffer:m->vcache[a] offset:0 atIndex:2];

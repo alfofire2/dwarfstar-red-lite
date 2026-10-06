@@ -188,13 +188,17 @@ fixed 72 MiB state instead. So 64K positions need about 3 GiB, 128K about 6 GiB,
 comments at 10 %, 50 % and 90 % of it: Qwen3-Coder-Next (Red Lite CF2) found all three at 62K, 127K and 256K tokens on
 the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from the SSD.
 
-<p align="center"><img src="img/long_context.svg" alt="Prompt ingestion and decode at 62K, 127K and 256K tokens on the M4 Max"></p>
+<p align="center"><img src="img/long_context.svg" alt="Decode speed at 62K, 127K and 256K tokens on the M4 Max, before and after dev66"></p>
 
-- **Decode** costs about 0.2 ms more per 1,000 positions: 41 tok/s at 62K, 26 at 127K, 16 at 256K on the M4 Max.
+- **Decode** reads the whole attention cache for every token, so it slows down with length: 48 tok/s at 62K, 33 at
+  127K, 22 at 256K on the M4 Max. dev66 made it 16–35 % faster: the value pass of the decode attention kernel waited
+  on one load at a time; with four in flight, the cache is read at about 415 GB/s instead of 290.
 - **The first ingestion** is the long wait: 2 minutes at 62K, 7 at 127K, 24 at 256K. An agent pays it once, since
   later turns reuse the state. A prefill attention kernel with 16-token tiles made it 20–29 % faster at 32–64K
   (dev65), bit-identical to the old one.
-- **24 GiB Mac:** 168 / 15 tok/s at 62K and 96 / 10.5 at 127K (ingestion / decode), 4 GiB expert cache.
+- **24 GiB Mac:** 168 / 15 tok/s at 62K and 96 / 10.5 at 127K (ingestion / decode, 0.8.0), 4 GiB expert cache.
+  The dev66 kernel cut attention there by about a third too (`kernel-bench`); decode with experts from the SSD
+  measured 17.4 → 20.5 tok/s at 64K and 12.6 → 16.1 at 128K (`decode-bench`, warm runs).
 - **Agreement with llama.cpp:**
   - the top token agrees at every position checked up to 128K (50 / 50 at 32K, 64K and 128K, 100 / 100 at 16K);
   - the distributions drift apart slowly with length: KL 1.5e-4 at 32K, 1.2e-3 at 64K, 0.025 at 128K. The two

@@ -245,15 +245,15 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
                 ref[h * head_dim + i] = (a / l) / (1.0 + exp(-(double)gf[h * head_dim + i]));
             }
         }
-        for (int variant = 0; variant < 3 && ok; ++variant) {   /* 0 single group, 1 split-K per head, 2 split-K per KV head (dev35) */
+        for (int variant = 0; variant < 4 && ok; ++variant) {   /* 0 single group, 1 split-K per head, 2/3 split-K per KV head (dev35), blocks of 128/256 (dev66) */
             memset(out.contents, 0, qheads * head_dim * 4u);
             ok = st_run(m, ^(id<MTLComputeCommandEncoder> enc) {
                 [enc setBuffer:m->abort_zero offset:0 atIndex:30];
                 if (variant) {
-                    [enc setComputePipelineState:variant == 2 ? m->p_attn_split_g : m->p_attn_split];
+                    [enc setComputePipelineState:variant >= 2 ? m->p_attn_split_g : m->p_attn_split];
                     [enc setBuffer:q offset:0 atIndex:0]; [enc setBuffer:kc offset:0 atIndex:1]; [enc setBuffer:vc offset:0 atIndex:2];
                     [enc setBuffer:ml offset:0 atIndex:3]; [enc setBuffer:acc offset:0 atIndex:4];
-                    const uint32_t blk = variant >= 2 ? 128u : 256u, nb = (seq_len + blk - 1u) / blk;
+                    const uint32_t blk = variant == 2 ? 128u : 256u, nb = (seq_len + blk - 1u) / blk;
                     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
                     [enc setBytes:&blk length:4 atIndex:9];
                     [enc dispatchThreadgroups:MTLSizeMake(nb, variant >= 2 ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -273,7 +273,7 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
                 const double err = fabs((double)((float *)out.contents)[i] - ref[i]);
                 if (err > *worst) *worst = err;
                 if (!(err <= 2e-6)) {
-                    snprintf(error, cap, "%s seq_len %u out[%u]: gpu %.9g cpu %.9g", variant == 2 ? "attn_gqa_split_g/merge" : variant ? "attn_gqa_split/merge" : "attn_gqa", seq_len, i, ((float *)out.contents)[i], ref[i]);
+                    snprintf(error, cap, "%s seq_len %u out[%u]: gpu %.9g cpu %.9g", variant >= 2 ? "attn_gqa_split_g/merge" : variant ? "attn_gqa_split/merge" : "attn_gqa", seq_len, i, ((float *)out.contents)[i], ref[i]);
                     ok = 0;
                 }
             }
@@ -385,9 +385,9 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                 id<MTLComputePipelineState> pm = make_pipe(m->dev, m->lib, @"attn_gqa_merge", error, cap);
                 if (!pg || !pm) goto bout;
                 const char *ab = getenv("RL_ENGINE_ATTN_BLK");
-                const uint32_t blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u;
+                const uint32_t blk_env = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u;
                 const uint32_t hd = 256u, qh = 16u, kvh = 2u, layers = 12u;
-                static const uint32_t lens[] = { 4096u, 32768u, 65536u, 131072u, 262144u };
+                static const uint32_t lens[] = { 1024u, 2048u, 4096u, 8192u, 16384u, 32768u, 65536u, 131072u, 262144u };
                 const uint32_t maxlen = lens[sizeof(lens) / sizeof(lens[0]) - 1u];
                 const size_t kvb = (size_t)maxlen * kvh * hd * 4u;
                 /* RL_BENCH_ATTN_DISTINCT=1: one K and one V buffer per layer, as the engine allocates them (12 GiB at
@@ -411,7 +411,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                 if (!kc || !vc || !q || !g || !o || !ml || !acc) { snprintf(error, cap, "attention bench allocation failed"); goto bout; }
                 for (uint32_t i = 0; i < qh * hd; ++i) { ((float *)q.contents)[i] = st_uniform(); ((float *)g.contents)[i] = st_uniform(); }
                 for (size_t li = 0; li < sizeof(lens) / sizeof(lens[0]); ++li) {
-                    const uint32_t seq = lens[li], nb = (seq + blk - 1u) / blk;
+                    const uint32_t seq = lens[li], blk = blk_env ? blk_env : rl_attn_auto_blk(seq), nb = (seq + blk - 1u) / blk;
                     double best = 1e30;
                     for (int rep = 0; rep < 5; ++rep) {
                         id<MTLCommandBuffer> cb = [m->queue commandBuffer];
@@ -500,7 +500,7 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
                 "early-out guard       : OK (rl_rows2, rl_copy_f32, rl_route return with the flag set)\n"
                 "rl_copy_f32           : OK\n"
                 "rl_route vs CPU router: %u cases OK (ids, weights, slots, ties, miss -> early-out flag)\n"
-                "decode attention      : %u lengths x 3 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
+                "decode attention      : %u lengths x 4 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
                 shapes, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], route_cases, attn_cases, attn_worst);
         }
         ok = 1;
