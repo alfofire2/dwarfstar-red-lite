@@ -140,8 +140,15 @@ Every check was validated: it fails on the planted copy and passes with a refere
   - **CF2:** median 112 s, one timeout (456 requests).
 - **On this Mac, the 3-bit file does not pass more hard tasks than CF2.** CF2 is 12.4 GB smaller, which leaves room
   for a 256K context with every expert resident.
-- **The same CF2 passed 12 / 18 on the M4 Pro**, at a 32K context and about half the speed. A run of CF2 on the M4 Max
-  at 32K separates the two causes; pending.
+- **The context window decides it.** The same CF2 on the same M4 Max with a 32K window passed **10 / 18** (4, 2, 4),
+  against 16 / 18 with 64K.
+  - The failures were `debug_session` (it forgot its own earlier fix), `two_bugs` and `c_limit`.
+  - Prompts in these sessions reach 10–30K tokens per request, so a 32K window fills mid-task and pi drops or
+    summarizes earlier turns.
+  - The M4 Pro's 12 / 18 was at 32K too.
+- **Default changed:** `redlite setup-pi` writes a 64K window (`--context 65536`), and the README's agent commands use
+  64K. On a 24 GiB Mac a 64K window no longer fits next to every expert, so the server streams experts from the SSD.
+  The hard suite in that setting is being measured on the M4 Pro.
 
 ## 4. Smaller findings
 

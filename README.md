@@ -107,6 +107,9 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
   full-precision model through Qwen's API. For agents, use the coding model.
 - **Red Lite CF2** (dev63), the Qwen3-Coder-Next file of `redlite download coder`: 12 of 12 harder tasks on both the
   M4 Pro 24 GiB and the M4 Max, against 7 and 10 for Bartowski's IQ2_XXS, with no task over 270 s.
+- **A 64K context window** (dev65): on the M4 Max, CF2 passed 16 of 18 harder tasks with a 64K window and 10 of 18
+  with 32K; the agent loses earlier turns when the window fills. `setup-pi` writes 64K. On a 24 GiB Mac 64K no longer
+  fits next to every expert, so the server streams experts from the SSD (slower).
 - **Temperature 0.3:** the 2-bit Coder looped (the same tool call until the time limit) 4 times in 36 sessions at
   0.7 and above, never at 0.3. `redlite setup-pi` sets 0.3 for the agent; chat keeps 0.7.
 - **`--parallel 2`** gains only 2–5 % with agents.
@@ -117,7 +120,7 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
 npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)
 redlite download coder                                # Red Lite CF2, Qwen3-Coder-Next (19.3 GB)
 redlite setup-pi --port 8080                          # adds a "redlite" provider (temperature 0.3) to ~/.pi/agent/models.json
-redlite serve --native ~/.redlite/models/Qwen3-Coder-Next-RedLite-CF2.gguf --context 32768 --port 8080
+redlite serve --native ~/.redlite/models/Qwen3-Coder-Next-RedLite-CF2.gguf --context 65536 --port 8080
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```
 
