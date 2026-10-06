@@ -97,6 +97,8 @@ const rl_engine_info *rl_engine_info_get(const rl_engine *engine);
 int rl_engine_reset(rl_engine *engine, rl_engine_backend backend, char *error, size_t error_cap);
 
 uint32_t rl_engine_position(const rl_engine *engine, rl_engine_backend backend);
+/* dev65: development benchmark only (redlite-engine decode-bench): set a backend's position without decoding. */
+int rl_engine_bench_set_position(rl_engine *engine, rl_engine_backend backend, uint32_t position, char *error, size_t error_cap);
 
 /*
  * Run one token through a backend at its current position, write vocab logits

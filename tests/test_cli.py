@@ -159,6 +159,9 @@ class SetupPiTests(unittest.TestCase):
             subprocess.run(cmd, env=env, check=True, capture_output=True)
             path = Path(d) / "models.json"
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)   # new file: private
+            import json
+            red = json.loads(path.read_text())["providers"]["redlite"]["models"][0]
+            self.assertEqual(red["contextWindow"], 65536)   # dev65: 64K by default (16/18 hard tasks against 10/18 at 32K)
             path.chmod(0o640)
             subprocess.run(cmd, env=env, check=True, capture_output=True)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o640)   # existing file: unchanged

@@ -178,23 +178,29 @@ Since the dev18 build of September (27.8 tok/s decode; prompts ingested one toke
 
 <p align="center"><img src="img/choices_24gb.svg" alt="Decode on a 24 GiB Mac: F2 resident, F2 from the SSD, IQ3_XXS from the SSD"></p>
 
-## 6. Long context
+## 6. Long context, up to the model's 262K
 
 Each position costs 48 KiB of attention cache. Only 12 of the 48 layers keep one; the DeltaNet layers have a
-fixed 72 MiB state instead. So 64K positions need about 3 GiB, and 32K about 1.5 GiB.
+fixed 72 MiB state instead. So 64K positions need about 3 GiB, 128K about 6 GiB, and the model's full 262K about
+12 GiB.
 
-On the M4 Max, with every expert resident:
+**The model reads all of it** (dev65). A prompt of this repository's own code, with three passphrases hidden in
+comments at 10 %, 50 % and 90 % of it: Qwen3-Coder-Next (Red Lite CF2) found all three at 62K, 127K and 256K tokens on
+the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from the SSD.
 
-- **Speed at a 33,551-token prompt** (dev53, current build, every expert resident):
-  - ingestion 566–587 tok/s;
-  - decode 54.5–57.4 tok/s, against 81–86 at short context.
-  - dev47 had measured 417 and 25.7 tok/s on the same prompt; the gap is not explained (that session came right
-    after a battery-powered one).
-- **Float16 KV cache** (dev53): it halved the context memory without changing the speed. It moved a few expert
-  choices between the CPU reference and Metal, which the parity rules do not allow, so it was not kept.
-- **Agreement with llama.cpp at 16K positions:** the top token agrees at all 100 positions checked, KL
-  divergence 7.9e-5. 32K and 60K were not compared, because the oracle's token-by-token dump would take 5–9
-  hours.
+<p align="center"><img src="img/long_context.svg" alt="Prompt ingestion and decode at 62K, 127K and 256K tokens on the M4 Max"></p>
+
+- **Decode** costs about 0.2 ms more per 1,000 positions: 41 tok/s at 62K, 26 at 127K, 16 at 256K on the M4 Max.
+- **The first ingestion** is the long wait: 2 minutes at 62K, 7 at 127K, 24 at 256K. An agent pays it once, since
+  later turns reuse the state. A prefill attention kernel with 16-token tiles made it 20–29 % faster at 32–64K
+  (dev65), bit-identical to the old one.
+- **24 GiB Mac:** 168 / 15 tok/s at 62K and 96 / 10.5 at 127K (ingestion / decode), 4 GiB expert cache.
+- **Agreement with llama.cpp:**
+  - the top token agrees at every position checked up to 128K (50 / 50 at 32K, 64K and 128K, 100 / 100 at 16K);
+  - the distributions drift apart slowly with length: KL 1.5e-4 at 32K, 1.2e-3 at 64K, 0.025 at 128K. The two
+    programs sum attention over hundreds of thousands of positions in a different order.
+- **Float16 KV cache** (dev53) halved the context memory without changing the speed. It moved a few expert choices
+  between the CPU reference and Metal, which the parity rules do not allow, so it was not kept.
 
 ## 7. How we know it is correct
 
@@ -303,6 +309,14 @@ The pass rates (7–9 of 12) are within noise, so this is a direction, not a pro
 temperature 0.3 for the agent.
 
 <p align="center"><img src="img/agent_loops.svg" alt="Tasks passed and loops at four sampling settings"></p>
+
+**The context window matters more than the file** (dev65). Six harder tasks, three runs each. On the same M4 Max,
+CF2 passed 16 of 18 with a 64K window and 10 of 18 with 32K: these sessions reach 10–30K tokens per request, so a
+32K window fills mid-task and the agent loses its earlier turns. With 64K, CF2 matches Bartowski's 3-bit Coder
+(16 / 18) at 12 GB less. `redlite setup-pi` now writes a 64K window. On a 24 GiB Mac 64K streams the experts from the
+SSD; the pass rate stays at 12 / 18, with more tasks at the time limit.
+
+<p align="center"><img src="img/agent_context.svg" alt="Hard agent tasks passed by context window, file and Mac"></p>
 
 **A trap on the way.** The first run of this study passed at most 2 of 4 tasks on the M4 Pro. Two of the repository's
 own tests read the machine's GPU limit, raised on that Mac, so they failed before the agent did anything, and the

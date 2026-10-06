@@ -487,6 +487,16 @@ int rl_engine_reset(rl_engine *e, rl_engine_backend b, char *error, size_t cap) 
     return 1;
 }
 
+/* dev65: development benchmark only. Moves a reset backend to `position` without running the tokens before it, so
+ * decode can be timed at a long context in seconds; the KV rows below it are whatever a fresh engine's buffers hold. */
+int rl_engine_bench_set_position(rl_engine *e, rl_engine_backend b, uint32_t position, char *error, size_t cap) {
+    rl_backend_state *s = e ? state_for(e, b) : NULL;
+    if (!s) { set_error(error, cap, "backend not enabled"); return 0; }
+    if (position >= e->info.context) { set_error(error, cap, "position past the context"); return 0; }
+    s->position = position;
+    return 1;
+}
+
 uint64_t rl_engine_state_bytes(const rl_engine *e, uint32_t position) {
     if (!e) return 0;
     return (uint64_t)e->info.n_recurrent * (rl_engine_conv_count(e) + rl_engine_rec_count(e)) * sizeof(float) +

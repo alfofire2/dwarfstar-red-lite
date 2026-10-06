@@ -45,6 +45,8 @@
      "acceptedAnswer": {"@type": "Answer", "text": "On the same files, Red Lite decodes 19% faster than the pinned llama.cpp on an M4 Max 48 GiB (86.2 vs 72.5 tokens per second), and 45 to 46 against 36 to 38 tokens per second on an M4 Pro 24 GiB. Ollama, LM Studio and MLX were not measured."}},
     {"@type": "Question", "name": "Does it work with coding agents?",
      "acceptedAnswer": {"@type": "Answer", "text": "Yes. The server speaks the OpenAI chat API with tool calling, and redlite setup-pi configures the pi coding agent. On harder tasks on a real repository, Red Lite CF2 (Qwen3-Coder-Next at 2 bits) passed 12 of 12 on a 24 GB M4 Pro, against 7 for the usual 2-bit file."}},
+    {"@type": "Question", "name": "How long a context can it use?",
+     "acceptedAnswer": {"@type": "Answer", "text": "The model's full 262K tokens. A 256K-token prompt of real code was read and searched correctly on an M4 Max 48 GB in 24 minutes, and 128K works on a 24 GB M4 Pro. Coding agents get a 64K window by default."}},
     {"@type": "Question", "name": "Which Mac do I need?",
      "acceptedAnswer": {"@type": "Answer", "text": "An Apple Silicon Mac with 24 GB of memory or more. It was tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. The binaries are built for M1 and later, but M1, M2 and M3 have not been tested yet."}}
   ]
@@ -342,7 +344,7 @@
         <a class="btn ghost" href="https://github.com/alfofire2/dwarfstar-red-lite">View on GitHub</a>
       </div>
       <p class="supported">SUPPORTED: <b>QWEN3-NEXT 80B</b> + <b>QWEN3-CODER-NEXT</b> · MIT LICENSE ·
-        C / OBJECTIVE-C / METAL · <b>80B ON 24GB</b></p>
+        C / OBJECTIVE-C / METAL · <b>80B ON 24GB</b> · <b>262K CONTEXT</b></p>
     </div>
     <div class="term" aria-label="A Red Lite chat session on an M4 Pro 24 GiB MacBook Pro">
       <div class="term-bar"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i>
@@ -558,7 +560,8 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
           <p class="endpoints"><b>/v1/chat/completions</b> · /v1/models · tools · streaming</p>
           <p>On harder tasks on a real repository, Red Lite <strong>CF2</strong>, Qwen3-Coder-Next at 2 bits, passed
             <strong>12 of 12</strong> on a 24 GB M4 Pro, against 7 for the usual 2-bit file. <code>redlite download
-            coder</code> fetches it; <code>setup-pi</code> sets temperature 0.3, where it did not loop.</p>
+            coder</code> fetches it. <code>setup-pi</code> gives the agent a 64K window: on harder tasks CF2 passed 16 of 18
+            with 64K against 10 of 18 with 32K.</p>
         </div>
         <figure><img src="img/coder_agents.svg" alt="Harder coding-agent tasks passed by three Qwen3-Coder-Next files: Bartowski IQ2_XXS 58 percent on the M4 Pro and 83 on the M4 Max, Red Lite CE3 92 and 100, Red Lite CF2 100 and 100" loading="lazy">
           <figcaption>Harder agent tasks on a copy of the Red Lite repository, both Macs.</figcaption></figure>
@@ -585,6 +588,10 @@ redlite&gt; The sky appears blue because sunlight is scattered by the atmosphere
       <details><summary>Which Mac do I need?</summary>
         <p>Apple Silicon with 24 GB of memory or more. Tested on an M4 Pro 24 GiB and an M4 Max 48 GiB. M1, M2 and M3
           should work but have not been tested; reports are welcome.</p></details>
+      <details><summary>How long a context can it use?</summary>
+        <p>The model's full 262K tokens. A 256K-token prompt of real code was read and searched correctly on an M4 Max
+          48 GB (24 minutes, 30 GB of memory), and 128K works on a 24 GB M4 Pro. For coding agents a 64K window is the
+          default: it passed far more hard tasks than 32K.</p></details>
       <details><summary>Is the output the same as the original model?</summary>
         <p>The files are 2- and 3-bit quantizations, so answers differ from the full-precision model. The runtime
           itself gives the same tokens as llama.cpp on the same file, checked on every change.</p></details>

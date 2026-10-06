@@ -5,7 +5,9 @@
 // engine can be compared layer by layer (embedding, l_out-N, result_norm,
 // logits) and so the native tokenizer can be checked against llama_tokenize.
 //
-//   redlite-ref-llama MODEL logits --tokens a,b,c --out FILE [--ctx N] [--dump-last | --dump-from N]
+//   redlite-ref-llama MODEL logits --tokens a,b,c --out FILE [--ctx N] [--dump-last | --dump-from N] [--prefix-batch B]
+//       --tokens @FILE reads the ids from a file; --prefix-batch B (dev65) decodes the ids before --dump-from in
+//       batches of B with nothing captured, then token by token as before (long contexts in minutes, not hours)
 //   redlite-ref-llama MODEL tokenize --text "..." [--no-special]
 //   redlite-ref-llama MODEL tokenize --file CORPUS [--no-special]   (one input per line, \n \t \\ escapes)
 //   redlite-ref-llama MODEL greedy --tokens a,b,c --max N [--ctx N]
@@ -39,6 +41,7 @@ struct capture {
     std::vector<std::vector<float>> layers;
     std::vector<float> result_norm;
     int router_layer = -1;              /* --router-layer L: capture the MoE routing of layer L */
+    bool active = true;                 /* dev65: off while a --prefix-batch prefix is decoded */
     std::vector<float> router_probs;    /* ffn_moe_probs-L, [n_expert] */
     std::vector<int32_t> router_topk;   /* ffn_moe_topk-L, [n_expert_used] */
     bool want(const char *name) const {
@@ -55,6 +58,7 @@ struct capture {
 static bool eval_cb(struct ggml_tensor *t, bool ask, void *ud) {
     capture *c = (capture *)ud;
     const char *name = ggml_get_name(t);
+    if (!c->active) return !ask;        /* ask: capture nothing; data: nothing to do */
     if (ask) return c->want(name);
     if (!c->want(name)) return true;
     const int64_t n = ggml_nelements(t);
@@ -128,6 +132,7 @@ int main(int argc, char **argv) {
     long row_first = 0, row_count = 16;
     int n_ctx = 64, max_new = 16;
     size_t dump_from = 0;
+    int prefix_batch = 0;
     int router_layer = -1;
     bool special = true, dump_last = false;
     for (int i = 3; i < argc; ++i) {
@@ -139,6 +144,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--text") == 0) text = argv[++i];
         else if (strcmp(argv[i], "--file") == 0) corpus = argv[++i];
         else if (strcmp(argv[i], "--dump-from") == 0) dump_from = (size_t)atol(argv[++i]);
+        else if (strcmp(argv[i], "--prefix-batch") == 0) prefix_batch = atoi(argv[++i]);
         else if (strcmp(argv[i], "--router-layer") == 0) router_layer = atoi(argv[++i]);
         else if (strcmp(argv[i], "--ctx") == 0) n_ctx = atoi(argv[++i]);
         else if (strcmp(argv[i], "--max") == 0) max_new = atoi(argv[++i]);
@@ -237,6 +243,16 @@ int main(int argc, char **argv) {
     }
 
     if (!tokens_arg) { fprintf(stderr, "--tokens required\n"); return 2; }
+    std::string tokens_text;
+    if (tokens_arg[0] == '@') {                       /* dev65: --tokens @FILE */
+        FILE *tf = fopen(tokens_arg + 1, "rb");
+        if (!tf) { perror(tokens_arg + 1); return 1; }
+        char chunk[65536];
+        size_t got;
+        while ((got = fread(chunk, 1, sizeof(chunk), tf)) > 0) tokens_text.append(chunk, got);
+        fclose(tf);
+        tokens_arg = tokens_text.c_str();
+    }
     std::vector<llama_token> tokens = parse_tokens(tokens_arg);
     capture cap;
     cap.n_layer = llama_model_n_layer(model);
@@ -280,8 +296,9 @@ int main(int argc, char **argv) {
 
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = (uint32_t)n_ctx;
-    cp.n_batch = 1;
-    cp.n_ubatch = 1;
+    const bool batched_prefix = cmd == "logits" && prefix_batch > 0 && dump_from > 0;
+    cp.n_batch = batched_prefix ? (uint32_t)prefix_batch : 1u;
+    cp.n_ubatch = cp.n_batch;
     cp.n_seq_max = 1;
     cp.type_k = GGML_TYPE_F32;
     cp.type_v = GGML_TYPE_F32;
@@ -294,7 +311,20 @@ int main(int argc, char **argv) {
     std::vector<llama_token> seq = tokens;
     const size_t prompt_len = tokens.size();
     const size_t total = cmd == "greedy" ? prompt_len + (size_t)max_new : prompt_len;
-    for (size_t i = 0; i < total; ++i) {
+    size_t start = 0;
+    if (batched_prefix) {
+        const auto t0 = std::chrono::steady_clock::now();
+        cap.active = false;
+        for (; start < dump_from && start < total; start += (size_t)prefix_batch) {
+            const size_t n = std::min((size_t)prefix_batch, std::min(dump_from, total) - start);
+            if (llama_decode(ctx, llama_batch_get_one(seq.data() + start, (int32_t)n)) != 0) { fprintf(stderr, "prefix decode failed at %zu\n", start); return 1; }
+        }
+        start = std::min(dump_from, total);
+        cap.active = true;
+        printf("prefix %zu tokens in batches of %d: %.1f s\n", start, prefix_batch,
+               std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
+    for (size_t i = start; i < total; ++i) {
         llama_token tok = seq[i];
         llama_batch batch = llama_batch_get_one(&tok, 1);
         if (llama_decode(ctx, batch) != 0) { fprintf(stderr, "decode failed at %zu\n", i); return 1; }

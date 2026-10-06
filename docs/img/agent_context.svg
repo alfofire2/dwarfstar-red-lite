@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="290" viewBox="0 0 810 290">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="290"/>
+<text class="t" x="10" y="24">Hard coding-agent tasks against the context window (pi agent, Qwen3-Coder-Next)</text>
+<text class="l" x="222" y="71" text-anchor="end">M4 Max, CF2, 64K</text>
+<rect x="230" y="58" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="70">89</text>
+<text class="l" x="222" y="99" text-anchor="end">M4 Max, Coder IQ3_XXS, 64K</text>
+<rect x="230" y="86" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="98">89</text>
+<text class="l" x="222" y="127" text-anchor="end">M4 Max, CF2, 32K</text>
+<rect x="230" y="114" width="295.7" height="15" rx="2" fill="#d64545"/><text class="v" x="530.7" y="126">56</text>
+<text class="l" x="222" y="155" text-anchor="end">M4 Pro 24 GiB, CF2, 32K</text>
+<rect x="230" y="142" width="353.8" height="15" rx="2" fill="#d64545"/><text class="v" x="588.8" y="154">67</text>
+<text class="l" x="222" y="183" text-anchor="end">M4 Pro 24 GiB, CF2, 64K (SSD)</text>
+<rect x="230" y="170" width="353.8" height="15" rx="2" fill="#d64545"/><text class="v" x="588.8" y="182">67</text>
+<text class="l" x="222" y="211" text-anchor="end">M4 Pro 24 GiB, Bartowski IQ2_XXS, 32K</text>
+<rect x="230" y="198" width="174.3" height="15" rx="2" fill="#8c959f"/><text class="v" x="409.3" y="210">33</text>
+<text class="n" x="10" y="265">% of 18 tasks passed. Six harder tasks on a copy of this repository, three runs per setting, temperature 0.3, 900 s per task</text>
+<text class="n" x="10" y="280">(dev65). The 24 GiB Mac at 64K streams experts from the SSD, so more tasks hit the time limit.</text>
+</svg>

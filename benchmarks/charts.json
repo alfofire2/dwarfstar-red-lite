@@ -683,6 +683,93 @@
    "sources": [
     "benchmarks/m4max-48gb-dev64-g2.json"
    ]
+  },
+  {
+   "id": "agent_context",
+   "title": "Hard coding-agent tasks against the context window (pi agent, Qwen3-Coder-Next)",
+   "unit": "% of 18 tasks passed",
+   "note": "Six harder tasks on a copy of this repository, three runs per setting, temperature 0.3, 900 s per task (dev65). The 24 GiB Mac at 64K streams experts from the SSD, so more tasks hit the time limit.",
+   "series": [
+    "% passed"
+   ],
+   "bars": [
+    {
+     "label": "M4 Max, CF2, 64K",
+     "values": [
+      89
+     ]
+    },
+    {
+     "label": "M4 Max, Coder IQ3_XXS, 64K",
+     "values": [
+      89
+     ]
+    },
+    {
+     "label": "M4 Max, CF2, 32K",
+     "values": [
+      56
+     ]
+    },
+    {
+     "label": "M4 Pro 24 GiB, CF2, 32K",
+     "values": [
+      67
+     ]
+    },
+    {
+     "label": "M4 Pro 24 GiB, CF2, 64K (SSD)",
+     "values": [
+      67
+     ]
+    },
+    {
+     "label": "M4 Pro 24 GiB, Bartowski IQ2_XXS, 32K",
+     "values": [
+      33
+     ],
+     "muted": true
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev65-long-context-agents.json"
+   ]
+  },
+  {
+   "id": "long_context",
+   "title": "Long prompts on the M4 Max 48 GiB (Red Lite CF2, every expert resident)",
+   "unit": "tokens per second",
+   "note": "A prompt made of this repository's code with three passphrases at 10/50/90 %, all three found at every length (dev65). Prompt ingestion and decode of the answer, through redlite-server, 90 W charger.",
+   "series": [
+    "prompt ingestion",
+    "decode"
+   ],
+   "bars": [
+    {
+     "label": "62K tokens (2 min)",
+     "values": [
+      517.9,
+      41.2
+     ]
+    },
+    {
+     "label": "127K tokens (6.7 min)",
+     "values": [
+      319.5,
+      26.3
+     ]
+    },
+    {
+     "label": "256K tokens (23.5 min)",
+     "values": [
+      182.1,
+      16.0
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev65-long-context-agents.json"
+   ]
   }
  ]
 }

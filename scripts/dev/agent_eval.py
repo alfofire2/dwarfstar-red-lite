@@ -166,13 +166,139 @@ REPO_TASKS = [
                  "assert r.returncode == 0, r.stderr[-400:]\n",
     },
 ]
-SUITES = {"basic": TASKS, "repo": REPO_TASKS}
+
+# dev65: harder tasks, still on a copy of this repository: two bugs in two modules, a rename across files, tests graded
+# by mutants, a C feature compiled and exercised by the check, reading C, and a three-prompt debugging session.
+_FAKE_BUILD = ("import subprocess, sys, os, re, json, tempfile, time, urllib.request, urllib.error\n"
+               "cc = 'clang'\n"
+               "b = os.path.join(tempfile.mkdtemp(), 'fake')\n"
+               "subprocess.run([cc, '-O1', '-std=c11', '-D_POSIX_C_SOURCE=200809L', '-Wall', '-Wextra', '-Werror', '-Inative',\n"
+               "                'native/redlite_native_server.c', 'native/redlite_native_server_fake.c', '-lm', '-pthread', '-o', b], check=True)\n"
+               "p = subprocess.Popen([b, '--port', '0'], stdout=subprocess.PIPE, text=True)\n"
+               "port = int(re.search(r'127\\.0\\.0\\.1:(\\d+)', p.stdout.readline()).group(1))\n"
+               "def post(n):\n"
+               "    body = json.dumps({'model': 'x', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': n}).encode()\n"
+               "    req = urllib.request.Request(f'http://127.0.0.1:{port}/v1/chat/completions', body, {'Content-Type': 'application/json'})\n"
+               "    try:\n"
+               "        r = urllib.request.urlopen(req, timeout=20); return r.status, r.read().decode()\n"
+               "    except urllib.error.HTTPError as e:\n"
+               "        return e.code, e.read().decode()\n")
+_MUTANTS = ("import subprocess, sys, os\n"
+            "def run():\n"
+            "    return subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_quant_mix.py'],\n"
+            "                          capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+            "r = run(); assert r.returncode == 0 and 'Ran 0 tests' not in r.stderr, 'tests do not pass: ' + r.stderr[-300:]\n"
+            "src = open('scripts/dev/quant_mix.py').read()\n"
+            "killed = []\n"
+            "for old, new in [('range(int(a), int(b or a) + 1)', 'range(int(a), int(b or a))'),\n"
+            "                 ('layers(where) if where else None', 'layers(where) if where else set()')]:\n"
+            "    assert src.count(old) == 1, 'quant_mix.py was changed: ' + old\n"
+            "    open('scripts/dev/quant_mix.py', 'w').write(src.replace(old, new))\n"
+            "    killed.append(run().returncode != 0)\n"
+            "    open('scripts/dev/quant_mix.py', 'w').write(src)\n"
+            "assert all(killed), f'mutants not caught: {killed}'\n")
+HARD_TASKS = [
+    {
+        "id": "two_bugs",
+        "repo": True,
+        "patch": [("redlite/model_catalog.py", '"24gb": "redlite_f2",', '"24gb": "redlite_e3",'),
+                  ("redlite/planner.py", "NATIVE_KV_MIB_PER_POS = 48.0 / 1024.0", "NATIVE_KV_MIB_PER_POS = 4.8 / 1024.0")],
+        "prompt": "Some tests in tests/test_native_defaults.py fail. Find every cause in the redlite package and fix them; "
+                  "do not change the tests. Run python3 -m unittest discover -s tests -p test_native_defaults.py to confirm.",
+        "unchanged": ["tests/test_native_defaults.py"],
+        "check": "import subprocess, sys, os\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_defaults.py'],"
+                 " capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n",
+    },
+    {
+        "id": "rename",
+        "repo": True,
+        "prompt": "Rename the function native_plan_context in redlite/planner.py to plan_context_positions, everywhere it "
+                  "is defined, imported or called in redlite/ and tests/. Then run "
+                  "python3 -m unittest discover -s tests -p 'test_native_*.py' and python3 -m unittest discover -s tests "
+                  "-p test_cli.py and make sure they pass.",
+        "check": "import subprocess, sys, os, pathlib\n"
+                 "left = [str(p) for d in ('redlite', 'tests') for p in pathlib.Path(d).rglob('*.py') if 'native_plan_context' in p.read_text()]\n"
+                 "assert not left, f'old name left in {left}'\n"
+                 "assert 'def plan_context_positions(' in open('redlite/planner.py').read()\n"
+                 "env = {**os.environ, 'PYTHONPATH': '.'}\n"
+                 "for pat in ('test_native_defaults.py', 'test_cli.py'):\n"
+                 "    r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', pat], capture_output=True, text=True, env=env)\n"
+                 "    assert r.returncode == 0, pat + ': ' + r.stderr[-300:]\n",
+    },
+    {
+        "id": "write_tests",
+        "repo": True,
+        "prompt": "Write a new file tests/test_quant_mix.py with unit tests for the functions layers() and parse_set() in "
+                  "scripts/dev/quant_mix.py (import it by putting scripts/dev on sys.path; do not change quant_mix.py). "
+                  "Cover single layers, ranges like 24-47, comma lists like 0-5,43-47, and specs with and without the "
+                  "@LAYERS part. Run python3 -m unittest discover -s tests -p test_quant_mix.py.",
+        "unchanged": ["scripts/dev/quant_mix.py"],
+        "check": _MUTANTS,
+    },
+    {
+        "id": "c_limit",
+        "repo": True,
+        "prompt": "In the C server (native/redlite_native_server.c), requests may ask for up to 1048576 tokens. Lower "
+                  "the limit: a max_tokens (or max_completion_tokens) above 65536 must be rejected with HTTP 400 and an "
+                  "error message containing 'max_tokens must be at most 65536'. 65536 itself stays allowed. Add a test "
+                  "for it to tests/test_native_server.py (it builds a fake server from the same C file) and run "
+                  "python3 -m unittest discover -s tests -p test_native_server.py.",
+        "check": _FAKE_BUILD +
+                 "try:\n"
+                 "    code, text = post(70000)\n"
+                 "    assert code == 400 and 'max_tokens must be at most 65536' in text, (code, text[:200])\n"
+                 "    code, text = post(65536)\n"
+                 "    assert code == 200, (code, text[:200])\n"
+                 "finally:\n"
+                 "    p.kill()\n"
+                 "assert '65536' in open('tests/test_native_server.py').read(), 'no test added'\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_server.py'],"
+                 " capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n",
+    },
+    {
+        "id": "explain_kv_pad",
+        "repo": True,
+        "prompt": "The Metal engine allocates its attention KV cache with RL_ENGINE_KV_PAD extra positions past the "
+                  "context. How many positions is that, and which part of the engine needs them, and why? Look in "
+                  "native/. Answer briefly; do not modify any file.",
+        "unchanged_tree": True,
+        "answer": ["32"],
+        "answer_any": ["tile", "tiled", "block"],
+    },
+    {
+        "id": "debug_session",
+        "repo": True,
+        "patch": [("redlite/model_catalog.py", "key = ALIASES.get(name.lower(), name.lower())", "key = ALIASES.get(name, name)")],
+        "prompts": [
+            "`redlite download CODER` fails with 'Unknown variant', while `redlite download coder` works. Find the cause "
+            "in the redlite package and explain it in one sentence. Do not change anything yet.",
+            "Fix it so that variant names are case-insensitive, and add a test for an upper-case name to "
+            "tests/test_native_defaults.py.",
+            "Also add an alias coder-24gb that points to the same variant as coder, with a test. Then run "
+            "python3 -m unittest discover -s tests -p test_native_defaults.py.",
+        ],
+        "answer_any": ["lower", "case"],
+        "check": "import subprocess, sys, os\n"
+                 "sys.path.insert(0, '.')\n"
+                 "from redlite.model_catalog import resolve_variant\n"
+                 "assert resolve_variant('CODER').key == resolve_variant('coder').key == 'redlite_coder_cf2'\n"
+                 "assert resolve_variant('coder-24gb').key == 'redlite_coder_cf2'\n"
+                 "assert 'coder-24gb' in open('tests/test_native_defaults.py').read(), 'no test for the alias'\n"
+                 "r = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_native_defaults.py'],"
+                 " capture_output=True, text=True, env={**os.environ, 'PYTHONPATH': '.'})\n"
+                 "assert r.returncode == 0, r.stderr[-400:]\n",
+    },
+]
+SUITES = {"basic": TASKS, "repo": REPO_TASKS, "hard": HARD_TASKS}
 ROOT = Path(__file__).resolve().parents[2]
 
 REQ = re.compile(r"request \d+: prompt=(\d+) cached=(\d+) completion=(\d+) finish=(\w+)")
 
 
-def write_agent_dir(path: Path, port: int, model_id: str, context: int) -> None:
+def write_agent_dir(path: Path, port: int, model_id: str, context: int, temperature: float | None = None) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "models.json").write_text(json.dumps({"providers": {"redlite": {
         "baseUrl": f"http://127.0.0.1:{port}/v1", "api": "openai-completions", "apiKey": "redlite",
@@ -180,6 +306,7 @@ def write_agent_dir(path: Path, port: int, model_id: str, context: int) -> None:
                    "supportsStrictMode": False, "maxTokensField": "max_tokens"},
         "models": [{"id": model_id, "name": "Red Lite (local)", "reasoning": False, "input": ["text"],
                     "contextWindow": context, "maxTokens": 4096,
+                    **({"samplingParams": {"temperature": temperature}} if temperature is not None else {}),
                     "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}}]}}}, indent=2))
 
 
@@ -207,7 +334,8 @@ def run_task(task: dict, args) -> dict:
         session = ["--no-session"] if len(prompts) == 1 else ["--session-dir", str(work / ".pi-sessions"), "--session-id", "eval"]
         for k, prompt in enumerate(prompts):   # several prompts: one pi session, continued
             try:
-                out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, *session,
+                extra = ["--append-system-prompt", args.append_system] if args.append_system else []
+                out = subprocess.run(["pi", "--provider", "redlite", "--model", args.model_id, *session, *extra,
                                       "--no-extensions", "--no-skills", "--no-context-files", "-p", prompt],
                                      cwd=work, env=env, stdin=subprocess.DEVNULL,   # pi -p reads a piped stdin
                                      capture_output=True, text=True,
@@ -238,7 +366,9 @@ def run_task(task: dict, args) -> dict:
                 problems.append(f"modified {changed[:3]}")
         if "check" in task:
             (work / "check_task.py").write_text(task["check"])
-            r = subprocess.run([sys.executable, "check_task.py"], cwd=work, capture_output=True, text=True, timeout=120)
+            # no bytecode cache: a fix of the same length written within a second of a test run kept the stale .pyc
+            r = subprocess.run([sys.executable, "check_task.py"], cwd=work, capture_output=True, text=True, timeout=120,
+                               env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             if r.returncode != 0:
                 problems.append("check: " + (r.stderr.strip().splitlines() or ["failed"])[-1][:200])
     prompt = sum(r[0] for r in reqs)
@@ -254,8 +384,10 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8091)
     ap.add_argument("--model-id", default="qwen3-next-80b-a3b-redlite")
     ap.add_argument("--context", type=int, default=32768)
+    ap.add_argument("--temperature", type=float, help="dev65: sampling temperature pi sends (as redlite setup-pi does)")
+    ap.add_argument("--append-system", help="dev65: text or file appended to pi's system prompt (--append-system-prompt)")
     ap.add_argument("--agent-dir", help="pi config dir (default: a models.json for --port in a temporary dir)")
-    ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository")
+    ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository; hard: 6 harder ones (dev65)")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per task")
     ap.add_argument("--json", help="write the results here")
@@ -264,7 +396,7 @@ def main() -> int:
     if not args.agent_dir:
         tmp = tempfile.TemporaryDirectory()
         args.agent_dir = tmp.name
-        write_agent_dir(Path(tmp.name), args.port, args.model_id, args.context)
+        write_agent_dir(Path(tmp.name), args.port, args.model_id, args.context, args.temperature)
     tasks = [t for t in SUITES[args.suite] if not args.tasks or t["id"] in args.tasks.split(",")]
     results = []
     for t in tasks:

@@ -487,7 +487,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("setup-pi", help="Configure the pi coding agent for a local redlite serve --native")
     s.add_argument("--port", type=int, default=8080)
-    s.add_argument("--context", type=int, default=32768, help="the --context the server runs with (default 32768)")
+    # dev65: 64K, the agent window that measured best (hard suite, CF2, M4 Max: 16/18 at 64K, 10/18 at 32K)
+    s.add_argument("--context", type=int, default=65536, help="the --context the server runs with (default 65536)")
     s.set_defaults(func=cmd_setup_pi)
 
     s = sub.add_parser("download", help="Download a curated GGUF from Hugging Face")
