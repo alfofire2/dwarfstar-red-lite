@@ -180,6 +180,13 @@ them.
 - **`redlite-engine tokenize --text` truncated to 16,384 ids silently**, which turned a "64K" test prompt into 32K.
   It now warns.
 
+- **Prefill attention shared across the 8 query heads of a KV head (dev66).** A kernel with threadgroups of
+  (KV head, 4 tokens), 32 rows per key/value block instead of `attn_fa_b2`'s 16, Q read from device memory. Results
+  were byte-identical (the 1/16 scale is exact), but the attention part of a 32K prefill (CF2, M4 Max, on AC) took
+  22.4 s against 17.0 s, and 35 s once the four P tiles were held in registers to load each V tile once. The premise
+  was wrong: `attn_fa_b2` already runs about 6 TFLOPS at 32K, so it is limited by the matrix units, not by key/value
+  reads, and the larger per-thread state only cost occupancy. Not kept.
+
 ## Not reached, blocked or not attempted
 
 - **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on
