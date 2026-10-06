@@ -24,8 +24,9 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
 - **Faster first ingestion of long prompts:** at 256K it takes 24 minutes. The prefill attention is limited by the
   float32 matrix units (about 6 TFLOPS at 32K), not by key/value reads: sharing them across query heads made it slower
-  (dev66, WHAT_DID_NOT_WORK). The remaining lever is half-precision matrix products, which must first pass the parity
-  rules.
+  (dev66, WHAT_DID_NOT_WORK), and so did more threadgroups per core. Half precision is not an obvious lever either:
+  M1–M4 GPUs run FP16 arithmetic at the FP32 rate (not measured here). At 32K the prefill splits into attention
+  17.5 s, DeltaNet layers 14.7 s, experts 19.6 s.
 - **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts.
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
 
