@@ -3,7 +3,7 @@
 Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.8.0, 2026-10-06)
+## Where things stand (0.8.1, 2026-10-07)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -29,6 +29,10 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   17.5 s, DeltaNet layers 14.7 s, experts 19.6 s.
 - **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts.
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
+
+## Done in 0.8.1 (dev66)
+
+- Decode attention 16–35 % faster at 62K–256K tokens (KV read at about 415 GB/s instead of 290 on the M4 Max).
 
 ## Done in 0.8.0 (dev65)
 

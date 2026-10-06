@@ -277,8 +277,8 @@ In short:
   limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
   52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about
   360 tok/s.
-- **Long prompts** (dev65, M4 Max, Red Lite CF2): ingestion / decode 518 / 41 tok/s at 62K tokens, 320 / 26 at
-  127K, 182 / 16 at 256K. On the 24 GiB M4 Pro with the 4 GiB cache: 168 / 15 at 62K, 96 / 10.5 at 127K.
+- **Long prompts** (M4 Max, Red Lite CF2): ingestion / decode 513 / 48 tok/s at 62K tokens, 318 / 33 at 127K,
+  174 / 22 at 256K (dev66). On the 24 GiB M4 Pro with the 4 GiB cache: 168 / 15 at 62K, 96 / 10.5 at 127K (0.8.0).
 - Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from
   `benchmarks/charts.json` by `scripts/dev/make_charts.py`.
 

@@ -1,18 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="810" height="278" viewBox="0 0 810 278">
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="293" viewBox="0 0 810 293">
 <style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
-<rect class="bg" width="810" height="278"/>
-<text class="t" x="10" y="24">Long prompts on the M4 Max 48 GiB (Red Lite CF2, every expert resident)</text>
-<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">prompt ingestion</text>
-<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">decode</text>
-<text class="l" x="222" y="98" text-anchor="end">62K tokens (2 min)</text>
-<rect x="230" y="76" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="88">517.9</text>
-<rect x="230" y="94" width="37.4" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="272.4" y="106">41.2</text>
-<text class="l" x="222" y="144" text-anchor="end">127K tokens (6.7 min)</text>
-<rect x="230" y="122" width="289.9" height="15" rx="2" fill="#d64545"/><text class="v" x="524.9" y="134">319.5</text>
-<rect x="230" y="140" width="23.9" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="258.9" y="152">26.3</text>
-<text class="l" x="222" y="190" text-anchor="end">256K tokens (23.5 min)</text>
-<rect x="230" y="168" width="165.3" height="15" rx="2" fill="#d64545"/><text class="v" x="400.3" y="180">182.1</text>
-<rect x="230" y="186" width="14.5" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="249.5" y="198">16</text>
+<rect class="bg" width="810" height="293"/>
+<text class="t" x="10" y="24">Decode speed at long prompts on the M4 Max 48 GiB (Red Lite CF2, every expert resident)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">0.8.0</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">dev66</text>
+<text class="l" x="222" y="98" text-anchor="end">62K tokens</text>
+<rect x="230" y="76" width="406.8" height="15" rx="2" fill="#d64545"/><text class="v" x="641.8" y="88">41.2</text>
+<rect x="230" y="94" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="106">47.6</text>
+<text class="l" x="222" y="144" text-anchor="end">127K tokens</text>
+<rect x="230" y="122" width="259.7" height="15" rx="2" fill="#d64545"/><text class="v" x="494.7" y="134">26.3</text>
+<rect x="230" y="140" width="328.8" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="563.8" y="152">33.3</text>
+<text class="l" x="222" y="190" text-anchor="end">256K tokens</text>
+<rect x="230" y="168" width="158.0" height="15" rx="2" fill="#d64545"/><text class="v" x="393.0" y="180">16</text>
+<rect x="230" y="186" width="213.3" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="448.3" y="198">21.6</text>
 <text class="n" x="10" y="253">tokens per second. A prompt made of this repository&#x27;s code with three passphrases at 10/50/90 %, all three found at every</text>
-<text class="n" x="10" y="268">length (dev65). Prompt ingestion and decode of the answer, through redlite-server, 90 W charger.</text>
+<text class="n" x="10" y="268">length; decode of the answer through redlite-server before (0.8.0) and after the dev66 decode attention change, 90 W charger.</text>
+<text class="n" x="10" y="283">Ingestion of the prompt took 2, 6.7 and 24 minutes.</text>
 </svg>

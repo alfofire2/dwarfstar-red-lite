@@ -737,38 +737,39 @@
   },
   {
    "id": "long_context",
-   "title": "Long prompts on the M4 Max 48 GiB (Red Lite CF2, every expert resident)",
+   "title": "Decode speed at long prompts on the M4 Max 48 GiB (Red Lite CF2, every expert resident)",
    "unit": "tokens per second",
-   "note": "A prompt made of this repository's code with three passphrases at 10/50/90 %, all three found at every length (dev65). Prompt ingestion and decode of the answer, through redlite-server, 90 W charger.",
+   "note": "A prompt made of this repository's code with three passphrases at 10/50/90 %, all three found at every length; decode of the answer through redlite-server before (0.8.0) and after the dev66 decode attention change, 90 W charger. Ingestion of the prompt took 2, 6.7 and 24 minutes.",
    "series": [
-    "prompt ingestion",
-    "decode"
+    "0.8.0",
+    "dev66"
    ],
    "bars": [
     {
-     "label": "62K tokens (2 min)",
+     "label": "62K tokens",
      "values": [
-      517.9,
-      41.2
+      41.2,
+      47.6
      ]
     },
     {
-     "label": "127K tokens (6.7 min)",
+     "label": "127K tokens",
      "values": [
-      319.5,
-      26.3
+      26.3,
+      33.3
      ]
     },
     {
-     "label": "256K tokens (23.5 min)",
+     "label": "256K tokens",
      "values": [
-      182.1,
-      16.0
+      16.0,
+      21.6
      ]
     }
    ],
    "sources": [
-    "benchmarks/m4-dev65-long-context-agents.json"
+    "benchmarks/m4-dev65-long-context-agents.json",
+    "benchmarks/m4-dev66-decode-attention.json"
    ]
   }
  ]

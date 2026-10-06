@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.1 — 2026-10-07
+
+**Faster decode at long contexts.**
+- **Decode attention:** the value pass now keeps four loads in flight (same summation order, bit-identical), and
+  from 12K positions the kernel uses 256-position blocks. The KV cache is read at about 415 GB/s instead of 290 on the
+  M4 Max.
+- **Decode through the server, M4 Max, CF2:** 41 → 48 tok/s at 62K tokens, 26 → 33 at 127K, 16 → 22 at 256K, with
+  the same answers. On the 24 GiB M4 Pro, decode attention is about a third faster (`kernel-bench`).
+- Validation:
+  - `regress_m4.sh` 55 / 0 / 0 and `quick_parity.sh --long` 5 / 5 on the reference file (M4 Max);
+  - needles at 62K, 127K and 256K;
+  - local CI.
+
+
+- dev66: **decode attention at long contexts** (`docs/REDLITE_DEV66_DECODE_ATTENTION.md`).
+  - **Kept:**
+    - four value loads in flight in `attn_gqa_split_g`;
+    - `rl_attn_auto_blk()` (256-position blocks from 12,288 positions);
+    - the kernel self-test now covers 256-position grouped blocks;
+    - `kernel-bench` adds 1K–16K.
+  - **Not kept** (WHAT_DID_NOT_WORK):
+    - two prefill attention kernels (GQA-shared tiles, Q from device memory), byte-identical and slower;
+    - two decode variants.
+
 ## 0.8.0 — 2026-10-06
 
 **The model's full 262K context, and a 64K window for coding agents.**

@@ -186,6 +186,11 @@ them.
   22.4 s against 17.0 s, and 35 s once the four P tiles were held in registers to load each V tile once. The premise
   was wrong: `attn_fa_b2` already runs about 6 TFLOPS at 32K, so it is limited by the matrix units, not by key/value
   reads, and the larger per-thread state only cost occupancy. Not kept.
+- **Decode attention variants that did not add to the kept change (dev66).** In `attn_gqa_split_g`, two threads per
+  key row with interleaved reads in the score pass (all 256 threads busy instead of 128): −2 to −4 % alone, nothing
+  once the value pass had four loads in flight, and it changes the summation order, so it was dropped. Eight value
+  loads in flight instead of four: the same time at 32K–256K (34.9 vs 34.9 ms at 256K). The value pass, not the
+  score pass, was the limit.
 - **Prefill attention without the 16 KiB Q staging (dev66).** `attn_fa_b2` reading Q straight from device memory
   (threadgroup memory 18.6 → 2.6 KiB, for more threadgroups per core), output stored straight to the result buffer.
   Byte-identical, but slower at 32K: attention 19.9 / 18.7 s against 16.5 / 17.5 s (alternated, on AC). Occupancy is not
