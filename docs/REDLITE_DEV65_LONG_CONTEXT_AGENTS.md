@@ -87,6 +87,12 @@ Every check was validated: it fails on the planted copy and passes with a refere
 | File, Mac | Passed | Per run |
 |---|---:|---|
 | Red Lite CF2, M4 Pro 24 GiB (temperature 0.3, 32K) | 12 / 18 | 4, 3, 5 |
+| Bartowski's Qwen3-Coder-Next IQ2_XXS, same settings | 6 / 18 | 3, 1, 2 |
+
+- **CF2 passes twice as many hard tasks** as Bartowski's file of the same size. The repository suite (dev63) showed the
+  same order, 12 against 7 of 12.
+- **Bartowski's file** looped in `debug_session` (358 and 203 requests) and twice wrote a test file without tests.
+- **Neither** fixed both bugs of `two_bugs` in any run.
 
 ## 3. Qwen3-Coder-Next at 3 bits on the M4 Max
 
