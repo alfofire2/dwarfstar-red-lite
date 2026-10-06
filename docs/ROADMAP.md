@@ -22,9 +22,10 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
 ## Next
 
-- **Faster first ingestion of long prompts:** at 256K it takes 24 minutes. The prefill attention still reads each
-  key/value block once per query head; sharing it across the 8 heads of a KV head needs Q in registers (Metal's
-  32 KiB threadgroup memory does not hold the tile).
+- **Faster first ingestion of long prompts:** at 256K it takes 24 minutes. The prefill attention is limited by the
+  float32 matrix units (about 6 TFLOPS at 32K), not by key/value reads: sharing them across query heads made it slower
+  (dev66, WHAT_DID_NOT_WORK). The remaining lever is half-precision matrix products, which must first pass the parity
+  rules.
 - **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts.
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
 
