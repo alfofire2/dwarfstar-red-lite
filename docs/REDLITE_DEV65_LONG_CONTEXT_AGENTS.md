@@ -78,6 +78,28 @@ before it. In the server, with the dev64 kernel:
 Measured with `redlite-engine logits --dump-from N-1 --batch 2048` (alternated runs; this tool commits every
 prefill stage, so its absolute times are slower than the server's).
 
+### Agreement with llama.cpp at long contexts (M4 Max)
+
+The last 50 positions of the needle haystack's ids, native (batched prefill, every expert resident, CF2) against the
+pinned llama.cpp. The oracle decodes token by token with nothing captured before `--dump-from`
+(`--prefix-batch 1`). That form is byte-identical to the full token-by-token oracle (checked at 1,200 ids) and much
+faster: 13 minutes at 32K instead of hours.
+
+| Positions | Top token | Worst KL (limit 0.02) | Worst |Δlogit| (limit 2.0) | Oracle time |
+|---:|---|---:|---:|---:|
+| 16,384 (dev47) | 100 / 100 | 0.000079 | | |
+| 32,768 | 50 / 50 | 0.00015 | 2.27 | 13 min |
+| 65,536 | 50 / 50 | 0.0012 | 2.58 | 33 min |
+| 131,072 | 50 / 50 | **0.025** | 3.77 | 100 min |
+
+- **The top token agrees at every position checked**, up to 128K.
+- **The distributions drift apart with length:** about tenfold per doubling past 64K. At 128K the KL is just above
+  the limit used at short contexts, and the largest logit difference is above it from 32K on. The two programs sum
+  attention over hundreds of thousands of positions in different orders.
+- **Not a reference: llama.cpp's own batched path.** With the prefix decoded in batches of 256, llama.cpp
+  disagreed with its own token-by-token output already at 1,200 ids (KL 0.094, top token different). Its batched
+  Metal matrix kernels round activations to half precision, so it cannot serve as the oracle.
+
 ## 2. A harder agent suite
 
 `agent_eval.py --suite hard`: six tasks on a copy of this repository.
