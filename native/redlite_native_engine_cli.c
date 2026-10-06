@@ -114,6 +114,8 @@ static void usage(FILE *out) {
         "redlite-engine 0.4.0\n\n"
         "Usage:\n"
         "  redlite-engine info MODEL [--context N] [--cache-mib N]\n"
+        "  redlite-engine decode-bench MODEL --tokens a,b,c --start-position N --context C [--cache-mib full] [--fill-state FILE]\n"
+        "      dev65: decode ms/token at position N without a prefill; --fill-state reads rl_engine_state_bytes(N) bytes into the state\n"
         "  redlite-engine tokenize MODEL --text \"...\" [--no-special] [--chat]\n"
         "  redlite-engine perplexity MODEL --tokens IDS [--context 512] [--cache-mib N]   (dev46: engine PPL, second half of each chunk)\n"
         "  redlite-engine tokenize MODEL --file CORPUS [--no-special]   (one input per line, \\n \\t \\\\ escapes; one id list per line)\n"
@@ -177,7 +179,8 @@ int main(int argc, char **argv) {
     const char *text = NULL, *corpus = NULL, *tensor_name = NULL;
     uint32_t row_first = 0, row_count = 16;
     int report_layers = 0, no_special = 0, chat = 0, dump_last = 0, with_cpu = 0;
-    uint32_t dump_from = 0, batch = 0, repeat = 1;
+    uint32_t dump_from = 0, batch = 0, repeat = 1, start_position = 0;
+    const char *fill_state = NULL;
     int router_layer = -1;
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--layers") == 0) { report_layers = 1; continue; }
@@ -204,6 +207,8 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--row-first") == 0) { if (!parse_u32(argv[++i], &row_first)) return 2; }
         else if (strcmp(argv[i], "--rows") == 0) { if (!parse_u32(argv[++i], &row_count) || !row_count) return 2; }
         else if (strcmp(argv[i], "--dump-from") == 0) { if (!parse_u32(argv[++i], &dump_from)) return 2; }
+        else if (strcmp(argv[i], "--start-position") == 0) { if (!parse_u32(argv[++i], &start_position)) return 2; }
+        else if (strcmp(argv[i], "--fill-state") == 0) fill_state = argv[++i];
         else if (strcmp(argv[i], "--batch") == 0) { if (!parse_u32(argv[++i], &batch)) return 2; }
         else if (strcmp(argv[i], "--repeat") == 0) { if (!parse_u32(argv[++i], &repeat) || !repeat) return 2; }
         else if (strcmp(argv[i], "--router-layer") == 0) { uint32_t v; if (!parse_u32(argv[++i], &v)) return 2; router_layer = (int)v; }
@@ -289,6 +294,7 @@ int main(int argc, char **argv) {
         uint32_t ids[16384];
         const int32_t n = rl_tokenizer_encode(tk, input, strlen(input), !no_special, ids, 16384u, error, sizeof(error));
         if (n < 0) { fprintf(stderr, "tokenize failed: %s\n", error); return 1; }
+        if (n > 16384) fprintf(stderr, "warning: the text has %d ids; only the first 16384 are printed\n", n);   /* dev65 */
         for (int32_t i = 0; i < n && i < 16384; ++i) printf("%s%u", i ? "," : "", ids[i]);
         printf("\n");
         for (int32_t i = 0; i < n && i < 16384; ++i) {
@@ -302,6 +308,38 @@ int main(int argc, char **argv) {
     }
 
     if (!token_count) { fprintf(stderr, "--tokens is required\n"); return 2; }
+
+    if (strcmp(cmd, "decode-bench") == 0) {
+        /* dev65: decode speed at a long context without the prefill: the GPU backend jumps to --start-position and
+         * decodes the --tokens one at a time; prints the median ms per token after two warm-up tokens */
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        if (fill_state) {   /* real data in every state buffer: rl_engine_state_bytes(position) bytes, e.g. from a FIFO */
+            FILE *sf = fopen(fill_state, "rb");
+            if (!sf || !rl_engine_state_read(e, RL_BACKEND_GPU, sf, start_position, error, sizeof(error))) {
+                fprintf(stderr, "state fill failed: %s\n", sf ? error : "cannot open"); if (sf) fclose(sf); rl_engine_close(e); return 1;
+            }
+            fclose(sf);
+        } else if (!rl_engine_bench_set_position(e, RL_BACKEND_GPU, start_position, error, sizeof(error))) { fprintf(stderr, "%s\n", error); rl_engine_close(e); return 1; }
+        double *ms = (double *)calloc(token_count, sizeof(double));
+        uint32_t routed = 0;
+        for (uint32_t i = 0; i < token_count; ++i) {
+            rl_engine_step_stats st;
+            const double t0 = rl_engine_now_ms_public();
+            if (!rl_engine_step(e, RL_BACKEND_GPU, tokens[i], NULL, &st, error, sizeof(error))) { fprintf(stderr, "step failed: %s\n", error); return 1; }
+            ms[i] = rl_engine_now_ms_public() - t0;
+            routed += st.speculative ? 1u : 0u;
+        }
+        const uint32_t n = token_count > 2u ? token_count - 2u : token_count;
+        double *v = ms + (token_count - n);
+        for (uint32_t i = 0; i < n; ++i) for (uint32_t j = i + 1u; j < n; ++j) if (v[j] < v[i]) { const double t = v[i]; v[i] = v[j]; v[j] = t; }
+        printf("decode-bench: position %u, context %u, %u tokens, median %.2f ms/token (%.1f tok/s), %u GPU-routed\n",
+               start_position, cfg.context, n, v[n / 2u], 1000.0 / v[n / 2u], routed);
+        free(ms);
+        rl_engine_close(e);
+        return 0;
+    }
 
     if (strcmp(cmd, "perplexity") == 0) {
         /* dev46: perplexity of the engine itself (token by token on the Metal step path, so runtime options such as

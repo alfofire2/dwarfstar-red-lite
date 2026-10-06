@@ -253,10 +253,10 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
                     [enc setComputePipelineState:variant == 2 ? m->p_attn_split_g : m->p_attn_split];
                     [enc setBuffer:q offset:0 atIndex:0]; [enc setBuffer:kc offset:0 atIndex:1]; [enc setBuffer:vc offset:0 atIndex:2];
                     [enc setBuffer:ml offset:0 atIndex:3]; [enc setBuffer:acc offset:0 atIndex:4];
-                    const uint32_t blk = variant == 2 ? 128u : 256u, nb = (seq_len + blk - 1u) / blk;
+                    const uint32_t blk = variant >= 2 ? 128u : 256u, nb = (seq_len + blk - 1u) / blk;
                     [enc setBytes:&head_dim length:4 atIndex:5]; [enc setBytes:&qheads length:4 atIndex:6]; [enc setBytes:&kvheads length:4 atIndex:7]; [enc setBytes:&seq_len length:4 atIndex:8];
                     [enc setBytes:&blk length:4 atIndex:9];
-                    [enc dispatchThreadgroups:MTLSizeMake(nb, variant == 2 ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+                    [enc dispatchThreadgroups:MTLSizeMake(nb, variant >= 2 ? kvheads : qheads, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
                     [enc setComputePipelineState:m->p_attn_merge];
                     [enc setBuffer:ml offset:0 atIndex:0]; [enc setBuffer:acc offset:0 atIndex:1]; [enc setBuffer:gate offset:0 atIndex:2]; [enc setBuffer:out offset:0 atIndex:3];
                     [enc setBytes:&head_dim length:4 atIndex:4]; [enc setBytes:&seq_len length:4 atIndex:5]; [enc setBytes:&blk length:4 atIndex:6];
@@ -377,6 +377,67 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                         cases[c].what, b2 * 1000.0, b2 / best);
                 }
                 if (off >= report_cap) break;
+            }
+            /* dev65: decode attention against context length, as the engine dispatches it for one token
+             * (12 attention layers; Qwen3-Next: 16 query heads, 2 KV heads, head_dim 256; RL_ENGINE_ATTN_BLK sweeps the block) */
+            {
+                id<MTLComputePipelineState> pg = make_pipe(m->dev, m->lib, @"attn_gqa_split_g", error, cap);
+                id<MTLComputePipelineState> pm = make_pipe(m->dev, m->lib, @"attn_gqa_merge", error, cap);
+                if (!pg || !pm) goto bout;
+                const char *ab = getenv("RL_ENGINE_ATTN_BLK");
+                const uint32_t blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 128u;
+                const uint32_t hd = 256u, qh = 16u, kvh = 2u, layers = 12u;
+                static const uint32_t lens[] = { 4096u, 32768u, 65536u, 131072u, 262144u };
+                const uint32_t maxlen = lens[sizeof(lens) / sizeof(lens[0]) - 1u];
+                const size_t kvb = (size_t)maxlen * kvh * hd * 4u;
+                /* RL_BENCH_ATTN_DISTINCT=1: one K and one V buffer per layer, as the engine allocates them (12 GiB at
+                 * 256K positions), instead of one pair read by every layer */
+                const char *dv = getenv("RL_BENCH_ATTN_DISTINCT");
+                const uint32_t nbuf = dv && atoi(dv) != 0 ? layers : 1u;
+                id<MTLBuffer> kcs[12], vcs[12];
+                for (uint32_t bi = 0; bi < nbuf; ++bi) {
+                    kcs[bi] = [m->dev newBufferWithLength:kvb options:MTLResourceStorageModeShared];
+                    vcs[bi] = [m->dev newBufferWithLength:kvb options:MTLResourceStorageModeShared];
+                    if (!kcs[bi] || !vcs[bi]) { snprintf(error, cap, "attention bench KV allocation failed"); goto bout; }
+                    for (size_t i = 0; i < kvb / 4u; ++i) { ((float *)kcs[bi].contents)[i] = st_uniform(); ((float *)vcs[bi].contents)[i] = st_uniform(); }
+                }
+                id<MTLBuffer> kc = kcs[0], vc = vcs[0];
+                id<MTLBuffer> q = [m->dev newBufferWithLength:(size_t)qh * hd * 4u options:MTLResourceStorageModeShared];
+                id<MTLBuffer> g = [m->dev newBufferWithLength:(size_t)qh * hd * 4u options:MTLResourceStorageModeShared];
+                id<MTLBuffer> o = [m->dev newBufferWithLength:(size_t)qh * hd * 4u options:MTLResourceStorageModeShared];
+                const size_t nbmax = (maxlen + 31u) / 32u;
+                id<MTLBuffer> ml = [m->dev newBufferWithLength:(size_t)qh * nbmax * 8u options:MTLResourceStorageModeShared];
+                id<MTLBuffer> acc = [m->dev newBufferWithLength:(size_t)qh * nbmax * hd * 4u options:MTLResourceStorageModeShared];
+                if (!kc || !vc || !q || !g || !o || !ml || !acc) { snprintf(error, cap, "attention bench allocation failed"); goto bout; }
+                for (uint32_t i = 0; i < qh * hd; ++i) { ((float *)q.contents)[i] = st_uniform(); ((float *)g.contents)[i] = st_uniform(); }
+                for (size_t li = 0; li < sizeof(lens) / sizeof(lens[0]); ++li) {
+                    const uint32_t seq = lens[li], nb = (seq + blk - 1u) / blk;
+                    double best = 1e30;
+                    for (int rep = 0; rep < 5; ++rep) {
+                        id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+                        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                        [enc setBuffer:m->abort_zero offset:0 atIndex:30];
+                        for (uint32_t l = 0; l < layers; ++l) {
+                            [enc setComputePipelineState:pg];
+                            [enc setBuffer:q offset:0 atIndex:0]; [enc setBuffer:kcs[l % nbuf] offset:0 atIndex:1]; [enc setBuffer:vcs[l % nbuf] offset:0 atIndex:2];
+                            [enc setBuffer:ml offset:0 atIndex:3]; [enc setBuffer:acc offset:0 atIndex:4];
+                            [enc setBytes:&hd length:4 atIndex:5]; [enc setBytes:&qh length:4 atIndex:6]; [enc setBytes:&kvh length:4 atIndex:7];
+                            [enc setBytes:&seq length:4 atIndex:8]; [enc setBytes:&blk length:4 atIndex:9];
+                            [enc dispatchThreadgroups:MTLSizeMake(nb, kvh, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+                            [enc setComputePipelineState:pm];
+                            [enc setBuffer:ml offset:0 atIndex:0]; [enc setBuffer:acc offset:0 atIndex:1];
+                            [enc setBuffer:g offset:0 atIndex:2]; [enc setBuffer:o offset:0 atIndex:3];
+                            [enc setBytes:&hd length:4 atIndex:4]; [enc setBytes:&seq length:4 atIndex:5]; [enc setBytes:&blk length:4 atIndex:6];
+                            [enc dispatchThreadgroups:MTLSizeMake(qh, 1, 1) threadsPerThreadgroup:MTLSizeMake(hd, 1, 1)];
+                        }
+                        [enc endEncoding]; [cb commit]; [cb waitUntilCompleted];
+                        const double ms = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+                        if (rep > 0 && ms < best) best = ms;
+                    }
+                    const double bytes = (double)seq * kvh * hd * 4.0 * 2.0 * layers;
+                    off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0,
+                        "attention x%u layers, %6u positions, blk %3u, %2u KV pairs  %8.2f ms/token  %6.1f GB/s\n", layers, seq, blk, nbuf, best, bytes / (best * 1e6));
+                }
             }
         }
         ok = 1;
