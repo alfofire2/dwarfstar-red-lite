@@ -59,7 +59,7 @@ struct rl_metal_engine {
     float route_bias;                                         /* dev46: RL_ROUTE_CACHE_BIAS (default 0: off) */
     int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
-    uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK, default 128) */
+    uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK; 0 = rl_attn_auto_blk) */
     id<MTLBuffer> attn_ml, attn_acc;                          /* per (head, 256-position block) partials */
     int attn_split;
     id<MTLComputePipelineState> p_sh_scalar, p_sh_silu;
@@ -114,3 +114,6 @@ int commit_wait(id<MTLCommandBuffer> cb, const char *what, double *gpu_ms, char 
 
 /* defined in redmetal_engine_prefill.m */
 void rl_metal_prefill_destroy(struct rl_metal_prefill *pf);
+
+/* dev66: grouped split-K block by context length (kernel-bench crossover between 8K and 16K positions) */
+static inline uint32_t rl_attn_auto_blk(uint32_t seq_len) { return seq_len >= 12288u ? 256u : 128u; }
