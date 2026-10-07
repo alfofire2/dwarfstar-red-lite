@@ -105,6 +105,12 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
         self.assertIn("--cache-mib 4096", text)
         self.assertIn("bounded 4 GiB", text)
 
+    def test_chat_full_residency_uses_prompt_lookup(self):
+        text = self._run(48)
+        self.assertIn("--lookup", text)
+        self.assertNotIn("--lookup", self._run(48, "--no-lookup").split("redlite-generate", 1)[-1])
+        self.assertNotIn("--lookup", self._run(24))   # bounded 4 GiB cache
+
     def test_explicit_cache_and_batch_win(self):
         text = self._run(48, "--cache-mib", "1024", "--batch", "128", "--json", "--min-p", "0.05")
         self.assertIn("--cache-mib 1024", text)

@@ -357,6 +357,15 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         set_decoding(c, k, 0);
     }
     const double gen_ms = now_ms() - t_gen;
+    {   /* dev71 (dev only): RL_SERVER_TRACE=FILE appends "start id,id,..." per request (prompt + answer in the state) */
+        const char *tp = getenv("RL_SERVER_TRACE");
+        FILE *tf = tp && ok ? fopen(tp, "a") : NULL;
+        if (tf) {
+            fprintf(tf, "%u ", start_position);
+            for (uint32_t i = 0; i < S->history_len; ++i) fprintf(tf, i ? ",%u" : "%u", S->history[i]);
+            fputc('\n', tf); fclose(tf);
+        }
+    }
     rl_sampler_free(&sampler);
     result->completion_tokens = generated;
     if (!ok) S->history_len = 0;   /* unknown state: the next request resets */

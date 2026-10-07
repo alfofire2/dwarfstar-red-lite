@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE 1
 
 #include "redlite_native_server.h"
+#include "redlite_native_sampler.h"
 
 #include <errno.h>
 #include <math.h>
@@ -796,21 +797,6 @@ void rl_chat_request_free(rl_chat_request *req) {
 uint32_t rl_prefix_reuse(const uint32_t *history, uint32_t history_len, const uint32_t *ids, uint32_t count) {
     if (!history || !ids || !history_len || history_len >= count) return 0;
     return memcmp(history, ids, (size_t)history_len * sizeof(uint32_t)) == 0 ? history_len : 0u;
-}
-
-int rl_lookup_draft(const uint32_t *seq, uint32_t n, uint32_t *draft) {
-    /* ponytail: linear scan back from the end, ~n compares per token (60 us at 64K); an n-gram index if it shows */
-    if (!seq || !draft) return 0;
-    for (uint32_t g = 3u; g >= 2u; --g) {
-        if (n < g + 1u) continue;
-        const uint32_t *key = seq + n - g;
-        for (uint32_t end = n - 1u; end-- > g - 1u;) {   /* candidate occurrence seq[end-g+1 .. end], end < n - 1 */
-            if (seq[end] != key[g - 1u] || memcmp(seq + end + 1u - g, key, (size_t)g * sizeof(uint32_t)) != 0) continue;
-            *draft = seq[end + 1u];
-            return 1;
-        }
-    }
-    return 0;
 }
 
 int rl_stop_scan(const char *buf, size_t len, char *const *stops, uint32_t stop_count, size_t *emit_len) {

@@ -170,6 +170,19 @@ if [[ -f "$MTP_FILE" && "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
 else
   echo "SKIP  generate.mtp_greedy (no MTP head file or < 40 GiB)"; SKIP=$((SKIP + 1))
 fi
+# dev71: prompt lookup in redlite-generate (full residency, no MTP): greedy output identical to plain decode, drafts accepted
+if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
+  LK_PROMPT="Copy this line exactly three times, one copy per line: def plan_for(model_path, ram_bytes, context=4096, cache_mib=None):"
+  "$BIN/redlite-generate" "$MODEL" --prompt "$LK_PROMPT" --max-tokens 96 --cache-mib full --temperature 0 --no-stream --tokens-out "$LOG/lookup.plain.txt" >"$LOG/lookup.plain.log" 2>&1
+  "$BIN/redlite-generate" "$MODEL" --lookup --prompt "$LK_PROMPT" --max-tokens 96 --cache-mib full --temperature 0 --no-stream --stats --tokens-out "$LOG/lookup.spec.txt" >"$LOG/lookup.spec.log" 2>&1
+  if [[ -s "$LOG/lookup.plain.txt" ]] && cmp -s "$LOG/lookup.plain.txt" "$LOG/lookup.spec.txt" && grep -q "lookup speculation.*drafts accepted" "$LOG/lookup.spec.log"; then
+    echo "PASS  generate.lookup_greedy ($(grep -o '[0-9]* drafts accepted ([0-9.]*)' "$LOG/lookup.spec.log"))"; PASS=$((PASS + 1))
+  else
+    echo "FAIL  generate.lookup_greedy (see $LOG/lookup.spec.log)"; FAIL=$((FAIL + 1)); FAILED+=(generate.lookup_greedy)
+  fi
+else
+  echo "SKIP  generate.lookup_greedy (< 40 GiB)"; SKIP=$((SKIP + 1))
+fi
 # Ctrl-C mid-answer: the run must stop, report finish=interrupted and exit 130 (not be killed)
 "$BIN/redlite-generate" "$MODEL" --prompt "Count from 1 to 2000, separated by commas." --max-tokens 4000 \
   --cache-mib 2048 --json >"$LOG/generate.sigint.log" 2>&1 &

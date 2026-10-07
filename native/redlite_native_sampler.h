@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +58,25 @@ uint32_t rl_sampler_distribution(rl_sampler *s, const float *logits, const uint3
 
 uint64_t rl_sampler_random_u64(rl_sampler *s);
 
+/* dev70 prompt lookup: a draft for the token after seq[0..n) from the context itself. Finds the latest earlier
+ * occurrence of the last g tokens (g = 3, then 2) and returns 1 with *draft = the token that followed it; 0 when
+ * there is none. Exact speculation verifies the draft, so a wrong one costs time, never output. */
+static inline int rl_lookup_draft(const uint32_t *seq, uint32_t n, uint32_t *draft) {
+    /* ponytail: linear scan back from the end, ~n compares per token (60 us at 64K); an n-gram index if it shows */
+    if (!seq || !draft) return 0;
+    for (uint32_t g = 3u; g >= 2u; --g) {
+        if (n < g + 1u) continue;
+        const uint32_t *key = seq + n - g;
+        for (uint32_t end = n - 1u; end-- > g - 1u;) {   /* candidate occurrence seq[end-g+1 .. end], end < n - 1 */
+            if (seq[end] != key[g - 1u] || memcmp(seq + end + 1u - g, key, (size_t)g * sizeof(uint32_t)) != 0) continue;
+            *draft = seq[end + 1u];
+            return 1;
+        }
+    }
+    return 0;
+}
+
 #ifdef __cplusplus
 }
+
 #endif

@@ -92,6 +92,7 @@ def run_native_chat(
     mtp: str | None = None,
     mtp_max_context: int | None = None,
     steer: list[str] | None = None,
+    lookup: bool = False,
 ) -> int:
     cmd = [
         str(native_generate()), model, "--interactive",
@@ -123,6 +124,8 @@ def run_native_chat(
             cmd.extend(["--mtp-max-context", str(mtp_max_context)])
     if steer:
         cmd.extend(steer)
+    if lookup:
+        cmd.append("--lookup")
     print("[redlite]", " ".join(_quote(x) for x in cmd))
     if dry_run:
         return 0

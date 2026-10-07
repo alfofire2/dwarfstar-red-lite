@@ -314,6 +314,16 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     return batch, head
 
 
+def _lookup_for(model, cache_mib, mtp, args) -> bool:
+    """dev70: prompt lookup speculation when every expert is resident and there is no MTP head (Qwen3-Coder-Next):
+    +17-25 % decode in coding-agent sessions on the M4 Max, same output; --no-lookup disables"""
+    from .planner import native_residency
+    lookup = mtp is None and not getattr(args, "no_lookup", False) and _full_residency(native_residency(model), cache_mib)
+    if lookup:
+        print("[redlite] prompt lookup speculative decoding (same output as plain decoding; --no-lookup disables)")
+    return lookup
+
+
 def _full_residency(res, cache_mib) -> bool:
     """the expert cache holds every expert (res = planner.native_residency of the model)"""
     return res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
@@ -370,13 +380,14 @@ def cmd_chat(args) -> int:
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
     batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
+    lookup = _lookup_for(model, cache_mib, mtp, args)
     try:
         return run_native_chat(
             str(model), args.context, cache_mib, args.max_tokens,
             args.temperature, args.top_k, args.top_p, args.seed,
             args.system, args.prompt, args.stats, args.no_stream, args.dry_run,
             batch=batch, json_stats=args.json, min_p=args.min_p,
-            mtp=mtp, steer=_steer_args(args), mtp_max_context=native_mtp_max_context(hw.ram_bytes),
+            mtp=mtp, steer=_steer_args(args), mtp_max_context=native_mtp_max_context(hw.ram_bytes), lookup=lookup,
         )
     except FileNotFoundError:
         _die("Native Red Lite runtime not built. Run: make native")
@@ -419,12 +430,7 @@ def _serve_native(args) -> int:
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
-    # dev70: prompt lookup speculation when every expert is resident and there is no MTP head (Qwen3-Coder-Next):
-    # +17-25 % decode in coding-agent sessions on the M4 Max, same output
-    from .planner import native_residency
-    lookup = mtp is None and not args.no_lookup and _full_residency(native_residency(model), cache_mib)
-    if lookup:
-        print("[redlite] prompt lookup speculative decoding (same output as plain decoding; --no-lookup disables)")
+    lookup = _lookup_for(model, cache_mib, mtp, args)
     try:
         return run_native_server(
             str(model), args.host, args.port, context, cache_mib,
@@ -540,6 +546,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--top-p", type=float, default=0.95, help="Nucleus probability (default: 0.95)")
     s.add_argument("--min-p", type=float, default=None, help="Drop candidates below this fraction of the top probability (default: off; llama.cpp uses 0.05)")
     s.add_argument("--no-mtp", action="store_true", help="Do not use the MTP head for speculative decoding even when it applies")
+    s.add_argument("--no-lookup", action="store_true",
+                   help="No prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="Bounded cache: pick experts exactly as the model does (no cache-aware routing)")
     s.add_argument("--steer", default=None, help="Activation steering vector (scripts/dev/steer_extract.py); /steer S in the chat changes the strength")
     s.add_argument("--steer-layers", default=None, help="Steered layers A-B (default 16-31)")

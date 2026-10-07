@@ -201,6 +201,21 @@ them.
   Byte-identical, but slower at 32K: attention 19.9 / 18.7 s against 16.5 / 17.5 s (alternated, on AC). Occupancy is not
   the limit either; Q from threadgroup memory is cheaper than from device memory. Not kept.
 
+- **Several drafted tokens per verify, simulated first (dev71): not built.** A K-row verify would mean K-row versions
+  of every decode kernel (bit-identical to one row), the DeltaNet state saved after each row, and the experts of
+  every row. It was simulated on real traffic before any of that: 643 server requests of the hard agent suite
+  (122K answer tokens, `RL_SERVER_TRACE`, `scripts/dev/lookup_sim.py`).
+  - **Cost model:** a pass of R rows costs 1 + c (R − 1) plain steps; the 2-row verify measured c = 0.35.
+  - **The model matches the real run:** with one draft (K = 1, what 0.9.0 does) it gives 1.30 tokens per unit of
+    cost, in line with the +17–25 % measured.
+  - **Fixed K:** 1.40× at K = 2 and 1.43× at K = 4, then 1.28× at K = 8, because a wrong draft mid-chain wastes the
+    rows after it.
+  - **Adaptive K** (double while every draft is accepted, back to 1 on a miss): 1.49× at up to 8 drafts against 1.30×.
+  - **The limit:** each extra row brings its own ten experts, so c cannot drop much below about 0.3. At c = 0.5 the
+    best policy gives 1.24× against 1.19×.
+  - **Verdict:** at most +5–14 % on decode, about half of an agent's time (+3–7 % overall), for a rewrite of the decode
+    path.
+
 ## Not reached, blocked or not attempted
 
 - **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on
