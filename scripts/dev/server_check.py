@@ -175,6 +175,28 @@ def parallel(bin_dir: Path, model: str, max_tokens: int) -> bool:
     return rc == 0 and alone == together and None not in alone and paired > 0
 
 
+LOOKUP_PROMPT = ("Copy this line exactly three times, one copy per line: "
+                 "def plan_for(model_path, ram_bytes, context=4096, cache_mib=None):")
+
+
+def lookup(bin_dir: Path, model: str, max_tokens: int) -> bool:
+    """dev70: --lookup at full residency. A prompt that repeats text, so drafts from the context are used: the greedy
+    answer must equal redlite-generate's (plain decoding) and the server must report accepted drafts."""
+    ref = subprocess.run(
+        [str(bin_dir / "redlite-generate"), model, "--prompt", LOOKUP_PROMPT, "--max-tokens", str(max_tokens),
+         "--temperature", "0", "--cache-mib", "full", "--no-stream"], capture_output=True, check=True).stdout
+    expected = ref[:-1].decode("utf-8", errors="replace") if ref.endswith(b"\n") else ref.decode("utf-8", errors="replace")
+    srv, port = start_server(bin_dir, model, "full", "--lookup")
+    if srv is None:
+        return False
+    status, data = post(port, {"messages": [{"role": "user", "content": LOOKUP_PROMPT}], "temperature": 0, "max_tokens": max_tokens})
+    got = json.loads(data)["choices"][0]["message"]["content"] if status == 200 else None
+    rc, err = stop_server(srv)
+    m = re.search(r"lookup speculation: (\d+) cycles, (\d+) drafts accepted", err)
+    print(f"reference: {expected!r}\nlookup   : {got!r}\n{m.group(0) if m else 'no lookup speculation line'}")
+    return got == expected and m is not None and int(m.group(2)) > 0 and rc == 0
+
+
 def tools(bin_dir: Path, model: str, cache_mib: str) -> bool:
     """dev59: a two-turn tool round trip. Turn 1 must call get_weather for Rome; turn 2, with the tool result, must
     answer in words and reuse turn 1's state (the tool_calls render back exactly as the model wrote them)."""
@@ -215,6 +237,7 @@ def main() -> int:
     ap.add_argument("--parallel", action="store_true", help="only the dev56 --parallel 2 check (full residency)")
     ap.add_argument("--tools", action="store_true", help="only the dev59 tool-call round trip")
     ap.add_argument("--mtp", help="dev45: run every server with --mtp FILE (needs --cache-mib full); outputs must not change")
+    ap.add_argument("--lookup", action="store_true", help="only the dev70 --lookup check (full residency)")
     args = ap.parse_args()
     bin_dir = Path(args.bin)
     if args.mtp:
@@ -222,6 +245,10 @@ def main() -> int:
     if args.tools:
         ok = tools(bin_dir, args.model, args.cache_mib)
         print(f"SERVER TOOLS CHECK: {'YES' if ok else 'NO'}")
+        return 0 if ok else 1
+    if args.lookup:
+        ok = lookup(bin_dir, args.model, max(args.max_tokens, 96))
+        print(f"SERVER LOOKUP CHECK: {'YES' if ok else 'NO'}")
         return 0 if ok else 1
     if args.parallel:
         ok = parallel(bin_dir, args.model, args.max_tokens)

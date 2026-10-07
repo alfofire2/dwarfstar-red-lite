@@ -132,6 +132,8 @@ if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   # dev56: two sequences in one pass (rl_engine_step_pair) vs each alone, and the --parallel 2 server
   expect_line engine.pair "^PASS$" "$BIN/redlite-engine" pair "$MODEL" --tokens 9707,11,1879,0,785,12884,374,264,1273,13 --cache-mib full --context 64
   expect_line server.parallel_greedy "SERVER PARALLEL CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --parallel
+  # dev70: prompt lookup speculation, greedy identical to plain decoding, drafts accepted
+  expect_line server.lookup_greedy "SERVER LOOKUP CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --lookup
 fi
 
 echo "== batched prefill (dev20) =="

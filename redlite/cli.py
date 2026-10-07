@@ -290,7 +290,7 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     head = _mtp_for(model, cache_mib, args, quiet=True)
     wired = gpu_wired_limit_mib()
     res = native_residency(model)
-    full = res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
+    full = _full_residency(res, cache_mib)
     batch = args.batch
     parallel = getattr(args, "parallel", 1) or 1
     where = f"context {args.context or 4096}" + (f", {parallel} parallel requests" if parallel > 1 else "")
@@ -312,6 +312,11 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     if head:
         print(f"[redlite] MTP speculative decoding with {Path(head).name} (same output as plain decoding; --no-mtp disables)")
     return batch, head
+
+
+def _full_residency(res, cache_mib) -> bool:
+    """the expert cache holds every expert (res = planner.native_residency of the model)"""
+    return res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
 
 
 def _route_bias_env(model, cache_mib, args) -> None:
@@ -414,11 +419,17 @@ def _serve_native(args) -> int:
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _route_bias_env(model, cache_mib, args)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
+    # dev70: prompt lookup speculation when every expert is resident and there is no MTP head (Qwen3-Coder-Next):
+    # +17-25 % decode in coding-agent sessions on the M4 Max, same output
+    from .planner import native_residency
+    lookup = mtp is None and not args.no_lookup and _full_residency(native_residency(model), cache_mib)
+    if lookup:
+        print("[redlite] prompt lookup speculative decoding (same output as plain decoding; --no-lookup disables)")
     try:
         return run_native_server(
             str(model), args.host, args.port, context, cache_mib,
             batch=batch, dry_run=args.dry_run, mtp=mtp, mtp_max_context=native_mtp_max_context(hw.ram_bytes),
-            steer=_steer_args(args), parallel=args.parallel,
+            steer=_steer_args(args), parallel=args.parallel, lookup=lookup,
         )
     except FileNotFoundError:
         _die("Native Red Lite server not built. Run: make native")
@@ -553,6 +564,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "and it fits, otherwise 4096)")
     s.add_argument("--batch", type=int, default=None, help="--native: prompt tokens per batched prefill chunk (default: 2048)")
     s.add_argument("--no-mtp", action="store_true", help="--native: do not use the MTP head for speculative decoding")
+    s.add_argument("--no-lookup", action="store_true",
+                   help="--native: no prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
     s.add_argument("--steer", default=None, help="--native: activation steering vector for the generated tokens")
     s.add_argument("--steer-layers", default=None, help="--native: steered layers A-B (default 16-31)")

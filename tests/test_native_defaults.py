@@ -137,6 +137,15 @@ class NativeServeCliTests(unittest.TestCase):
     def test_serve_native_on_24gb_defaults_to_4gb_and_4096_context(self):
         text = self._run(24)
         self.assertIn("--context 4096 --cache-mib 4096", text)
+        self.assertNotIn("--lookup", text)   # dev70: a bounded cache cannot verify two rows
+
+    def test_serve_native_full_residency_uses_prompt_lookup(self):
+        text = self._run(48)
+        self.assertIn("--lookup", text)
+        self.assertIn("prompt lookup speculative decoding", text)
+
+    def test_serve_native_no_lookup(self):
+        self.assertNotIn("--lookup", self._run(48, "--no-lookup").split("redlite-server", 1)[1])
 
 
 if __name__ == "__main__":
