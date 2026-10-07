@@ -65,6 +65,7 @@ typedef struct {
     int reuse;             /* dev29 prefix reuse enabled (--no-reuse clears it) */
     rl_statecache states;  /* dev43 --state-dir: disk checkpoints when the in-memory state does not apply */
     int speculate;         /* dev45 --mtp with every expert resident: MTP drafts + 2-row verify */
+    int lookup;            /* dev70 --lookup without MTP, every expert resident: drafts from the context (rl_lookup_draft) */
     uint32_t mtp_max_context;   /* dev55: no speculation for answers starting past this position (0 = no limit) */
     int steering;               /* dev55: --steer loaded */
     float steer_base;
@@ -274,7 +275,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
      * dev56: it is used only while the other slot is idle; when a request arrives there, u is stepped and the
      * answer goes on in the plain loop, whose steps pair with the other slot's (two MTP slots alternating were
      * slower than serving them one after the other: 66 vs 71 tok/s). */
-    uint32_t spec_cycles = 0, spec_accepted = 0;
+    uint32_t spec_cycles = 0, spec_accepted = 0, lookup_plain = 0;
 #define SRV_EMIT(tok, fin) do { \
         if (rl_tokenizer_is_eog(c->tokenizer, (tok))) { fin = 1; break; } \
         char piece_[512]; const int32_t n_ = rl_tokenizer_decode(c->tokenizer, (tok), piece_, sizeof(piece_)); \
@@ -284,7 +285,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         if (!ttft_emit(&ts, piece_, (size_t)n_)) { fin = 1; break; } \
         if (generated >= req->max_tokens) { result->finish_length = 1; fin = 1; break; } \
     } while (0)
-    const int spec = c->speculate && c->backend == RL_BACKEND_GPU &&
+    const int spec = (c->speculate || c->lookup) && c->backend == RL_BACKEND_GPU &&
                      (!c->mtp_max_context || start_position <= c->mtp_max_context) && !other_busy(c, k);
     int switched = 0;
     uint32_t u = 0;
@@ -301,10 +302,14 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             eng_lock(c, k);
             const int room = rl_engine_position(c->engine, c->backend) + 2u <= c->info->context;
             uint32_t d = 0, v = 0;
-            int accepted = 0;
-            if (room) {
+            int accepted = 0, have = room;
+            if (room && c->lookup) {   /* dev70: the draft follows the latest earlier occurrence of the context's tail */
+                S->history[S->history_len] = u;   /* capacity context + 1; room keeps history_len <= context - 2 */
+                have = rl_lookup_draft(S->history, S->history_len + 1u, &d);
+            }
+            if (have) {
                 srv_steer(c, generated);
-                ok = rl_engine_mtp_draft(c->engine, u, mtp_pos++, &d, NULL, error, cap) &&
+                ok = (c->lookup || rl_engine_mtp_draft(c->engine, u, mtp_pos++, &d, NULL, error, cap)) &&
                      rl_engine_verify2(c->engine, u, d, S->logits, S->logits1, error, cap);
                 if (ok) {
                     v = rl_sampler_sample(&sampler, S->logits);
@@ -314,7 +319,8 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             }
             eng_unlock(c);
             if (!ok) break;
-            if (!room) {   /* no room for two rows: plain step */
+            if (!have) {   /* no room for two rows, or no lookup draft: plain step */
+                lookup_plain += room;
                 if (!(r = eng_step(c, k, u, S->logits, generated, &st, error, cap))) { ok = 0; break; }
                 S->history[S->history_len++] = u; u = rl_sampler_sample(&sampler, S->logits); SRV_EMIT(u, fin);
                 continue;
@@ -362,8 +368,8 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
             k, (uint32_t)needed - reused, reused, prefill_ms, prefill_ms > 0 ? (needed - reused) * 1000.0 / prefill_ms : 0.0,
             ts.first_ms >= 0.0 ? ts.first_ms - t_request : 0.0,
             generated, gen_ms, generated > 1u ? (generated - 1u) * 1000.0 / gen_ms : 0.0, gpu_routed, paired);
-        if (spec_cycles) fprintf(stderr, "[redlite-server] MTP speculation: %u cycles, %u drafts accepted (%.3f)\n",
-                                 spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
+        if (spec_cycles) fprintf(stderr, "[redlite-server] %s speculation: %u cycles, %u drafts accepted (%.3f), %u plain steps\n",
+                                 c->lookup ? "lookup" : "MTP", spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles, lookup_plain);
     }
     return ok;
 }
@@ -394,6 +400,8 @@ static void usage(FILE *out) {
         "  --mtp FILE          dev45: speculative decoding with a Qwen3-Next MTP block GGUF (needs --cache-mib full;\n"
         "                      output is exactly that of plain decoding)\n"
         "  --mtp-max-context N dev55: no speculation for answers that start past position N (0 = no limit, the default)\n"
+        "  --lookup            dev70: speculative decoding with drafts copied from the context (prompt lookup; needs\n"
+        "                      --cache-mib full, not with --mtp; the output is unchanged)\n"
         "  --steer FILE        dev55: activation steering vector for the generated tokens (see redlite-generate)\n"
         "  --steer-layers A-B  steered layers (default 16-31)\n"
         "  --steer-strength S  steering strength (default 1)\n"
@@ -434,6 +442,7 @@ int main(int argc, char **argv) {
     const char *state_dir = NULL;
     uint32_t state_max_mib = 8192u;
     uint32_t mtp_max_context = 0u, steer_tokens = 0u, steer_first = 16u, steer_last = 31u, parallel = 1u;
+    int lookup = 0;
     const char *steer_path = NULL;
     float steer_base = 1.0f;
 #ifdef __APPLE__
@@ -444,6 +453,7 @@ int main(int argc, char **argv) {
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--cpu") == 0) { use_cpu = 1; continue; }
         if (strcmp(argv[i], "--no-reuse") == 0) { reuse = 0; continue; }
+        if (strcmp(argv[i], "--lookup") == 0) { lookup = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         const char *v = argv[++i];
         uint32_t u = 0;
@@ -521,6 +531,8 @@ int main(int argc, char **argv) {
         double pre_ms = 0.0;
         ctx.speculate = !use_cpu && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms);
         if (cfg.mtp_path && !ctx.speculate) fprintf(stderr, "[redlite-server] --mtp ignored: it needs --cache-mib full (every expert resident)\n");
+        ctx.lookup = lookup && !ctx.speculate && !use_cpu && rl_engine_experts_preloaded(e, &pre_ms);
+        if (lookup && !ctx.lookup) fprintf(stderr, "[redlite-server] --lookup ignored: it needs --cache-mib full and no --mtp\n");
         ctx.nslots = 1;
         if (parallel > 1) {
             if (use_cpu || !rl_engine_experts_preloaded(e, &pre_ms) || !rl_engine_slots_enable(e, error, sizeof(error)))

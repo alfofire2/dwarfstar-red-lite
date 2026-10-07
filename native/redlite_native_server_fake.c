@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--selftest") == 0) {
             char error[512] = {0};
             if (!rl_server_selftest(error, sizeof(error))) { fprintf(stderr, "server selftest: FAIL (%s)\n", error); return 1; }
-            printf("server selftest     : OK (JSON parser, ChatML, UTF-8 hold-back, stop scan, prefix reuse, escaping)\n");
+            printf("server selftest     : OK (JSON parser, ChatML, UTF-8 hold-back, stop scan, prefix reuse, prompt lookup, escaping)\n");
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0) {

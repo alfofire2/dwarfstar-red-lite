@@ -135,6 +135,11 @@ size_t rl_utf8_complete_prefix(const char *buf, size_t len);
  * Recurrent state cannot be rolled back, so any other case needs a reset and a full prefill. */
 uint32_t rl_prefix_reuse(const uint32_t *history, uint32_t history_len, const uint32_t *ids, uint32_t count);
 
+/* dev70 prompt lookup: a draft for the token after seq[0..n) from the context itself. Finds the latest earlier
+ * occurrence of the last g tokens (g = 3, then 2) and returns 1 with *draft = the token that followed it; 0 when
+ * there is none. Exact speculation verifies the draft, so a wrong one costs time, never output. */
+int rl_lookup_draft(const uint32_t *seq, uint32_t n, uint32_t *draft);
+
 /* Stop-sequence scan of not-yet-sent text. Returns 1 when a stop sequence occurs in buf:
  * *emit_len is the offset of the earliest occurrence (the text before it is sent, the rest
  * dropped). Returns 0 otherwise: *emit_len = len minus the longest suffix of buf that is a
