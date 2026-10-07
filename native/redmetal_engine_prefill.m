@@ -27,6 +27,7 @@
 #include "redlite_native_iq3.h"
 #include "redlite_native_router_exec.h"
 #include "redmetal_topk.h"
+#include "redlite_native_tables.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1483,4 +1484,92 @@ int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char 
         printf("attn_fa_b2: %u tokens at position %u: min %.2f ms, median %.2f ms (10 warm runs)\n", B, position0, ms[2], (ms[6] + ms[7]) / 2.0);
     }
     return 1;
+}
+
+/* dev72 (dev only): the batched routed-expert kernels (redmetal_topk_gateup_mm / down_mm / sum) of layer `layer` with no
+ * model buffer on the GPU: `e` is a CPU-only engine (GGUF and expert map), the layer's expert tensors are copied into
+ * three buffers of their own, the pool is a one-slot pool used for its pipelines. B tokens x top_k uniformly random
+ * experts. RL_GPU_CAPTURE=FILE captures the third run: a trace small enough for Xcode's full shader profiler. */
+int rl_metal_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, uint32_t B, char *error, size_t cap) {
+    const rl_engine_info *in = &e->info;
+    const uint32_t E = in->n_expert, topk = in->top_k, hidden = in->hidden, ffn = e->gguf.n_ff_exp;
+    if (layer >= in->n_layer) { set_error(error, cap, "layer out of range"); return 0; }
+    rl_expert_layout first, second, last;
+    if (!rl_native_expert_layout(&e->expert_map, layer, 0u, &first, error, cap) || !rl_native_expert_layout(&e->expert_map, layer, 1u, &second, error, cap) ||
+        !rl_native_expert_layout(&e->expert_map, layer, E - 1u, &last, error, cap)) return 0;
+    if ((first.ggml_type != 17u && first.ggml_type != 29u) || first.down_type != first.ggml_type) { set_error(error, cap, "layer experts are not IQ2_XS / IQ1_M"); return 0; }
+    rl_native_quant_tables tables;
+    if (!rl_native_quant_tables_init(&tables, error, cap)) return 0;
+    redmetal_topk_pool_t pool = redmetal_topk_pool_create(model_path, e->expert_map.max_expert_triplet_bytes, e->expert_map.max_expert_triplet_bytes, 1u,
+                                                          tables.iq2_xs, RL_IQ2_XS_GRID_COUNT, tables.iq1_m, RL_IQ1_M_GRID_COUNT);
+    rl_native_quant_tables_free(&tables);
+    if (!pool) { snprintf(error, cap, "pool: %s", redmetal_topk_last_error()); return 0; }
+    int ok = 0;
+    const uint32_t P = B * topk;
+    uint32_t *ids = (uint32_t *)malloc((size_t)P * 4u), *pair_token = (uint32_t *)malloc((size_t)P * 4u), *tok_pair = (uint32_t *)malloc((size_t)P * 4u);
+    uint32_t *uid = (uint32_t *)malloc((size_t)E * 4u), *expert_start = (uint32_t *)calloc(E + 1u, 4u), *fill = (uint32_t *)malloc((size_t)E * 4u);
+    int32_t *umap = (int32_t *)malloc((size_t)E * 4u);
+    float *pair_weight = (float *)malloc((size_t)P * 4u);
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        id<MTLCommandQueue> queue = [dev newCommandQueue];
+        const uint8_t *base = (const uint8_t *)e->gguf.map;
+        id<MTLBuffer> bg = [dev newBufferWithBytes:base + first.gate_offset length:(NSUInteger)(last.gate_offset + last.gate_bytes - first.gate_offset) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bu = [dev newBufferWithBytes:base + first.up_offset length:(NSUInteger)(last.up_offset + last.up_bytes - first.up_offset) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bd = [dev newBufferWithBytes:base + first.down_offset length:(NSUInteger)(last.down_offset + last.down_bytes - first.down_offset) options:MTLResourceStorageModeShared];
+        srand(72);
+        id<MTLBuffer> xin = rnd_buf(dev, (size_t)B * hidden);
+        id<MTLBuffer> xout = [dev newBufferWithLength:(size_t)B * hidden * 4u options:MTLResourceStorageModeShared];
+        if (!queue || !bg || !bu || !bd || !xin || !xout || !ids || !pair_token || !tok_pair || !uid || !expert_start || !fill || !umap || !pair_weight) {
+            set_error(error, cap, "bench allocation failed"); goto done;
+        }
+        for (uint32_t t = 0; t < B; ++t)
+            for (uint32_t k = 0; k < topk; ++k) {
+                uint32_t x, dup;
+                do { x = (uint32_t)rand() % E; dup = 0; for (uint32_t j = 0; j < k; ++j) dup |= ids[t * topk + j] == x; } while (dup);
+                ids[t * topk + k] = x;
+            }
+        for (uint32_t x = 0; x < E; ++x) umap[x] = -1;
+        uint32_t U = 0;
+        for (uint32_t i = 0; i < P; ++i) if (umap[ids[i]] < 0) { umap[ids[i]] = (int32_t)U; uid[U++] = ids[i]; }
+        for (uint32_t i = 0; i < P; ++i) expert_start[umap[ids[i]] + 1]++;
+        for (uint32_t u = 0; u < U; ++u) expert_start[u + 1u] += expert_start[u];
+        for (uint32_t u = 0; u < U; ++u) fill[u] = expert_start[u];
+        for (uint32_t t = 0; t < B; ++t)
+            for (uint32_t k = 0; k < topk; ++k) {
+                const uint32_t pidx = fill[umap[ids[t * topk + k]]]++;
+                pair_token[pidx] = t; pair_weight[pidx] = 1.0f / (float)topk; tok_pair[t * topk + k] = pidx;
+            }
+        const char *cap_path = getenv("RL_GPU_CAPTURE");
+        int capturing = 0;
+        double ms[12];
+        for (int rep = 0; rep < 12; ++rep) {
+            if (rep == 2 && cap_path) {
+                MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+                d.captureObject = queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+                d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+                NSError *ce = nil;
+                capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+                if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
+            }
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            if (!redmetal_topk_pool_encode_mapped(pool, (__bridge void *)cb, (__bridge void *)bg, (uint64_t)bg.gpuAddress, (__bridge void *)bu, (uint64_t)bu.gpuAddress,
+                    (__bridge void *)bd, (uint64_t)bd.gpuAddress, second.gate_offset - first.gate_offset, second.up_offset - first.up_offset,
+                    second.down_offset - first.down_offset, uid, U, first.ggml_type, hidden, ffn, 0u, B, topk, P, pair_token, pair_weight,
+                    expert_start, tok_pair, (__bridge void *)xin, 0u, (__bridge void *)xout, 0u)) {
+                snprintf(error, cap, "expert encode failed: %s", redmetal_topk_last_error()); goto done;
+            }
+            [cb commit]; [cb waitUntilCompleted];
+            ms[rep] = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); capturing = 0; }
+        }
+        for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
+        printf("routed experts, layer %u (%s), %u tokens, %u experts, %u pairs: min %.2f ms, median %.2f ms (10 warm runs)\n", layer,
+               first.ggml_type == 17u ? "IQ2_XS" : "IQ1_M", B, U, P, ms[2], (ms[6] + ms[7]) / 2.0);
+        ok = 1;
+    }
+done:
+    redmetal_topk_pool_destroy(pool);
+    free(ids); free(pair_token); free(tok_pair); free(uid); free(expert_start); free(fill); free(umap); free(pair_weight);
+    return ok;
 }

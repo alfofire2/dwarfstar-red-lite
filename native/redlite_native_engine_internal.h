@@ -96,6 +96,7 @@ int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted
 int rl_metal_engine_verify_available(const rl_metal_engine *m);   /* dev72 */
 int rl_metal_prefill_kernel_bench(rl_engine *e, rl_metal_engine *m, uint32_t B, uint32_t position0, uint32_t layer, char *error, size_t cap);   /* dev72 */
 int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char *error, size_t cap);   /* dev72 */
+int rl_metal_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, uint32_t B, char *error, size_t cap);   /* dev72 */
 int rl_metal_engine_slots_enable(rl_engine *e, rl_metal_engine *m, char *error, size_t cap);   /* dev56 */
 void rl_metal_engine_swap_slot(rl_metal_engine *m);
 int rl_metal_engine_step_pair(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,

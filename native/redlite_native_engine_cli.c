@@ -317,6 +317,17 @@ int main(int argc, char **argv) {
 
     if (!token_count) { fprintf(stderr, "--tokens is required\n"); return 2; }
 
+    if (strcmp(cmd, "prefill-expert-bench") == 0) {
+        /* dev72: the routed-expert kernels of layer --repeat - 1 with no model buffer on the GPU (CPU-only engine) */
+        cfg.enable_cpu = 1; cfg.enable_gpu = 0;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const int ok = rl_metal_expert_bench_standalone(e, model, repeat > 1u ? repeat - 1u : 0u, batch ? batch : 512u, error, sizeof(error));
+        if (!ok) fprintf(stderr, "prefill-expert-bench: %s\n", error);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
+
     if (strcmp(cmd, "prefill-kernel-bench") == 0) {
         /* dev72: --batch tokens at --start-position, routed experts of layer --repeat - 1 (default layer 0) */
         cfg.enable_cpu = 0; cfg.enable_gpu = 1;
