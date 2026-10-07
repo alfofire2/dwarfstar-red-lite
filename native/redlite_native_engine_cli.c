@@ -13,6 +13,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_engine_internal.h"
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_iq2_xxs.h"
 #include "redlite_native_tokenizer.h"
@@ -152,6 +153,13 @@ static void print_info(const rl_engine_info *in) {
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
 #ifdef __APPLE__
+    if (argc >= 2 && strcmp(argv[1], "prefill-attn-bench") == 0) {
+        /* dev72: attn_fa_b2 with no model loaded: prefill-attn-bench [TOKENS [POSITION]] (default 512 at 7680) */
+        char err[256] = {0};
+        const uint32_t b = argc > 2 ? (uint32_t)atoi(argv[2]) : 512u, p0 = argc > 3 ? (uint32_t)atoi(argv[3]) : 7680u;
+        if (!rl_metal_prefill_attn_bench_standalone(b, p0, err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "kernel-bench") == 0) {
         char report[4096] = {0}, err[512] = {0};
         if (!rl_metal_kernel_bench(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel bench failed: %s\n", err); return 1; }
@@ -308,6 +316,17 @@ int main(int argc, char **argv) {
     }
 
     if (!token_count) { fprintf(stderr, "--tokens is required\n"); return 2; }
+
+    if (strcmp(cmd, "prefill-kernel-bench") == 0) {
+        /* dev72: --batch tokens at --start-position, routed experts of layer --repeat - 1 (default layer 0) */
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const int ok = rl_engine_prefill_kernel_bench(e, batch ? batch : 512u, start_position, repeat > 1u ? repeat - 1u : 0u, error, sizeof(error));
+        if (!ok) fprintf(stderr, "prefill-kernel-bench: %s\n", error);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
 
     if (strcmp(cmd, "verify-check") == 0) {
         /* dev72: rl_engine_verify2 of the last two --tokens against plain steps, on the GPU backend (full residency or a
