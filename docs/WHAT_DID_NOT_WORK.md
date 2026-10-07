@@ -186,6 +186,11 @@ them.
   22.4 s against 17.0 s, and 35 s once the four P tiles were held in registers to load each V tile once. The premise
   was wrong: `attn_fa_b2` already runs about 6 TFLOPS at 32K, so it is limited by the matrix units, not by key/value
   reads, and the larger per-thread state only cost occupancy. Not kept.
+- **Two agent suites on one server (dev67, a trap).** A remote start that seemed to fail had started; the second
+  start ran a second copy of the hard suite against the same `redlite-server`. The two pi sessions alternated, so no
+  request extended the held prompt: 0 % prefix reuse instead of 93 %, every turn re-read 15K tokens (80 s on the
+  M4 Pro), 16 of 18 tasks hit the time limit, 1 / 18 passed. Each result line appeared twice in the log. The run was
+  discarded and repeated alone (11 / 18). Check `pgrep -f` for a single suite, and the server log's `cached` counts.
 - **Decode attention variants that did not add to the kept change (dev66).** In `attn_gqa_split_g`, two threads per
   key row with interleaved reads in the score pass (all 256 threads busy instead of 128): −2 to −4 % alone, nothing
   once the value pass had four loads in flight, and it changes the summation order, so it was dropped. Eight value
