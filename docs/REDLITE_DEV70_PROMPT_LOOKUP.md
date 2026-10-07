@@ -40,24 +40,30 @@ identical with and without lookup, on both Macs.
 | 300 words of prose | M4 Max | 79.2 / 79.8 tok/s | 80.4 / 81.2 tok/s | 15 of 36; 384 plain steps |
 | the same | M4 Pro | 44.7 / 44.5 tok/s | 44.9 / 44.7 tok/s | the same |
 
-**Coding agent, M4 Max** (the dev65 hard suite with pi, CF2, temperature 0.3, three runs; 0.8.2 without lookup
-against this branch with lookup; decode speed from the server logs, by context at the start of each answer):
+**Coding agent, M4 Max** (the dev65 hard suite with pi, CF2, temperature 0.3; 0.8.2 without lookup against two
+three-run sets with lookup; decode speed from the server logs, by context at the start of each answer):
 
-| Context of the request | Without lookup | With lookup | Drafts accepted |
-|---|---:|---:|---:|
-| 0–8K | 76.8 tok/s | 96.1 tok/s (+25 %) | 78 % |
-| 8–16K | 72.2 tok/s | 90.0 tok/s (+25 %) | 79 % |
-| 16–32K | 61.5 tok/s | 72.2 tok/s (+17 %) | 76 % |
-| 32K and more | 53.9 tok/s | 65.5 tok/s (+22 %) | 73 % |
+| Context of the request | Without lookup | With lookup, set 1 | With lookup, set 2 | Drafts accepted |
+|---|---:|---:|---:|---:|
+| 0–8K | 76.8 tok/s | 96.1 (+25 %) | 91.6 (+19 %) | 77–78 % |
+| 8–16K | 72.2 tok/s | 90.0 (+25 %) | 84.6 (+17 %) | 78–79 % |
+| 16–32K | 61.5 tok/s | 72.2 (+17 %) | 70.5 (+15 %) | 76 % |
+| 32K and more | 53.9 tok/s | 65.5 (+22 %) | 66.1 (+23 %) | 73–85 % |
 
-- **Tasks:** 18 / 18 with lookup (no task at the time limit), against 16 / 18 without. Lookup does not change what
-  the model writes, so this difference is the run-to-run spread of a sampled agent plus one fewer timeout.
-- **Time for the 18 tasks:** 37 minutes against 52.
+- **Decode is 15–25 % faster** at every context length, in both sets. This is the robust result.
+- **Tasks and total time vary with what the agent does,** more than with lookup:
+  - with lookup: 18 / 18 in 37 minutes (set 1) and 15 / 18 in 50 minutes (set 2, 643 requests against 385);
+  - without lookup: 16 / 18 in 52 minutes.
+  - Lookup does not change what the model writes, so these differences are the spread of a sampled agent.
 - The without-lookup run had a 128K window and this one 64K. That does not change decode speed at a given position,
   and both windows pass the same tasks (dev67).
 
 **Coding agent, M4 Pro 24 GiB** (CF2, every expert resident, 32K window, the same build with and without lookup):
 M4PRO_AGENT_RESULT
+
+**The 3-bit Coder with lookup** (Bartowski's IQ3_XXS, every expert resident, 64K window, M4 Max, three runs): 15 / 18
+in 49 minutes, decode 13–14 % slower than CF2 with lookup at the same context (82.6 against 96.1 tok/s at 0–8K, 57.6
+against 65.5 above 32K). It fits a 48 GiB Mac at 64K, but this suite shows no gain over CF2.
 
 ## Smaller findings
 
@@ -70,9 +76,22 @@ M4PRO_AGENT_RESULT
 - **The verify reads the attention cache twice** (two rows). Lookup still gained 22 % above 32K positions on the M4
   Max, where attention is about a quarter of a token's time.
 
+## dev71: prompt lookup in `redlite chat`, and several drafts per verify simulated
+
+- **`redlite-generate --lookup`,** one-shot and interactive. The chat keeps the conversation's ids for the lookup.
+  `redlite chat` passes it in the same cases as `redlite serve`. `rl_lookup_draft` is now a `static inline` in
+  `redlite_native_sampler.h`, shared by both. Greedy, CF2, M4 Max, identical output:
+  - one-shot file rewrite: 82.0 → 111.5 tok/s;
+  - two-turn chat: 79.4 → 81.4 tok/s on the first turn (new code), 79.1 → 110.0 on the second (the function rewritten).
+- **regress:** `generate.lookup_greedy`.
+- **Several drafted tokens per verify:** not built. A simulation on 643 real agent requests gives at most
+  +5–14 % on decode (WHAT_DID_NOT_WORK).
+- **An 8-simdgroup `attn_fa_b2`:** bit-identical but slower at 32K (18.5 / 24.3 s against 16.5 / 17.3 s of
+  attention), not kept.
+
 ## Scope boundary
 
-- `redlite-server` only. `redlite-generate` (and so `redlite chat`) keeps MTP or plain decoding.
+- **`redlite-generate` / `redlite chat`** got lookup in dev71 (below).
 - One draft token per pass, the 2-row verify of dev45. Edits that copy long runs would gain more from checking
   several drafted tokens at once; not attempted.
 - With a bounded expert cache (24 GiB Macs at the default GPU limit, or 64K on the M4 Pro), the verify cannot run:

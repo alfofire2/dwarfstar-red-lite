@@ -316,7 +316,7 @@ def _gpu_tuning(model, cache_mib, args, context: int):
 
 def _lookup_for(model, cache_mib, mtp, args) -> bool:
     """dev70: prompt lookup speculation when every expert is resident and there is no MTP head (Qwen3-Coder-Next):
-    +17-25 % decode in coding-agent sessions on the M4 Max, same output; --no-lookup disables"""
+    +15-25 % decode in coding-agent sessions on the M4 Max, same output; --no-lookup disables"""
     from .planner import native_residency
     lookup = mtp is None and not getattr(args, "no_lookup", False) and _full_residency(native_residency(model), cache_mib)
     if lookup:

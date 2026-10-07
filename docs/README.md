@@ -22,7 +22,7 @@ search (`scripts/dev/build_site.py`).
 
 | Milestone | Document |
 |---|---|
-| dev70 prompt lookup speculative decoding for coding agents (+17–25 % decode, same output), half-precision micro-benchmark | [REDLITE_DEV70_PROMPT_LOOKUP.md](REDLITE_DEV70_PROMPT_LOOKUP.md) |
+| dev70 prompt lookup speculative decoding for coding agents (+15–25 % decode, same output), half-precision micro-benchmark | [REDLITE_DEV70_PROMPT_LOOKUP.md](REDLITE_DEV70_PROMPT_LOOKUP.md) |
 | dev67 decode attention: whole-line key reads and a parallel merge (+4–13 % decode at 64K–256K), RoPE precision probe | [REDLITE_DEV67_DECODE_ATTENTION_MERGE.md](REDLITE_DEV67_DECODE_ATTENTION_MERGE.md) |
 | dev66 faster decode attention at long contexts (+16–35 % decode at 62K–256K) | [REDLITE_DEV66_DECODE_ATTENTION.md](REDLITE_DEV66_DECODE_ATTENTION.md) |
 | dev65 long contexts to 262K (needles, speed, llama.cpp agreement), a harder agent suite, the 64K agent window | [REDLITE_DEV65_LONG_CONTEXT_AGENTS.md](REDLITE_DEV65_LONG_CONTEXT_AGENTS.md) |

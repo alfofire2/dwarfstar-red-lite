@@ -328,8 +328,9 @@ SSD; the pass rate stays at 12 / 18, with more tasks at the time limit.
 what it writes from the conversation: files it rewrites, names, paths. `redlite serve` now drafts the next token
 from the context (the token that followed the latest earlier occurrence of the last three) and checks it exactly in
 the same 2-row pass as MTP. **The answer does not change.** In the hard suite on the M4 Max, 73–79 % of the drafts were
-accepted and decode was 17–25 % faster at every context length; the 18 tasks took 37 minutes instead of 52. Rewriting
-a file: 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. It needs every expert resident.
+accepted and decode was 15–25 % faster at every context length, in two separate sets of runs (the time for the
+whole suite varied more with what the agent did: 37 and 50 minutes with lookup, 52 without). Rewriting a file:
+80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. `redlite chat` does it too. It needs every expert resident.
 
 <p align="center"><img src="img/agent_lookup.svg" alt="Decode speed in agent sessions with and without prompt lookup, by context"></p>
 

@@ -8,13 +8,14 @@
   - The output does not change, at any temperature.
   - On by default with every expert resident and no MTP head, which is Qwen3-Coder-Next's case. `--no-lookup`
     turns it off.
-- **Coding-agent sessions on the M4 Max (CF2):**
-  - decode 17–25 % faster at every context length, with 73–79 % of the drafts accepted;
-  - the hard suite took 37 minutes instead of 52.
+- **Coding-agent sessions on the M4 Max (CF2):** decode 15–25 % faster at every context length in two sets of
+  runs, with 73–85 % of the drafts accepted.
+- **`redlite chat` does it too** (`redlite-generate --lookup`): a turn that rewrites a function went from 79 to
+  110 tok/s.
 - **Rewriting a file:** 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro 24 GiB. Prose is unchanged, because few
   drafts are proposed there.
 - Validation:
-  - `regress_m4.sh` 56 / 0 / 0, with the new `server.lookup_greedy`;
+  - `regress_m4.sh` with the new `server.lookup_greedy` and `generate.lookup_greedy`;
   - `quick_parity.sh --long` 5 / 5;
   - local CI.
 
@@ -27,6 +28,12 @@
     - `server_check.py --lookup`;
     - `scripts/dev/server_log_decode.py`.
   - **Finding:** a half-precision micro-benchmark shows half and float matrix products at the same rate on the M4 Max.
+- dev71: **prompt lookup in `redlite-generate`/`redlite chat`, and three things not kept.**
+  - **Added:** `RL_SERVER_TRACE` and `scripts/dev/lookup_sim.py`.
+  - **Not built:** several drafts per verify, which simulates to at most +5–14 %.
+  - **Not kept:**
+    - an 8-simdgroup prefill attention kernel (slower);
+    - the 3-bit Coder with lookup (15 / 18, decode 13 % slower than CF2).
 
 ## 0.8.2 — 2026-10-07
 

@@ -201,13 +201,19 @@ them.
   Byte-identical, but slower at 32K: attention 19.9 / 18.7 s against 16.5 / 17.5 s (alternated, on AC). Occupancy is not
   the limit either; Q from threadgroup memory is cheaper than from device memory. Not kept.
 
+- **Prefill attention on 8 simdgroups (dev71).** `attn_fa_b2` with 256 threads: each simdgroup one 8×8 S tile, two
+  softmax rows and 32 of the 256 output dimensions, so half the accumulators per thread. Bit-identical, but the
+  attention of a 32K prefill took 18.5 / 24.3 s against 16.5 / 17.3 s (alternated, CF2, M4 Max). Not kept.
+- **The 3-bit Coder for agents on 48 GiB (dev71).** Bartowski's IQ3_XXS with prompt lookup at 64K: 15 / 18 tasks in 49
+  minutes, decode 13–14 % slower than CF2 at the same context. CF2 with lookup passed 18 and 15 / 18 in two sets, so
+  this suite sees no quality gain for the larger file.
 - **Several drafted tokens per verify, simulated first (dev71): not built.** A K-row verify would mean K-row versions
   of every decode kernel (bit-identical to one row), the DeltaNet state saved after each row, and the experts of
   every row. It was simulated on real traffic before any of that: 643 server requests of the hard agent suite
   (122K answer tokens, `RL_SERVER_TRACE`, `scripts/dev/lookup_sim.py`).
   - **Cost model:** a pass of R rows costs 1 + c (R − 1) plain steps; the 2-row verify measured c = 0.35.
   - **The model matches the real run:** with one draft (K = 1, what 0.9.0 does) it gives 1.30 tokens per unit of
-    cost, in line with the +17–25 % measured.
+    cost, in line with the +15–25 % measured.
   - **Fixed K:** 1.40× at K = 2 and 1.43× at K = 4, then 1.28× at K = 8, because a wrong draft mid-chain wastes the
     rows after it.
   - **Adaptive K** (double while every draft is accepted, back to 1 on a miss): 1.49× at up to 8 drafts against 1.30×.

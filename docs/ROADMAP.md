@@ -30,15 +30,13 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   experts 19.6 s.
 - **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts (RoPE precision is
   ruled out, dev67).
-- **Several drafted tokens per verify:** prompt lookup checks one draft per pass (dev70); file rewrites accept long
-  runs and would gain more from checking 4–8 at once.
-- **Prompt lookup in `redlite chat`** (`redlite-generate`), not only in the server.
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
 
 ## Done in 0.9.0 (dev70)
 
-- Prompt lookup speculative decoding in `redlite serve` for Qwen3-Coder-Next: +17–25 % decode in agent sessions,
-  the same output.
+- Prompt lookup speculative decoding in `redlite serve` and `redlite chat` for Qwen3-Coder-Next: +15–25 % decode in
+  agent sessions, the same output.
+- Simulated before building: several drafts per verify would add at most +5–14 % (not built).
 
 ## Done in 0.8.2 (dev67)
 
