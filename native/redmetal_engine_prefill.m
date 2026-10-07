@@ -719,6 +719,9 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
         *pipes[i].slot = make_pipe(m->dev, pf->lib, pipes[i].name, error, ecap);
         if (!*pipes[i].slot) { rl_metal_prefill_destroy(pf); return NULL; }
+        if (getenv("RL_PIPELINE_STATS"))   /* dev72: register pressure shows as fewer threads per threadgroup than 1024 */
+            fprintf(stderr, "pipeline %-18s max threads/threadgroup %4lu  static threadgroup memory %5lu bytes\n", pipes[i].name.UTF8String,
+                    (unsigned long)(*pipes[i].slot).maxTotalThreadsPerThreadgroup, (unsigned long)(*pipes[i].slot).staticThreadgroupMemoryLength);
     }
     const size_t B = pf->cap_pad;
     const size_t hb = (size_t)in->hidden * sizeof(float) * B;
@@ -1311,7 +1314,22 @@ int rl_metal_engine_prefill(rl_engine *e, rl_metal_engine *m, const uint32_t *to
     for (uint32_t done = 0; done < count;) {
         const uint32_t B = count - done < batch ? count - done : batch;
         const int last = done + B == count;
-        if (!prefill_chunk(e, m, m->pf, tokens + done, B, last && logits != NULL, last ? logits : NULL, stats, error, cap)) return 0;
+        /* dev72 (dev only): RL_GPU_CAPTURE=FILE.gputrace records the last chunk as a Metal GPU trace for Xcode
+         * (per-kernel limiters, occupancy, registers); the process needs MTL_CAPTURE_ENABLED=1 */
+        const char *cap_path = last ? getenv("RL_GPU_CAPTURE") : NULL;
+        int capturing = 0;
+        if (cap_path) {
+            MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+            d.captureObject = m->dev;
+            d.destination = MTLCaptureDestinationGPUTraceDocument;
+            d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+            NSError *ce = nil;
+            capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+            if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
+        }
+        const int chunk_ok = prefill_chunk(e, m, m->pf, tokens + done, B, last && logits != NULL, last ? logits : NULL, stats, error, cap);
+        if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); }
+        if (!chunk_ok) return 0;
         done += B;
     }
     if (m->pf->profile) {

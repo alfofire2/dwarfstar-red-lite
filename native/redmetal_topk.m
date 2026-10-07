@@ -772,6 +772,10 @@ static NSString * const kTopKSource = @
     if (!_sumBPipeline) { topk_set_error("failed to create batched top-k sum pipeline: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
     _gateupMMPipeline = [_device newComputePipelineStateWithFunction:gateupMM error:&pipelineError];
     _downMMPipeline = [_device newComputePipelineStateWithFunction:downMM error:&pipelineError];
+    if (getenv("RL_PIPELINE_STATS") && _gateupMMPipeline && _downMMPipeline)
+        fprintf(stderr, "pipeline gateup_mm / down_mm  max threads/threadgroup %lu / %lu  static threadgroup memory %lu / %lu bytes\n",
+                (unsigned long)_gateupMMPipeline.maxTotalThreadsPerThreadgroup, (unsigned long)_downMMPipeline.maxTotalThreadsPerThreadgroup,
+                (unsigned long)_gateupMMPipeline.staticThreadgroupMemoryLength, (unsigned long)_downMMPipeline.staticThreadgroupMemoryLength);
     if (!_gateupMMPipeline || !_downMMPipeline) { topk_set_error("failed to create batched top-k matrix pipelines: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error"); return nil; }
     { const char *mm = getenv("RL_PREFILL_EXPERT_MM"); _useMM = !mm || atoi(mm) != 0; }
     _iq2Grid = [_device newBufferWithBytes:iq2Grid length:iq2GridCount options:MTLResourceStorageModeShared];
