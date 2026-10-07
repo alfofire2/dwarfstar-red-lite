@@ -341,6 +341,20 @@ class RedLiteF2PreferenceTests(unittest.TestCase):
         self.assertEqual(resolve_variant("48gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
         self.assertEqual(resolve_variant("48gb-g2").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
 
+    def test_aliases_case_insensitive(self):
+        from redlite.model_catalog import resolve_variant
+        # dev72: variant names should be case-insensitive
+        self.assertEqual(resolve_variant("CODER").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+        self.assertEqual(resolve_variant("24GB").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
+        self.assertEqual(resolve_variant("MTP").filename, "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf")
+        self.assertEqual(resolve_variant("CF2").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+
+    def test_coder_24gb_alias(self):
+        from redlite.model_catalog import resolve_variant
+        # dev72: coder-24gb is an alias for coder (same variant)
+        self.assertEqual(resolve_variant("coder-24gb").key, resolve_variant("coder").key)
+        self.assertEqual(resolve_variant("CODER-24GB").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+
     def test_g2_preferred_on_48gb_when_present(self):
         import tempfile
         from pathlib import Path

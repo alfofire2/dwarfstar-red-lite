@@ -16,7 +16,7 @@
 - **Rewriting a file:** 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro 24 GiB. Prose is unchanged, because few
   drafts are proposed there.
 - Validation:
-  - `regress_m4.sh` with the new `server.lookup_greedy` and `generate.lookup_greedy`;
+  - `regress_m4.sh` 57 / 0 / 0, with the new `server.lookup_greedy` and `generate.lookup_greedy`;
   - `quick_parity.sh --long` 5 / 5;
   - local CI.
 
