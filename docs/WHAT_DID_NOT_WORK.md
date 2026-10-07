@@ -207,6 +207,13 @@ them.
 - **The 3-bit Coder for agents on 48 GiB (dev71).** Bartowski's IQ3_XXS with prompt lookup at 64K: 15 / 18 tasks in 49
   minutes, decode 13–14 % slower than CF2 at the same context. CF2 with lookup passed 18 and 15 / 18 in two sets, so
   this suite sees no quality gain for the larger file.
+- **Expert-kernel tuning from the Xcode profile (dev73).** The profile of `redmetal_topk_gateup_mm` showed 178
+  registers and 21 % occupancy, bound by instruction throughput (72 %), with 34.5 % of the instructions integer
+  (weight decoding).
+  - **One accumulator per product** (instead of four partial sums combined exactly): +1 %, within spread.
+  - **The same with 32-pair tiles:** no spill any more, but 4 % slower, because partial tiles waste matrix work.
+
+  Registers and tiles are not what limits these kernels; the instruction count per decoded weight is. Not kept.
 - **Several drafted tokens per verify, simulated first (dev71): not built.** A K-row verify would mean K-row versions
   of every decode kernel (bit-identical to one row), the DeltaNet state saved after each row, and the experts of
   every row. It was simulated on real traffic before any of that: 643 server requests of the hard agent suite

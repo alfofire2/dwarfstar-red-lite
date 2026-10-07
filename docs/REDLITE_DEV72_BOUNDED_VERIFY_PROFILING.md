@@ -106,7 +106,31 @@ every live buffer of the device.
   14 %.
 - **One attempt:** limiting the unrolling of the score loop changed nothing (8.6 ms). Not kept.
 
-The routed-expert kernels are profiled the same way. That and the kernel redesign are the next milestone.
+**Second profile: the routed experts** (`prefill-expert-bench`, layer 0 of CF2 (IQ1_M), 2,048 tokens, 512 experts,
+20,480 pairs, 22.4 ms):
+
+| Kernel | Share of the time | Registers |
+|---|---:|---:|
+| `redmetal_topk_gateup_mm` | 43 % | 178 |
+| `redmetal_topk_down_mm` | 30 % | 118 |
+| `redmetal_topk_sum_b` | 2 % | 18 |
+
+For `gateup_mm`:
+- instruction throughput limiter 72 %, F32 limiter 70 % (utilization 55 %);
+- occupancy 21 % (target 28 %);
+- instructions: 65.5 % float, **34.5 % integer**, which is the IQ1_M / IQ2_XS bit decoding.
+
+Two changes guided by this, alternated against the base (median of 10 runs each, three pairs). Neither was kept (see
+WHAT_DID_NOT_WORK):
+- **One accumulator per product** instead of four partial sums combined by identity products (fewer registers,
+  three fewer matrix products per tile): 22.25 ms against 22.42 ms, about 1 %, within run-to-run spread.
+- **The same plus 32-pair tiles**, which spilled in dev69 with four partial sums and fit now: 23.3 ms against
+  22.35 ms, 4 % slower. Experts get about 40 pairs per 2,048-token chunk, and the partial second tile wastes its
+  matrix work.
+
+What the two profiles say: both hot prefill kernels are bound by instruction throughput on the float32 units, not by
+memory, registers or tile shape. A third of the expert kernel's instructions decode the 1–2-bit weights. A real gain
+needs fewer instructions per weight, for example a cheaper decode. That is a redesign, not a tuning pass.
 
 ## Scope boundary
 
