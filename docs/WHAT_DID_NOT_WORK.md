@@ -214,6 +214,10 @@ them.
   - **The same with 32-pair tiles:** no spill any more, but 4 % slower, because partial tiles waste matrix work.
 
   Registers and tiles are not what limits these kernels; the instruction count per decoded weight is. Not kept.
+- **The IQ1_M / IQ2_XS block scale decoded once per block (dev73).** Each thread of the expert matrix kernels rebuilds
+  the block scale (four 16-bit loads and bit shuffling for IQ1_M) for every group of 8 weights, 8 times in a row per
+  block. Caching it per block was bit-identical, but 3 % slower (23.2 against 22.5 ms on an IQ1_M layer, three
+  alternated pairs): the added branches cost more than the decode they saved. Not kept.
 - **Several drafted tokens per verify, simulated first (dev71): not built.** A K-row verify would mean K-row versions
   of every decode kernel (bit-identical to one row), the DeltaNet state saved after each row, and the experts of
   every row. It was simulated on real traffic before any of that: 643 server requests of the hard agent suite
