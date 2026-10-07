@@ -132,6 +132,7 @@ ALIASES = {
     "48gb-g2": "redlite_g2",
     "g2": "redlite_g2",
     "coder": "redlite_coder_cf2",
+    "coder-24gb": "redlite_coder_cf2",
     "cf2": "redlite_coder_cf2",
     "bartowski-coder": "coder_iq2_xxs",
     "coder-48gb": "coder_iq3_xxs",

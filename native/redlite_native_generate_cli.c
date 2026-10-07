@@ -88,6 +88,8 @@ static void usage(FILE *out) {
         "  --context N         KV cache positions (default 4096)\n"
         "  --cache-mib N|full  routed-expert cache budget in MiB (default 4096); full = every expert of the file,\n"        "                      computed from its expert payload (redlite-engine info prints it)\n"
 "  --mtp-max-context N dev55: no speculation for answers that start past position N (0 = no limit, the default)\n"
+"  --lookup            dev71: prompt lookup speculation, drafts copied from the context (no MTP block, every expert\n"
+"                      resident; the output is unchanged)\n"
 "  --steer FILE        dev52: activation steering vector (hidden float32 values, scripts/dev/steer_extract.py)\n"
 "  --steer-layers A-B  layers whose input is steered (default 16-31)\n"
 "  --steer-strength S  x += S * vector at those layers for every generated token (default 1; /steer S in chat)\n"
@@ -167,6 +169,7 @@ static int parse_f32(const char *s, float *out) {
  * with --steer-tokens N only the first N tokens of each answer are steered. */
 static const char *g_steer_path = NULL;
 static uint32_t g_mtp_max_context = 0u;   /* dev55: no speculation for answers starting past this position (0 = no limit) */
+static int g_lookup = 0;   /* dev71 --lookup: prompt lookup drafts (rl_lookup_draft) when there is no MTP block, full residency */
 static float g_steer_base = 1.0f;
 static uint32_t g_steer_tokens = 0u;
 static void steer_at(rl_engine *e, uint32_t generated) {
@@ -254,6 +257,9 @@ static int interactive_chat(
     printf("Red Lite chat ready. Commands: /reset, /help, /quit%s\n", g_steer_path ? ", /steer S" : "");
     printf("The model stays loaded and the conversation is kept. Ctrl-C stops an answer; at the prompt it quits.\n\n");
     uint32_t turn = 0;
+    /* dev71: the conversation's ids in the state, the context prompt lookup drafts from (+1 for the pending token) */
+    uint32_t *conv = g_lookup ? (uint32_t *)malloc(((size_t)info->context + 2u) * sizeof(uint32_t)) : NULL, conv_n = 0;
+#define CONV(tok) do { if (conv && conv_n <= info->context) conv[conv_n++] = (tok); } while (0)
     for (;;) {
         g_interrupt = 0;
         if (!message) {
@@ -283,6 +289,7 @@ static int interactive_chat(
                 }
                 first_turn = 1;
                 close_token = UINT32_MAX;
+                conv_n = 0;
                 printf("Conversation cleared.\n\n");
                 continue;
             }
@@ -335,6 +342,7 @@ static int interactive_chat(
             free(ids); free(logits); free(answer); free(line); return 0;
         }
         const double prefill_ms = now_ms() - prefill_start;
+        for (uint32_t i = 0; i < prompt_tokens; ++i) CONV(ids[i]);
         printf("redlite> ");
         fflush(stdout);
         size_t answer_len = 0;
@@ -344,7 +352,9 @@ static int interactive_chat(
         /* dev45: speculative turn. Invariant at every break: each emitted token is in the state, the closing
          * token (end of answer) is not (as in the plain loop below). u = emitted token not yet in the state. */
         double spec_pre_ms = 0.0;
-        const int speculate = rl_engine_mtp_enabled(engine) && rl_engine_experts_preloaded(engine, &spec_pre_ms) &&
+        const int preloaded = rl_engine_experts_preloaded(engine, &spec_pre_ms);
+        const int use_lookup = conv && !rl_engine_mtp_enabled(engine) && preloaded;
+        const int speculate = ((rl_engine_mtp_enabled(engine) && preloaded) || use_lookup) &&
                               (!g_mtp_max_context || rl_engine_position(engine, RL_BACKEND_GPU) <= g_mtp_max_context);
         uint32_t spec_cycles = 0, spec_accepted = 0;
 #define IA_PIECE(tok) do { \
@@ -355,7 +365,7 @@ static int interactive_chat(
         if (stream && b_) { fwrite(piece_, 1, (size_t)b_, stdout); fflush(stdout); } \
     } while (0)
 #define IA_STEP(tok) do { steer_at(engine, generated); if (!rl_engine_step(engine, RL_BACKEND_GPU, (tok), logits, &step, error, error_cap)) { \
-        free(ids); free(logits); free(logits1); free(answer); free(line); return 0; } } while (0)
+        free(ids); free(logits); free(logits1); free(answer); free(line); return 0; } CONV(tok); } while (0)
         float *logits1 = speculate ? (float *)malloc((size_t)info->vocab * sizeof(float)) : NULL;
         if (speculate && logits1) {
             uint32_t u = rl_sampler_sample(sampler, logits), mtp_pos = 0;
@@ -376,8 +386,12 @@ static int interactive_chat(
                     continue;
                 }
                 uint32_t d = 0;
+                if (use_lookup) {   /* dev71: no draft from the context: plain step */
+                    conv[conv_n] = u;
+                    if (!rl_lookup_draft(conv, conv_n + 1u, &d)) { IA_STEP(u); u = rl_sampler_sample(sampler, logits); continue; }
+                }
                 steer_at(engine, generated);
-                if (!rl_engine_mtp_draft(engine, u, mtp_pos++, &d, NULL, error, error_cap) ||
+                if ((!use_lookup && !rl_engine_mtp_draft(engine, u, mtp_pos++, &d, NULL, error, error_cap)) ||
                     !rl_engine_verify2(engine, u, d, logits, logits1, error, error_cap)) {
                     free(ids); free(logits); free(logits1); free(answer); free(line); return 0;
                 }
@@ -388,15 +402,17 @@ static int interactive_chat(
                 if (!rl_engine_verify_commit(engine, accepted, error, error_cap)) {
                     free(ids); free(logits); free(logits1); free(answer); free(line); return 0;
                 }
+                CONV(u);
                 if (!accepted) { u = v; continue; }
+                CONV(d);
                 spec_accepted++;
                 IA_PIECE(v);   /* v (= d) is in the state */
                 if (g_interrupt || generated == max_tokens) { close_token = (uint32_t)im_end; interrupted = g_interrupt ? 1 : 0; break; }
                 u = rl_sampler_sample(sampler, logits1);
             }
             spec_turn = spec_cycles;
-            if (show_stats && spec_cycles) fprintf(stderr, "[MTP speculation: %u cycles, %u drafts accepted (%.3f)]\n",
-                                                    spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
+            if (show_stats && spec_cycles) fprintf(stderr, "[%s speculation: %u cycles, %u drafts accepted (%.3f)]\n",
+                                                    use_lookup ? "lookup" : "MTP", spec_cycles, spec_accepted, (double)spec_accepted / spec_cycles);
         }
         free(logits1);
 #undef IA_PIECE
@@ -429,12 +445,14 @@ static int interactive_chat(
                 if (!rl_engine_step(engine, RL_BACKEND_GPU, next, NULL, &step, error, error_cap)) {
                     free(ids); free(logits); free(answer); free(line); return 0;
                 }
+                CONV(next);
                 close_token = (uint32_t)im_end;
                 break;
             }
             if (!rl_engine_step(engine, RL_BACKEND_GPU, next, logits, &step, error, error_cap)) {
                 free(ids); free(logits); free(answer); free(line); return 0;
             }
+            CONV(next);
             spec_turn += step.speculative;
         }
         const double generation_ms = now_ms() - generation_start;
@@ -461,6 +479,8 @@ static int interactive_chat(
         first_turn = 0;
         message = NULL;
     }
+#undef CONV
+    free(conv);
     free(line);
     return 1;
 }
@@ -486,6 +506,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--stats") == 0) { stats = 1; continue; }
         if (strcmp(argv[i], "--json") == 0) { json = 1; continue; }
         if (strcmp(argv[i], "--mtp-measure") == 0) { mtp_measure_mode = 1; continue; }
+        if (strcmp(argv[i], "--lookup") == 0) { g_lookup = 1; continue; }
         if (i + 1 >= argc) { usage(stderr); return 2; }
         if (strcmp(argv[i], "--prompt") == 0) prompt = argv[++i];
         else if (strcmp(argv[i], "--system") == 0) system_prompt = argv[++i];
@@ -613,7 +634,9 @@ int main(int argc, char **argv) {
     uint32_t spec_cycles = 0, spec_accepted = 0;
     double spec_mtp_ms = 0.0, spec_verify_ms = 0.0;
     double pre_ms_unused = 0.0;
-    const int speculate = cfg.mtp_path && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms_unused) &&
+    const int preloaded = rl_engine_experts_preloaded(e, &pre_ms_unused);
+    const int use_lookup = g_lookup && !rl_engine_mtp_enabled(e) && preloaded;   /* dev71: drafts from ids[0..) */
+    const int speculate = ((cfg.mtp_path && rl_engine_mtp_enabled(e) && preloaded) || use_lookup) &&
                           (!g_mtp_max_context || prompt_len <= g_mtp_max_context) &&
                           !(getenv("RL_MTP_SPECULATE") && atoi(getenv("RL_MTP_SPECULATE")) == 0);
 #define GEN_EMIT(tok) do { \
@@ -645,9 +668,17 @@ int main(int argc, char **argv) {
             }
             if (rl_engine_position(e, RL_BACKEND_GPU) + 2u > in->context) break;
             uint32_t d = 0;
+            if (use_lookup && !rl_lookup_draft(ids, prompt_len + generated, &d)) {   /* ids ends with u: no draft, plain step */
+                steer_at(e, generated);
+                if (!rl_engine_step(e, RL_BACKEND_GPU, u, logits, &st, error, sizeof(error))) { fprintf(stderr, "\ndecode failed: %s\n", error); return 1; }
+                u = rl_sampler_sample(&sampler, logits);
+                GEN_EMIT(u);
+                if (stopped_on_eog || generated >= max_tokens) break;
+                continue;
+            }
             const double c0 = now_ms();
             steer_at(e, generated);
-            if (!rl_engine_mtp_draft(e, u, mtp_pos++, &d, NULL, error, sizeof(error))) { fprintf(stderr, "\nMTP draft failed: %s\n", error); return 1; }
+            if (!use_lookup && !rl_engine_mtp_draft(e, u, mtp_pos++, &d, NULL, error, sizeof(error))) { fprintf(stderr, "\nMTP draft failed: %s\n", error); return 1; }
             const double c1 = now_ms();
             if (!rl_engine_verify2(e, u, d, logits, logits1, error, sizeof(error))) { fprintf(stderr, "\nspeculative decode failed: %s\n", error); return 1; }
             spec_mtp_ms += c1 - c0; spec_verify_ms += now_ms() - c1;
@@ -716,10 +747,10 @@ int main(int argc, char **argv) {
         }
         fprintf(stderr, "prompt tokens        : %u (%.1f ms, %.2f tok/s)\n", prompt_len, prefill_ms, prompt_len * 1000.0 / prefill_ms);
         if (state_dir) fprintf(stderr, "state cache          : %u tokens restored, %u stored\n", state_loaded, state_saved);
-        if (speculate) fprintf(stderr, "MTP speculation      : %u cycles, %u drafts accepted (%.3f), %.2f tokens per pass\n",
-                               spec_cycles, spec_accepted, spec_cycles ? (double)spec_accepted / spec_cycles : 0.0,
+        if (speculate) fprintf(stderr, "%s speculation   : %u cycles, %u drafts accepted (%.3f), %.2f tokens per pass\n",
+                               use_lookup ? "lookup" : "MTP   ", spec_cycles, spec_accepted, spec_cycles ? (double)spec_accepted / spec_cycles : 0.0,
                                spec_cycles ? (double)(spec_cycles + spec_accepted) / spec_cycles : 0.0);
-        if (speculate && spec_cycles) fprintf(stderr, "MTP speculation time : draft %.2f ms, 2-row verify %.2f ms per cycle\n",
+        if (speculate && spec_cycles) fprintf(stderr, "speculation time     : draft %.2f ms, 2-row verify %.2f ms per cycle\n",
                                                spec_mtp_ms / spec_cycles, spec_verify_ms / spec_cycles);
         fprintf(stderr, "generated tokens     : %u (%.1f ms, %.2f tok/s over %u decode passes)\n", generated, gen_ms,
             decoded ? decoded * 1000.0 / gen_ms : 0.0, decoded);

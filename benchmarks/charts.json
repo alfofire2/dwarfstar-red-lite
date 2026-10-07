@@ -771,6 +771,49 @@
     "benchmarks/m4-dev65-long-context-agents.json",
     "benchmarks/m4-dev66-decode-attention.json"
    ]
+  },
+  {
+   "id": "agent_lookup",
+   "title": "Decode in coding-agent sessions with prompt lookup (M4 Max 48 GiB, Red Lite CF2)",
+   "unit": "tokens per second",
+   "note": "The dev65 hard suite with pi, three runs each, decode speed from the server logs grouped by the context at the start of each answer. Prompt lookup drafts the next token from the context and verifies it exactly: the output is unchanged (dev70).",
+   "series": [
+    "without lookup (0.8.2)",
+    "with lookup (dev70)"
+   ],
+   "bars": [
+    {
+     "label": "0\u20138K context",
+     "values": [
+      76.8,
+      96.1
+     ]
+    },
+    {
+     "label": "8\u201316K",
+     "values": [
+      72.2,
+      90.0
+     ]
+    },
+    {
+     "label": "16\u201332K",
+     "values": [
+      61.5,
+      72.2
+     ]
+    },
+    {
+     "label": "32K and more",
+     "values": [
+      53.9,
+      65.5
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4-dev70-prompt-lookup.json"
+   ]
   }
  ]
 }

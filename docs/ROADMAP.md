@@ -3,7 +3,7 @@
 Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.8.2, 2026-10-07)
+## Where things stand (0.9.0, 2026-10-07)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -24,12 +24,19 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 
 - **Faster first ingestion of long prompts:** at 256K it takes 24 minutes. The prefill attention is limited by the
   float32 matrix units (about 6 TFLOPS at 32K), not by key/value reads: sharing them across query heads made it slower
-  (dev66, WHAT_DID_NOT_WORK), and so did more threadgroups per core. Half precision is not an obvious lever either:
-  M1–M4 GPUs run FP16 arithmetic at the FP32 rate (not measured here). At 32K the prefill splits into attention
-  17.5 s, DeltaNet layers 14.7 s, experts 19.6 s.
+  (dev66, WHAT_DID_NOT_WORK), and so did more threadgroups per core. Half precision is not a lever: the M4 Max runs
+  half and float simdgroup matrix products at the same 15.5–15.9 TFLOPS (dev70). The kernels run at 6–8 TFLOPS, so
+  the room is in their structure. At 32K the prefill splits into attention 17.5 s, DeltaNet layers 14.7 s,
+  experts 19.6 s.
 - **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts (RoPE precision is
   ruled out, dev67).
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
+
+## Done in 0.9.0 (dev70)
+
+- Prompt lookup speculative decoding in `redlite serve` and `redlite chat` for Qwen3-Coder-Next: +15–25 % decode in
+  agent sessions, the same output.
+- Simulated before building: several drafts per verify would add at most +5–14 % (not built).
 
 ## Done in 0.8.2 (dev67)
 

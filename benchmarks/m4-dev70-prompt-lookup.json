@@ -1,0 +1,446 @@
+{
+  "id": "dev70-prompt-lookup",
+  "date": "2026-10-07",
+  "source": "docs/REDLITE_DEV70_PROMPT_LOOKUP.md",
+  "two_prompts_greedy": {
+    "method": "redlite-server --cache-mib full, CF2, temperature 0, 700 / 436 tokens, alternated plain/lookup/lookup/plain; answers identical",
+    "m4max": {
+      "edit": {
+        "plain": [
+          80.5,
+          79.6
+        ],
+        "lookup": [
+          109.5,
+          108.6
+        ],
+        "cycles": 379,
+        "accepted": 316,
+        "plain_steps": 3
+      },
+      "prose": {
+        "plain": [
+          79.2,
+          79.8
+        ],
+        "lookup": [
+          80.4,
+          81.2
+        ],
+        "cycles": 36,
+        "accepted": 15,
+        "plain_steps": 384
+      }
+    },
+    "m4pro": {
+      "edit": {
+        "plain": [
+          45.1,
+          45.0
+        ],
+        "lookup": [
+          59.7,
+          59.7
+        ]
+      },
+      "prose": {
+        "plain": [
+          44.7,
+          44.5
+        ],
+        "lookup": [
+          44.9,
+          44.7
+        ]
+      }
+    }
+  },
+  "agent_m4max": {
+    "method": "agent_eval.py --suite hard, CF2 every expert resident, temperature 0.3, three runs; decode by context band from the server log (scripts/dev/server_log_decode.py)",
+    "without_lookup_0_8_2_128k_window": {
+      "tasks": {
+        "passed": 16,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 2,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 3,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 1,
+        "total_min": 52
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 80,
+          "tokens": 9832,
+          "tok_s": 76.8,
+          "accepted": null
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 52,
+          "tokens": 6809,
+          "tok_s": 72.2,
+          "accepted": null
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 191,
+          "tokens": 47326,
+          "tok_s": 61.5,
+          "accepted": null
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 162,
+          "tokens": 56419,
+          "tok_s": 53.9,
+          "accepted": null
+        }
+      ]
+    },
+    "with_lookup_64k_window": {
+      "tasks": {
+        "passed": 18,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 3,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 3,
+          "explain_kv_pad": 3,
+          "debug_session": 3
+        },
+        "timeouts": 0,
+        "total_min": 37
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 93,
+          "tokens": 12579,
+          "tok_s": 96.1,
+          "accepted": 0.779
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 38,
+          "tokens": 3213,
+          "tok_s": 90.0,
+          "accepted": 0.792
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 173,
+          "tokens": 37476,
+          "tok_s": 72.2,
+          "accepted": 0.76
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 81,
+          "tokens": 29884,
+          "tok_s": 65.5,
+          "accepted": 0.726
+        }
+      ]
+    },
+    "with_lookup_64k_window_set2_traced": {
+      "tasks": {
+        "passed": 15,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 1,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 3,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 1,
+        "total_min": 50
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 91,
+          "tokens": 14279,
+          "tok_s": 91.6,
+          "accepted": 0.772
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 53,
+          "tokens": 9062,
+          "tok_s": 84.6,
+          "accepted": 0.781
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 199,
+          "tokens": 43681,
+          "tok_s": 70.5,
+          "accepted": 0.764
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 300,
+          "tokens": 54847,
+          "tok_s": 66.1,
+          "accepted": 0.846
+        }
+      ]
+    },
+    "coder_iq3_xxs_with_lookup_64k": {
+      "tasks": {
+        "passed": 15,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 2,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 2,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 0,
+        "total_min": 49
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 101,
+          "tokens": 13653,
+          "tok_s": 82.6,
+          "accepted": 0.734
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 36,
+          "tokens": 3652,
+          "tok_s": 77.9,
+          "accepted": 0.764
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 247,
+          "tokens": 46564,
+          "tok_s": 62.5,
+          "accepted": 0.733
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 110,
+          "tokens": 36978,
+          "tok_s": 57.6,
+          "accepted": 0.765
+        }
+      ]
+    }
+  },
+  "half_precision_microbench_m4max_tflops": {
+    "simdgroup_mma": {
+      "float_float_float": 15.51,
+      "half_half_float": 15.75,
+      "half_half_half": 15.92
+    },
+    "fma": {
+      "float": 13.52,
+      "half": 14.83
+    }
+  },
+  "validation": {
+    "regress_m4": "56/0/0 (incl. server.lookup_greedy)",
+    "quick_parity_long": "5/5",
+    "local_ci": "PASS"
+  },
+  "generate_lookup_m4max_cf2_greedy": {
+    "one_shot_rewrite": {
+      "plain": 82.04,
+      "lookup": 111.53,
+      "cycles": 215,
+      "accepted": 183
+    },
+    "chat_turn1_new_code": {
+      "plain": 79.4,
+      "lookup": 81.4
+    },
+    "chat_turn2_rewrite": {
+      "plain": 79.1,
+      "lookup": 110.0
+    },
+    "identical": true
+  },
+  "multi_draft_simulation": {
+    "method": "scripts/dev/lookup_sim.py on RL_SERVER_TRACE (643 requests, 122023 answer tokens); cost of a pass with R rows = 1 + c (R - 1)",
+    "c_0.35": {
+      "fixed": {
+        "1": 1.302,
+        "2": 1.403,
+        "4": 1.427,
+        "8": 1.28
+      },
+      "adaptive_max": {
+        "2": 1.39,
+        "4": 1.449,
+        "8": 1.485,
+        "16": 1.457
+      }
+    },
+    "c_0.5": {
+      "fixed": {
+        "1": 1.185,
+        "2": 1.215,
+        "4": 1.171,
+        "8": 1.0
+      },
+      "adaptive_max": {
+        "2": 1.218,
+        "4": 1.234,
+        "8": 1.239
+      }
+    },
+    "c_0.2": {
+      "fixed": {
+        "1": 1.444,
+        "2": 1.659,
+        "4": 1.826,
+        "8": 1.778
+      }
+    }
+  },
+  "prefill_fa3_8_simdgroups_attention_s_32k": {
+    "attn_fa_b2": [
+      16.55,
+      17.29
+    ],
+    "attn_fa_b3": [
+      18.48,
+      24.3
+    ],
+    "identical": true
+  },
+  "agent_m4pro_32k_full_residency": {
+    "method": "same suite, CF2, --cache-mib full, 32K window, GPU limit 21741 MiB, same build, three runs each",
+    "without_lookup": {
+      "tasks": {
+        "passed": 11,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 1,
+          "rename": 3,
+          "write_tests": 2,
+          "c_limit": 0,
+          "explain_kv_pad": 2,
+          "debug_session": 3
+        },
+        "timeouts": 3,
+        "total_min": 157
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 137,
+          "tokens": 30658,
+          "tok_s": 33.4,
+          "accepted": null
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 81,
+          "tokens": 11343,
+          "tok_s": 30.9,
+          "accepted": null
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 240,
+          "tokens": 46579,
+          "tok_s": 27.1,
+          "accepted": null
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 0,
+          "tokens": 0,
+          "tok_s": 0.0,
+          "accepted": null
+        }
+      ]
+    },
+    "with_lookup": {
+      "tasks": {
+        "passed": 10,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 0,
+          "rename": 3,
+          "write_tests": 2,
+          "c_limit": 0,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 3,
+        "total_min": 153
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 145,
+          "tokens": 35986,
+          "tok_s": 43.2,
+          "accepted": 0.795
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 117,
+          "tokens": 12551,
+          "tok_s": 39.9,
+          "accepted": 0.894
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 344,
+          "tokens": 61348,
+          "tok_s": 34.6,
+          "accepted": 0.842
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 0,
+          "tokens": 0,
+          "tok_s": 0.0,
+          "accepted": null
+        }
+      ]
+    }
+  }
+}

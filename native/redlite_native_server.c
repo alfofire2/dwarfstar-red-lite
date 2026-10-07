@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE 1
 
 #include "redlite_native_server.h"
+#include "redlite_native_sampler.h"
 
 #include <errno.h>
 #include <math.h>
@@ -1918,6 +1919,27 @@ int rl_server_selftest(char *error, size_t cap) {
         const size_t c6 = cut;
         if (m1 || c1 != 6u || m2 || c2 != 6u || !m3 || c3 != 2u || !m4 || c4 != 0u || m5 || c5 != 5u || m6 || c6 != 0u) {
             set_error(error, cap, "stop scan is wrong (%d/%zu %d/%zu %d/%zu %d/%zu %d/%zu %d/%zu)", m1, c1, m2, c2, m3, c3, m4, c4, m5, c5, m6, c6);
+            return 0;
+        }
+    }
+    /* prompt lookup: the latest earlier occurrence of the last 3 (then 2) tokens gives the draft */
+    {
+        const uint32_t s1[8] = {5u, 6u, 7u, 8u, 1u, 6u, 7u, 9u}, s2[7] = {1u, 2u, 3u, 4u, 9u, 2u, 3u}, s3[4] = {1u, 2u, 3u, 4u};
+        const uint32_t s4[9] = {4u, 6u, 7u, 1u, 0u, 6u, 7u, 2u, 6u}, s5[8] = {1u, 6u, 7u, 3u, 1u, 6u, 7u, 0u};
+        uint32_t d1 = 0, d2 = 0, d3 = 77u, d4 = 0, d5 = 0;
+        /* s1 ends "6 7 9": no earlier "6 7 9"; "7 9" neither -> none. s2 ends "9 2 3": "2 3" at 1..2 -> 4.
+         * s4 ends "7 2 6": "2 6" none; none. s5 = "1 6 7 3 1 6 7 0": ends "6 7 0", "7 0": none. */
+        const int r1 = rl_lookup_draft(s1, 8u, &d1), r2 = rl_lookup_draft(s2, 7u, &d2), r3 = rl_lookup_draft(s3, 4u, &d3);
+        const int r4 = rl_lookup_draft(s4, 9u, &d4), r5 = rl_lookup_draft(s5, 8u, &d5);
+        /* "1 6 7" occurs at 0 and 4: the latest occurrence wins (s6 ends "1 6 7" again -> the token after 4..6 = 0) */
+        const uint32_t s6[11] = {1u, 6u, 7u, 3u, 1u, 6u, 7u, 0u, 1u, 6u, 7u};
+        uint32_t d6 = 0; const int r6 = rl_lookup_draft(s6, 11u, &d6);
+        /* the 3-gram is preferred over a later 2-gram: s7 ends "1 2 3"; "1 2 3" at 0 (-> 4), "2 3" also at 5 (-> 8) */
+        const uint32_t s7[10] = {1u, 2u, 3u, 4u, 0u, 2u, 3u, 8u, 1u, 2u}, s8[11] = {1u, 2u, 3u, 4u, 0u, 2u, 3u, 8u, 1u, 2u, 3u};
+        uint32_t d7 = 0, d8 = 0; const int r7 = rl_lookup_draft(s7, 10u, &d7), r8 = rl_lookup_draft(s8, 11u, &d8);
+        if (r1 || !r2 || d2 != 4u || r3 || d3 != 77u || r4 || r5 || !r6 || d6 != 0u || !r7 || d7 != 3u || !r8 || d8 != 4u ||
+            rl_lookup_draft(NULL, 4u, &d1) || rl_lookup_draft(s3, 0u, &d1)) {
+            set_error(error, cap, "prompt lookup is wrong (%d %d/%u %d %d %d %d/%u %d/%u %d/%u)", r1, r2, d2, r3, r4, r5, r6, d6, r7, d7, r8, d8);
             return 0;
         }
     }

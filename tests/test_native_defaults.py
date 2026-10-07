@@ -105,6 +105,12 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
         self.assertIn("--cache-mib 4096", text)
         self.assertIn("bounded 4 GiB", text)
 
+    def test_chat_full_residency_uses_prompt_lookup(self):
+        text = self._run(48)
+        self.assertIn("--lookup", text)
+        self.assertNotIn("--lookup", self._run(48, "--no-lookup").split("redlite-generate", 1)[-1])
+        self.assertNotIn("--lookup", self._run(24))   # bounded 4 GiB cache
+
     def test_explicit_cache_and_batch_win(self):
         text = self._run(48, "--cache-mib", "1024", "--batch", "128", "--json", "--min-p", "0.05")
         self.assertIn("--cache-mib 1024", text)
@@ -137,6 +143,15 @@ class NativeServeCliTests(unittest.TestCase):
     def test_serve_native_on_24gb_defaults_to_4gb_and_4096_context(self):
         text = self._run(24)
         self.assertIn("--context 4096 --cache-mib 4096", text)
+        self.assertNotIn("--lookup", text)   # dev70: a bounded cache cannot verify two rows
+
+    def test_serve_native_full_residency_uses_prompt_lookup(self):
+        text = self._run(48)
+        self.assertIn("--lookup", text)
+        self.assertIn("prompt lookup speculative decoding", text)
+
+    def test_serve_native_no_lookup(self):
+        self.assertNotIn("--lookup", self._run(48, "--no-lookup").split("redlite-server", 1)[1])
 
 
 if __name__ == "__main__":
@@ -325,6 +340,20 @@ class RedLiteF2PreferenceTests(unittest.TestCase):
         self.assertEqual(resolve_variant("bartowski-coder").filename, "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf")
         self.assertEqual(resolve_variant("48gb").filename, "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf")
         self.assertEqual(resolve_variant("48gb-g2").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf")
+
+    def test_aliases_case_insensitive(self):
+        from redlite.model_catalog import resolve_variant
+        # dev72: variant names should be case-insensitive
+        self.assertEqual(resolve_variant("CODER").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+        self.assertEqual(resolve_variant("24GB").filename, "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
+        self.assertEqual(resolve_variant("MTP").filename, "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf")
+        self.assertEqual(resolve_variant("CF2").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
+
+    def test_coder_24gb_alias(self):
+        from redlite.model_catalog import resolve_variant
+        # dev72: coder-24gb is an alias for coder (same variant)
+        self.assertEqual(resolve_variant("coder-24gb").key, resolve_variant("coder").key)
+        self.assertEqual(resolve_variant("CODER-24GB").filename, "Qwen3-Coder-Next-RedLite-CF2.gguf")
 
     def test_g2_preferred_on_48gb_when_present(self):
         import tempfile
