@@ -1,0 +1,177 @@
+{
+  "id": "dev70-prompt-lookup",
+  "date": "2026-10-07",
+  "source": "docs/REDLITE_DEV70_PROMPT_LOOKUP.md",
+  "two_prompts_greedy": {
+    "method": "redlite-server --cache-mib full, CF2, temperature 0, 700 / 436 tokens, alternated plain/lookup/lookup/plain; answers identical",
+    "m4max": {
+      "edit": {
+        "plain": [
+          80.5,
+          79.6
+        ],
+        "lookup": [
+          109.5,
+          108.6
+        ],
+        "cycles": 379,
+        "accepted": 316,
+        "plain_steps": 3
+      },
+      "prose": {
+        "plain": [
+          79.2,
+          79.8
+        ],
+        "lookup": [
+          80.4,
+          81.2
+        ],
+        "cycles": 36,
+        "accepted": 15,
+        "plain_steps": 384
+      }
+    },
+    "m4pro": {
+      "edit": {
+        "plain": [
+          45.1,
+          45.0
+        ],
+        "lookup": [
+          59.7,
+          59.7
+        ]
+      },
+      "prose": {
+        "plain": [
+          44.7,
+          44.5
+        ],
+        "lookup": [
+          44.9,
+          44.7
+        ]
+      }
+    }
+  },
+  "agent_m4max": {
+    "method": "agent_eval.py --suite hard, CF2 every expert resident, temperature 0.3, three runs; decode by context band from the server log (scripts/dev/server_log_decode.py)",
+    "without_lookup_0_8_2_128k_window": {
+      "tasks": {
+        "passed": 16,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 2,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 3,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 1,
+        "total_min": 52
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 80,
+          "tokens": 9832,
+          "tok_s": 76.8,
+          "accepted": null
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 52,
+          "tokens": 6809,
+          "tok_s": 72.2,
+          "accepted": null
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 191,
+          "tokens": 47326,
+          "tok_s": 61.5,
+          "accepted": null
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 162,
+          "tokens": 56419,
+          "tok_s": 53.9,
+          "accepted": null
+        }
+      ]
+    },
+    "with_lookup_64k_window": {
+      "tasks": {
+        "passed": 18,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 3,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 3,
+          "explain_kv_pad": 3,
+          "debug_session": 3
+        },
+        "timeouts": 0,
+        "total_min": 37
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 93,
+          "tokens": 12579,
+          "tok_s": 96.1,
+          "accepted": 0.779
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 38,
+          "tokens": 3213,
+          "tok_s": 90.0,
+          "accepted": 0.792
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 173,
+          "tokens": 37476,
+          "tok_s": 72.2,
+          "accepted": 0.76
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 81,
+          "tokens": 29884,
+          "tok_s": 65.5,
+          "accepted": 0.726
+        }
+      ]
+    }
+  },
+  "half_precision_microbench_m4max_tflops": {
+    "simdgroup_mma": {
+      "float_float_float": 15.51,
+      "half_half_float": 15.75,
+      "half_half_half": 15.92
+    },
+    "fma": {
+      "float": 13.52,
+      "half": 14.83
+    }
+  },
+  "validation": {
+    "regress_m4": "56/0/0 (incl. server.lookup_greedy)",
+    "quick_parity_long": "5/5",
+    "local_ci": "PASS"
+  }
+}

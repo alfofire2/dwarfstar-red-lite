@@ -44,7 +44,8 @@ MacBook Pro.
 - **Checked against llama.cpp** on every change: logits, greedy tokens and long contexts, with llama.cpp used as an
   oracle only, never linked.
 - **A local OpenAI-compatible server:** tool calling for coding agents such as pi, two requests at once, steering,
-  and prompt states saved to disk.
+  and prompt states saved to disk. For Qwen3-Coder-Next it drafts tokens from the conversation and verifies them
+  exactly (prompt lookup): agent sessions decode 17–25 % faster with the same output.
 - **The model's full 262K context:** a 256K-token prompt of real code is read and searched correctly on a 48 GiB
   Mac (24 minutes, 30 GiB); 128K works on a 24 GiB Mac too.
 

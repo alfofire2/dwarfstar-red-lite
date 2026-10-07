@@ -324,6 +324,15 @@ SSD; the pass rate stays at 12 / 18, with more tasks at the time limit.
 
 <p align="center"><img src="img/agent_context.svg" alt="Hard agent tasks passed by context window, file and Mac"></p>
 
+**Faster agents with prompt lookup** (dev70). Qwen3-Coder-Next has no MTP block, but a coding agent copies much of
+what it writes from the conversation: files it rewrites, names, paths. `redlite serve` now drafts the next token
+from the context (the token that followed the latest earlier occurrence of the last three) and checks it exactly in
+the same 2-row pass as MTP. **The answer does not change.** In the hard suite on the M4 Max, 73–79 % of the drafts were
+accepted and decode was 17–25 % faster at every context length; the 18 tasks took 37 minutes instead of 52. Rewriting
+a file: 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. It needs every expert resident.
+
+<p align="center"><img src="img/agent_lookup.svg" alt="Decode speed in agent sessions with and without prompt lookup, by context"></p>
+
 **A trap on the way.** The first run of this study passed at most 2 of 4 tasks on the M4 Pro. Two of the repository's
 own tests read the machine's GPU limit, raised on that Mac, so they failed before the agent did anything, and the
 tasks that run them could not pass. Running the checks on an untouched copy on the same machine found it.

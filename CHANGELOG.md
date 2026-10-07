@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0 — 2026-10-07
+
+**Faster coding agents: prompt lookup speculative decoding.**
+- **`redlite serve` drafts tokens from the conversation** and verifies each one exactly in the 2-row pass MTP uses. A
+  draft is the token that followed the latest earlier occurrence of the context's last three tokens.
+  - The output does not change, at any temperature.
+  - On by default with every expert resident and no MTP head, which is Qwen3-Coder-Next's case. `--no-lookup`
+    turns it off.
+- **Coding-agent sessions on the M4 Max (CF2):**
+  - decode 17–25 % faster at every context length, with 73–79 % of the drafts accepted;
+  - the hard suite took 37 minutes instead of 52.
+- **Rewriting a file:** 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro 24 GiB. Prose is unchanged, because few
+  drafts are proposed there.
+- Validation:
+  - `regress_m4.sh` 56 / 0 / 0, with the new `server.lookup_greedy`;
+  - `quick_parity.sh --long` 5 / 5;
+  - local CI.
+
+
+- dev70: **prompt lookup** (`docs/REDLITE_DEV70_PROMPT_LOOKUP.md`).
+  - **Code:**
+    - `rl_lookup_draft`, with self-test cases;
+    - `redlite-server --lookup`;
+    - `redlite serve` default and `--no-lookup`;
+    - `server_check.py --lookup`;
+    - `scripts/dev/server_log_decode.py`.
+  - **Finding:** a half-precision micro-benchmark shows half and float matrix products at the same rate on the M4 Max.
+
 ## 0.8.2 — 2026-10-07
 
 **Decode attention closer to the memory bandwidth.**

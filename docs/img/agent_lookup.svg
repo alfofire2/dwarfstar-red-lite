@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="339" viewBox="0 0 810 339">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="339"/>
+<text class="t" x="10" y="24">Decode in coding-agent sessions with prompt lookup (M4 Max 48 GiB, Red Lite CF2)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">without lookup (0.8.2)</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">with lookup (dev70)</text>
+<text class="l" x="222" y="98" text-anchor="end">0–8K context</text>
+<rect x="230" y="76" width="375.6" height="15" rx="2" fill="#d64545"/><text class="v" x="610.6" y="88">76.8</text>
+<rect x="230" y="94" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="106">96.1</text>
+<text class="l" x="222" y="144" text-anchor="end">8–16K</text>
+<rect x="230" y="122" width="353.1" height="15" rx="2" fill="#d64545"/><text class="v" x="588.1" y="134">72.2</text>
+<rect x="230" y="140" width="440.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="675.2" y="152">90</text>
+<text class="l" x="222" y="190" text-anchor="end">16–32K</text>
+<rect x="230" y="168" width="300.8" height="15" rx="2" fill="#d64545"/><text class="v" x="535.8" y="180">61.5</text>
+<rect x="230" y="186" width="353.1" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="588.1" y="198">72.2</text>
+<text class="l" x="222" y="236" text-anchor="end">32K and more</text>
+<rect x="230" y="214" width="263.6" height="15" rx="2" fill="#d64545"/><text class="v" x="498.6" y="226">53.9</text>
+<rect x="230" y="232" width="320.3" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="555.3" y="244">65.5</text>
+<text class="n" x="10" y="299">tokens per second. The dev65 hard suite with pi, three runs each, decode speed from the server logs grouped by the context at</text>
+<text class="n" x="10" y="314">the start of each answer. Prompt lookup drafts the next token from the context and verifies it exactly: the output is</text>
+<text class="n" x="10" y="329">unchanged (dev70).</text>
+</svg>
