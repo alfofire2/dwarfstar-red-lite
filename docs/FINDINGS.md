@@ -51,6 +51,12 @@ token ids.
   - a background thread that loads the next layer's experts during compute;
   - 2048-token chunks, so a bounded cache reloads each expert fewer times.
 
+**Against MLX** (dev72, M4 Max, Qwen3-Coder-Next, two prompts, greedy):
+- **MLX's 3-bit file** (32.5 GiB) decodes at 94–96 tok/s against Red Lite CF2's 80 (109 with prompt lookup on a file
+  rewrite), and ingests prompts about 50 % faster (1,427 against 929 tok/s at 1.7K tokens).
+- **MLX's 2-bit file** (23.2 GiB) is faster still, but corrupted the file it was asked to copy; CF2 copied it exactly.
+- **Neither MLX file runs on a 24 GiB Mac.** The gap says Red Lite's kernels have room; dev72 started profiling them.
+
 ## 4. Speculative decoding that never changes the answer (MTP)
 
 <p align="center"><img src="img/mtp.svg" alt="Decode speed with and without MTP on six prompts"></p>
@@ -203,6 +209,9 @@ the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from 
   measured 17.4 → 20.5 tok/s at 64K and 12.6 → 16.1 at 128K (`decode-bench`, warm runs).
 - **Agreement with llama.cpp:**
   - the top token agrees at every position checked up to 128K (50 / 50 at 32K, 64K and 128K, 100 / 100 at 16K);
+  - per-layer dumps (dev72) show where the rest comes from: summing tens of thousands of positions in another order
+    gives about 1e-5 at the first attention layer, and the MoE router occasionally turns that into a jump when two
+    experts are near a tie;
   - the distributions drift apart slowly with length: KL 1.5e-4 at 32K, 1.2e-3 at 64K, 0.025 at 128K. The two
     programs sum attention over hundreds of thousands of positions in a different order.
 - **Float16 KV cache** (dev53) halved the context memory without changing the speed. It moved a few expert choices
@@ -331,7 +340,9 @@ the same 2-row pass as MTP. **The answer does not change.** In the hard suite on
 accepted and decode was 15–25 % faster at every context length, in two separate sets of runs (the time for the
 whole suite varied more with what the agent did: 37 and 50 minutes with lookup, 52 without). Rewriting a file:
 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. On the 24 GiB M4 Pro with every expert resident (raised GPU
-limit, 32K window) the agent decoded 28–29 % faster. `redlite chat` does it too. It needs every expert resident.
+limit, 32K window) the agent decoded 28–29 % faster. `redlite chat` does it too. Since dev72 it also works with a
+bounded expert cache: on the M4 Pro with the default 4 GiB cache and a 64K window, agent decode was 7–10 % faster than
+the cache-aware routing that had been the default there, with exact answers.
 
 <p align="center"><img src="img/agent_lookup.svg" alt="Decode speed in agent sessions with and without prompt lookup, by context"></p>
 

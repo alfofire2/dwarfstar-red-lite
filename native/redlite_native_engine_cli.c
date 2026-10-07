@@ -13,6 +13,7 @@
  */
 
 #include "redlite_native_engine.h"
+#include "redlite_native_engine_internal.h"
 #include "redlite_native_quant_cpu.h"
 #include "redlite_native_iq2_xxs.h"
 #include "redlite_native_tokenizer.h"
@@ -152,6 +153,13 @@ static void print_info(const rl_engine_info *in) {
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) { usage(stdout); return 0; }
 #ifdef __APPLE__
+    if (argc >= 2 && strcmp(argv[1], "prefill-attn-bench") == 0) {
+        /* dev72: attn_fa_b2 with no model loaded: prefill-attn-bench [TOKENS [POSITION]] (default 512 at 7680) */
+        char err[256] = {0};
+        const uint32_t b = argc > 2 ? (uint32_t)atoi(argv[2]) : 512u, p0 = argc > 3 ? (uint32_t)atoi(argv[3]) : 7680u;
+        if (!rl_metal_prefill_attn_bench_standalone(b, p0, err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "kernel-bench") == 0) {
         char report[4096] = {0}, err[512] = {0};
         if (!rl_metal_kernel_bench(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel bench failed: %s\n", err); return 1; }
@@ -308,6 +316,59 @@ int main(int argc, char **argv) {
     }
 
     if (!token_count) { fprintf(stderr, "--tokens is required\n"); return 2; }
+
+    if (strcmp(cmd, "prefill-expert-bench") == 0) {
+        /* dev72: the routed-expert kernels of layer --repeat - 1 with no model buffer on the GPU (CPU-only engine) */
+        cfg.enable_cpu = 1; cfg.enable_gpu = 0;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const int ok = rl_metal_expert_bench_standalone(e, model, repeat > 1u ? repeat - 1u : 0u, batch ? batch : 512u, error, sizeof(error));
+        if (!ok) fprintf(stderr, "prefill-expert-bench: %s\n", error);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
+
+    if (strcmp(cmd, "prefill-kernel-bench") == 0) {
+        /* dev72: --batch tokens at --start-position, routed experts of layer --repeat - 1 (default layer 0) */
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const int ok = rl_engine_prefill_kernel_bench(e, batch ? batch : 512u, start_position, repeat > 1u ? repeat - 1u : 0u, error, sizeof(error));
+        if (!ok) fprintf(stderr, "prefill-kernel-bench: %s\n", error);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
+
+    if (strcmp(cmd, "verify-check") == 0) {
+        /* dev72: rl_engine_verify2 of the last two --tokens against plain steps, on the GPU backend (full residency or a
+         * bounded cache): both rows' logits within 1e-3 of the steps', same argmax */
+        if (token_count < 3u) { fprintf(stderr, "verify-check needs at least 3 tokens\n"); return 2; }
+        cfg.enable_cpu = 0; cfg.enable_gpu = 1;
+        rl_engine *e = rl_engine_open(model, &cfg, error, sizeof(error));
+        if (!e) { fprintf(stderr, "engine open failed: %s\n", error); return 1; }
+        const rl_engine_info *in = rl_engine_info_get(e);
+        float *ref0 = (float *)malloc((size_t)in->vocab * sizeof(float)), *ref1 = (float *)malloc((size_t)in->vocab * sizeof(float));
+        float *got0 = (float *)malloc((size_t)in->vocab * sizeof(float)), *got1 = (float *)malloc((size_t)in->vocab * sizeof(float));
+        rl_engine_step_stats st;
+        const uint32_t n = token_count;
+        for (uint32_t i = 0; i < n; ++i)
+            if (!rl_engine_step(e, RL_BACKEND_GPU, tokens[i], i == n - 2u ? ref0 : i == n - 1u ? ref1 : NULL, &st, error, sizeof(error))) { fprintf(stderr, "step: %s\n", error); return 1; }
+        if (!rl_engine_reset(e, RL_BACKEND_GPU, error, sizeof(error))) { fprintf(stderr, "%s\n", error); return 1; }
+        for (uint32_t i = 0; i + 2u < n; ++i)
+            if (!rl_engine_step(e, RL_BACKEND_GPU, tokens[i], NULL, &st, error, sizeof(error))) { fprintf(stderr, "step: %s\n", error); return 1; }
+        if (!rl_engine_verify2(e, tokens[n - 2u], tokens[n - 1u], got0, got1, error, sizeof(error)) ||
+            !rl_engine_verify_commit(e, 1, error, sizeof(error))) { fprintf(stderr, "verify: %s\n", error); return 1; }
+        double d0 = 0.0, d1 = 0.0;
+        for (uint32_t v = 0; v < in->vocab; ++v) { d0 = fmax(d0, fabs((double)got0[v] - ref0[v])); d1 = fmax(d1, fabs((double)got1[v] - ref1[v])); }
+        uint32_t a0 = 0, a1 = 0, r0 = 0, r1 = 0;
+        for (uint32_t v = 1; v < in->vocab; ++v) { if (got0[v] > got0[a0]) a0 = v; if (got1[v] > got1[a1]) a1 = v; if (ref0[v] > ref0[r0]) r0 = v; if (ref1[v] > ref1[r1]) r1 = v; }
+        /* the GPU-routed and synchronous paths sum in different orders: ~1e-5, not bit-identical */
+        const int ok = d0 <= 1e-3 && d1 <= 1e-3 && a0 == r0 && a1 == r1;
+        printf("verify row 0 max |d| %.3e, row 1 max |d| %.3e\nVERIFY CHECK: %s\n", d0, d1, ok ? "YES" : "NO");
+        free(ref0); free(ref1); free(got0); free(got1);
+        rl_engine_close(e);
+        return ok ? 0 : 1;
+    }
 
     if (strcmp(cmd, "decode-bench") == 0) {
         /* dev65: decode speed at a long context without the prefill: the GPU backend jumps to --start-position and

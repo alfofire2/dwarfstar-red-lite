@@ -1369,6 +1369,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
+    m->pred_logits_alt = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
     m->p_moe_tail = nil;
     m->steer = nil; m->p_steer = nil;
@@ -1886,79 +1887,89 @@ static void swap_state(rl_metal_engine *m) {
 
 /* Two rows in one pass. Verify (pair = 0): row 1 is the next position of the same sequence. Pair (dev56): row 1 is
  * the parked slot's sequence at position1, with its own DeltaNet and KV state. */
+/* dev72: layer l of a 2-row pass up to the routed experts (both rows' FFN inputs, shared expert outputs and router logits
+ * ready); shared by emit_verify2 (GPU routing) and the bounded-cache verify (CPU routing and the expert pool) */
+static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t position, uint32_t position1, int pair) {
+    rl_metal_engine *m = em->m;
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden;
+    const float eps = in->rms_eps;
+    const uint32_t conv_n = (uint32_t)rl_engine_conv_count(e), rec_n = (uint32_t)rl_engine_rec_count(e);
+    const rl_layer_tensors *t = &e->layers[l];
+    const mlayer *w = &m->layers[l];
+    emit_steer(e, em, l, m->x); emit_steer(e, em, l, ALT(x));
+    em_group(em, 1);   /* the two rows' independent kernels share one barrier */
+    emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
+    emit_rms(m, em_enc(em), ALT(x), &w->attn_norm, ALT(normed), hidden, eps);
+    em_group(em, 0);
+    if (t->kind == RL_LAYER_MAP_RECURRENT) {
+        const uint32_t r = t->recurrent_index;
+        em_group(em, 1);
+        emit_rows_r2(m, em_enc(em), &w->qkv, m->normed, ALT(normed), m->qkv, ALT(qkv));
+        emit_rows_r2(m, em_enc(em), &w->z, m->normed, ALT(normed), m->z, ALT(z));
+        emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
+        em_group(em, 0);
+        if (pair) {
+            emit_recurrent_mid(e, em, t, w);
+            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+            swap_rows(m); swap_state(m);
+            emit_recurrent_mid(e, em, t, w);
+            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+            swap_state(m); swap_rows(m);
+        } else if (e->info.d_conv <= 9u && m->p_dn_state2) {
+            emit_recurrent_mid2(e, em, t, w);
+        } else {
+            emit_recurrent_mid(e, em, t, w);
+            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+            em_group(em, 1);   /* snapshot of the state after row 0 */
+            em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
+            em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
+            em_group(em, 0);
+            swap_rows(m);
+            emit_recurrent_mid(e, em, t, w);
+            em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
+            swap_rows(m);
+        }
+        emit_rows_r2(m, em_enc(em), &w->ssm_out, m->ng, ALT(ng), m->branch, ALT(branch));
+    } else {
+        em_group(em, 1);
+        emit_rows_r2(m, em_enc(em), &w->q, m->normed, ALT(normed), m->qgate_raw, ALT(qgate_raw));
+        emit_rows_r2(m, em_enc(em), &w->k, m->normed, ALT(normed), m->k_raw, ALT(k_raw));
+        emit_rows_r2(m, em_enc(em), &w->v, m->normed, ALT(normed), m->value, ALT(value));
+        em_group(em, 0);
+        emit_attention_mid(e, em, t, w, position);
+        swap_rows(m); if (pair) swap_state(m);
+        emit_attention_mid(e, em, t, w, position1);
+        if (pair) swap_state(m);
+        swap_rows(m);
+        emit_rows_r2(m, em_enc(em), &w->o, m->gated, ALT(gated), m->branch, ALT(branch));
+    }
+    em_group(em, 1);
+    emit_resid_rms(m, em, w, hidden, eps);
+    swap_rows(m); emit_resid_rms(m, em, w, hidden, eps); swap_rows(m);
+    em_group(em, 0);
+    em_group(em, 1);   /* router, shared scalar, shared gate, shared up: all read ffn_in only */
+    emit_rows_r2(m, em_enc(em), &w->router, m->ffn_in, ALT(ffn_in), m->router_logits, ALT(router_logits));
+    emit_sh_scalar(m, em, w, hidden);
+    swap_rows(m); emit_sh_scalar(m, em, w, hidden); swap_rows(m);
+    emit_rows_r2(m, em_enc(em), &w->sh_gate, m->ffn_in, ALT(ffn_in), m->sh_gate, ALT(sh_gate));
+    emit_rows_r2(m, em_enc(em), &w->sh_up, m->ffn_in, ALT(ffn_in), m->sh_up, ALT(sh_up));
+    em_group(em, 0);
+    em_group(em, 1);
+    emit_sh_silu(m, em, w);
+    swap_rows(m); emit_sh_silu(m, em, w); swap_rows(m);
+    em_group(em, 0);
+    emit_rows_r2(m, em_enc(em), &w->sh_down, m->sh_act, ALT(sh_act), m->sh_out, ALT(sh_out));
+}
+
 static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint32_t position, uint32_t position1, int pair,
                         char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden;
     const float eps = in->rms_eps;
-    const uint32_t conv_n = (uint32_t)rl_engine_conv_count(e), rec_n = (uint32_t)rl_engine_rec_count(e);
     for (uint32_t l = 0; l < in->n_layer; ++l) {
-        const rl_layer_tensors *t = &e->layers[l];
-        const mlayer *w = &m->layers[l];
-        emit_steer(e, em, l, m->x); emit_steer(e, em, l, ALT(x));
-        em_group(em, 1);   /* the two rows' independent kernels share one barrier */
-        emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
-        emit_rms(m, em_enc(em), ALT(x), &w->attn_norm, ALT(normed), hidden, eps);
-        em_group(em, 0);
-        if (t->kind == RL_LAYER_MAP_RECURRENT) {
-            const uint32_t r = t->recurrent_index;
-            em_group(em, 1);
-            emit_rows_r2(m, em_enc(em), &w->qkv, m->normed, ALT(normed), m->qkv, ALT(qkv));
-            emit_rows_r2(m, em_enc(em), &w->z, m->normed, ALT(normed), m->z, ALT(z));
-            emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
-            em_group(em, 0);
-            if (pair) {
-                emit_recurrent_mid(e, em, t, w);
-                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-                swap_rows(m); swap_state(m);
-                emit_recurrent_mid(e, em, t, w);
-                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-                swap_state(m); swap_rows(m);
-            } else if (e->info.d_conv <= 9u && m->p_dn_state2) {
-                emit_recurrent_mid2(e, em, t, w);
-            } else {
-                emit_recurrent_mid(e, em, t, w);
-                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-                em_group(em, 1);   /* snapshot of the state after row 0 */
-                em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
-                em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
-                em_group(em, 0);
-                swap_rows(m);
-                emit_recurrent_mid(e, em, t, w);
-                em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
-                swap_rows(m);
-            }
-            emit_rows_r2(m, em_enc(em), &w->ssm_out, m->ng, ALT(ng), m->branch, ALT(branch));
-        } else {
-            em_group(em, 1);
-            emit_rows_r2(m, em_enc(em), &w->q, m->normed, ALT(normed), m->qgate_raw, ALT(qgate_raw));
-            emit_rows_r2(m, em_enc(em), &w->k, m->normed, ALT(normed), m->k_raw, ALT(k_raw));
-            emit_rows_r2(m, em_enc(em), &w->v, m->normed, ALT(normed), m->value, ALT(value));
-            em_group(em, 0);
-            emit_attention_mid(e, em, t, w, position);
-            swap_rows(m); if (pair) swap_state(m);
-            emit_attention_mid(e, em, t, w, position1);
-            if (pair) swap_state(m);
-            swap_rows(m);
-            emit_rows_r2(m, em_enc(em), &w->o, m->gated, ALT(gated), m->branch, ALT(branch));
-        }
-        em_group(em, 1);
-        emit_resid_rms(m, em, w, hidden, eps);
-        swap_rows(m); emit_resid_rms(m, em, w, hidden, eps); swap_rows(m);
-        em_group(em, 0);
-        em_group(em, 1);   /* router, shared scalar, shared gate, shared up: all read ffn_in only */
-        emit_rows_r2(m, em_enc(em), &w->router, m->ffn_in, ALT(ffn_in), m->router_logits, ALT(router_logits));
-        emit_sh_scalar(m, em, w, hidden);
-        swap_rows(m); emit_sh_scalar(m, em, w, hidden); swap_rows(m);
-        emit_rows_r2(m, em_enc(em), &w->sh_gate, m->ffn_in, ALT(ffn_in), m->sh_gate, ALT(sh_gate));
-        emit_rows_r2(m, em_enc(em), &w->sh_up, m->ffn_in, ALT(ffn_in), m->sh_up, ALT(sh_up));
-        em_group(em, 0);
-        em_group(em, 1);
-        emit_sh_silu(m, em, w);
-        swap_rows(m); emit_sh_silu(m, em, w); swap_rows(m);
-        em_group(em, 0);
-        emit_rows_r2(m, em_enc(em), &w->sh_down, m->sh_act, ALT(sh_act), m->sh_out, ALT(sh_out));
+        emit_verify2_dense(e, em, l, position, position1, pair);
         if (m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u) {
             if (!emit_layer_experts2(e, em, l, resident, error, cap)) return 0;
         } else {
@@ -1977,14 +1988,138 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
     return 1;
 }
 
+/* dev72: the 2-row verify with a bounded expert cache. Per layer: the dense part of both rows (emit_verify2_dense, one
+ * command buffer), router selection of both rows on the CPU, one prepare of the union of their experts (loads the misses
+ * and keeps them from being evicted by each other), then each row's experts encoded from a subset plan in its own
+ * selection order, as rl_metal_engine_step_sync does for one token. Exact routing only: with RL_ROUTE_CACHE_BIAS the
+ * selection depends on the cache state, which two rows at once would change. No pre-gated prefetch. */
+int rl_metal_engine_verify_available(const rl_metal_engine *m) { return m && m->spec_enabled && (m->preloaded || !(m->route_bias > 0.0f)); }
+
+static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,
+                           char *error, size_t cap) {
+    rl_backend_state *s = &e->gpu;
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
+    const float eps = in->rms_eps;
+    if (m->route_bias > 0.0f) { set_error(error, cap, "verify with a bounded expert cache needs exact routing (RL_ROUTE_CACHE_BIAS)"); return 0; }
+    uint32_t ids0[RL_ENGINE_MAX_TOPK], ids1[RL_ENGINE_MAX_TOPK], uids[2u * RL_ENGINE_MAX_TOPK], pids[2u * RL_ENGINE_MAX_TOPK];
+    float w0[RL_ENGINE_MAX_TOPK], w1[RL_ENGINE_MAX_TOPK], uzero[2u * RL_ENGINE_MAX_TOPK];
+    uint32_t npred = 0;   /* dev72: pre-gated prefetch of both rows' predicted experts, as rl_metal_engine_step_sync */
+    if (m->prefetch && !m->pred_logits_alt) m->pred_logits_alt = new_buf(m, (size_t)experts * sizeof(float));
+    memset(uzero, 0, sizeof(uzero));
+    float *probs = (float *)malloc((size_t)experts * sizeof(float));
+    rl_native_topk_plan *plans = (rl_native_topk_plan *)calloc(3u, sizeof(rl_native_topk_plan));   /* union, row 0, row 1 */
+    if (!probs || !plans) { free(probs); free(plans); set_error(error, cap, "verify scratch allocation failed"); return 0; }
+    int ok = 0;
+    @autoreleasepool {
+        if (!rl_engine_embed_token(e, t0, (float *)m->x.contents, error, cap) ||
+            !rl_engine_embed_token(e, t1, (float *)ALT(x).contents, error, cap)) goto done;
+        id<MTLCommandBuffer> pending = nil;
+        for (uint32_t l = 0; l < in->n_layer; ++l) {
+            emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
+            emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0);
+            const int predict = m->prefetch && m->pred_logits_alt && l + 1u < in->n_layer;
+            if (predict) {
+                emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, m->ffn_in, m->pred_logits);
+                emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, ALT(ffn_in), m->pred_logits_alt);
+            }
+            em_close(&em);
+            [em.cb commit];
+            if (npred) {   /* load this layer's predicted experts while the GPU runs the previous experts and this layer */
+                rl_native_topk_plan *pp = &plans[0];
+                if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, pids, uzero, npred, pp, error, cap) ||
+                    !rl_native_metal_release_topk(m->experts, pp, NULL, error, cap)) { [em.cb waitUntilCompleted]; goto done; }
+                npred = 0;
+            }
+            [em.cb waitUntilCompleted];   /* the queue ran the previous layer's experts first */
+            if (em.cb.status != MTLCommandBufferStatusCompleted || em.cb.error) {
+                snprintf(error, cap, "verify layer command buffer failed: %s", em.cb.error.localizedDescription.UTF8String ?: "unknown");
+                goto done;
+            }
+            if (pending) {
+                pending = nil;
+                if (!rl_native_metal_release_topk(m->experts, &plans[1], NULL, error, cap) ||
+                    !rl_native_metal_release_topk(m->experts, &plans[2], NULL, error, cap)) goto done;
+            }
+            if (!rl_native_router_select_softmax_topk((const float *)m->router_logits.contents, experts, topk, ids0, w0, probs, error, cap) ||
+                !rl_native_router_select_softmax_topk((const float *)ALT(router_logits).contents, experts, topk, ids1, w1, probs, error, cap)) goto done;
+            if (predict) {   /* union of both rows' predictions for the next layer */
+                uint32_t p0[RL_ENGINE_MAX_TOPK], p1[RL_ENGINE_MAX_TOPK];
+                float pw[RL_ENGINE_MAX_TOPK];
+                if (!rl_native_router_select_softmax_topk((const float *)m->pred_logits.contents, experts, topk, p0, pw, probs, error, cap) ||
+                    !rl_native_router_select_softmax_topk((const float *)m->pred_logits_alt.contents, experts, topk, p1, pw, probs, error, cap)) goto done;
+                for (uint32_t k = 0; k < topk; ++k) pids[npred++] = p0[k];
+                for (uint32_t k = 0; k < topk; ++k) {
+                    uint32_t j = 0;
+                    while (j < topk && p0[j] != p1[k]) ++j;
+                    if (j == topk) pids[npred++] = p1[k];
+                }
+            }
+            memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids0, (size_t)topk * sizeof(uint32_t));
+            uint32_t nu = 0;
+            for (uint32_t k = 0; k < topk; ++k) uids[nu++] = ids0[k];
+            for (uint32_t k = 0; k < topk; ++k) {
+                uint32_t j = 0;
+                while (j < topk && ids0[j] != ids1[k]) ++j;
+                if (j == topk) uids[nu++] = ids1[k];
+            }
+            if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, uids, uzero, nu, &plans[0], error, cap)) goto done;
+            if (!rl_native_metal_plan_subset(&plans[0], uids, ids0, w0, topk, &plans[1]) ||
+                !rl_native_metal_plan_subset(&plans[0], uids, ids1, w1, topk, &plans[2])) { set_error(error, cap, "verify expert plan subset failed"); goto done; }
+            /* one command buffer per row (the pool's scratch buffers serve one row at a time, in queue order) */
+            id<MTLCommandBuffer> cb = nil;
+            for (int r = 0; r < 2; ++r) {
+                cb = [m->queue commandBuffer];
+                if (!rl_native_metal_encode_topk(m->experts, &plans[1 + r], (__bridge void *)cb, (__bridge void *)m->ffn_in, 0u,
+                        (__bridge void *)m->routed, 0u, error, cap)) { if (r) swap_rows(m); goto done; }
+                emitter xm = { m, cb, nil, m->abort_zero };
+                emit_scale_add(e, &xm);
+                em_close(&xm);
+                [cb commit];
+                swap_rows(m);   /* row 1 next; after both, back to row 0 */
+            }
+            pending = cb;
+        }
+        {
+            emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
+            em_group(&em, 1);
+            emit_rms(m, em_enc(&em), m->x, &m->output_norm, m->final_norm, hidden, eps);
+            emit_rms(m, em_enc(&em), ALT(x), &m->output_norm, ALT(final_norm), hidden, eps);
+            em_group(&em, 0);
+            emit_rows_r2(m, em_enc(&em), &m->output, m->final_norm, ALT(final_norm), m->logits, ALT(logits));
+            em_close(&em);
+            double gpu_ms = 0.0;
+            if (!commit_wait(em.cb, "verify output", &gpu_ms, error, cap)) goto done;
+        }
+        pending = nil;
+        if (!rl_native_metal_release_topk(m->experts, &plans[1], NULL, error, cap) ||
+            !rl_native_metal_release_topk(m->experts, &plans[2], NULL, error, cap)) goto done;
+        if (logits0) memcpy(logits0, m->logits.contents, (size_t)in->vocab * sizeof(float));
+        if (logits1) memcpy(logits1, ALT(logits).contents, (size_t)in->vocab * sizeof(float));
+        ok = 1;
+    }
+done:
+    if (plans[1].active || plans[2].active) {   /* a failure left experts in flight: drain the queue, then release */
+        id<MTLCommandBuffer> drain = [m->queue commandBuffer];
+        [drain commit];
+        [drain waitUntilCompleted];
+        rl_native_metal_release_topk(m->experts, &plans[1], NULL, NULL, 0);
+        rl_native_metal_release_topk(m->experts, &plans[2], NULL, NULL, 0);
+    }
+    free(probs); free(plans);
+    if (ok) m->verify_pending = 1;
+    return ok;
+}
+
 int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,
                             char *error, size_t cap) {
     rl_backend_state *s = &e->gpu;
     const rl_engine_info *in = &e->info;
-    if (!m->spec_enabled || !m->preloaded) { set_error(error, cap, "verify needs every expert resident (full residency)"); return 0; }
+    if (!m->spec_enabled) { set_error(error, cap, "verify needs the residency table (RL_ENGINE_SPECULATIVE)"); return 0; }
     if (m->verify_pending) { set_error(error, cap, "previous verify not committed"); return 0; }
     if (s->position + 2u > in->context) { set_error(error, cap, "context capacity exhausted"); return 0; }
     if (!verify_alloc(e, m)) { set_error(error, cap, "verify buffer allocation failed"); return 0; }
+    if (!m->preloaded) return verify2_bounded(e, m, t0, t1, logits0, logits1, error, cap);
     id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->experts);
     @autoreleasepool {
         if (!rl_engine_embed_token(e, t0, (float *)m->x.contents, error, cap) ||

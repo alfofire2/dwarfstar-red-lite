@@ -1,0 +1,221 @@
+{
+  "id": "dev72-bounded-verify-profiling",
+  "date": "2026-10-08",
+  "source": "docs/REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md",
+  "file_rewrite_greedy_bounded_4gib": {
+    "m4max": {
+      "plain_exact": [
+        49.85,
+        49.19
+      ],
+      "lookup": [
+        64.73,
+        65.59
+      ],
+      "accepted": "137/161"
+    },
+    "m4pro": {
+      "plain_bias_0_5": [
+        31.48,
+        32.35
+      ],
+      "plain_exact": [
+        28.64,
+        28.69
+      ],
+      "lookup": [
+        38.11,
+        37.53
+      ],
+      "accepted": "137/161"
+    },
+    "identical": true
+  },
+  "agent_m4pro_64k_4gib_cache": {
+    "cache_aware_routing": {
+      "tasks": {
+        "passed": 13,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 1,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 0,
+          "explain_kv_pad": 3,
+          "debug_session": 3
+        },
+        "timeouts": 4,
+        "total_min": 140
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 87,
+          "tokens": 11478,
+          "tok_s": 25.9,
+          "accepted": null
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 45,
+          "tokens": 5196,
+          "tok_s": 23.9,
+          "accepted": null
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 189,
+          "tokens": 33622,
+          "tok_s": 21.0,
+          "accepted": null
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 116,
+          "tokens": 48516,
+          "tok_s": 19.5,
+          "accepted": null
+        }
+      ]
+    },
+    "prompt_lookup": {
+      "tasks": {
+        "passed": 13,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 3,
+          "rename": 3,
+          "write_tests": 3,
+          "c_limit": 0,
+          "explain_kv_pad": 2,
+          "debug_session": 2
+        },
+        "timeouts": 3,
+        "total_min": 130
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 105,
+          "tokens": 15081,
+          "tok_s": 27.6,
+          "accepted": 0.787
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 31,
+          "tokens": 3714,
+          "tok_s": 25.7,
+          "accepted": 0.843
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 165,
+          "tokens": 31757,
+          "tok_s": 22.5,
+          "accepted": 0.747
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 274,
+          "tokens": 34521,
+          "tok_s": 21.4,
+          "accepted": 0.818
+        }
+      ]
+    }
+  },
+  "mlx_m4max": {
+    "method": "mlx-lm 0.32.0, greedy, 300 tokens, same prompts as Red Lite",
+    "redlite_cf2": {
+      "decode": 80.0,
+      "decode_lookup_rewrite": 111.5,
+      "prefill_1738": 929.0
+    },
+    "mlx_3bit_NexVeridian": {
+      "size_gib": 32.5,
+      "decode": [
+        93.9,
+        95.6,
+        94.0,
+        96.0
+      ],
+      "prefill_1738_warm": 1427.0,
+      "peak_gb": 36.8,
+      "rewrite_faithful": true
+    },
+    "mlx_2bit_majentik": {
+      "size_gib": 23.23,
+      "decode": [
+        107.2,
+        109.7,
+        106.4,
+        108.4
+      ],
+      "prefill_1738_warm": 1439.4,
+      "peak_gb": 26.9,
+      "rewrite_faithful": false
+    }
+  },
+  "llama_drift_per_layer_median_rel_to_scale": {
+    "32768": {
+      "0": 6.19e-08,
+      "3": 1.01e-05,
+      "7": 9.06e-05,
+      "11": 0.000334,
+      "20": 0.00184,
+      "21": 0.00228,
+      "30": 0.00796,
+      "47": 0.0466
+    },
+    "65536": {
+      "0": 9.53e-08,
+      "3": 7.32e-07,
+      "7": 3.1e-06,
+      "11": 2.54e-05,
+      "20": 0.000474,
+      "21": 0.000583,
+      "30": 0.0103,
+      "47": 0.0284
+    },
+    "kl_last4": {
+      "32768": [
+        9e-07,
+        2.8e-09,
+        5.9e-08,
+        1.2e-06
+      ],
+      "65536": [
+        6.2e-08,
+        1.3e-08,
+        3.9e-08,
+        8.2e-09
+      ]
+    }
+  },
+  "xcode_profile_attn_fa_b2_512_at_7680": {
+    "median_ms": 8.6,
+    "f32_limiter": 0.749,
+    "f32_utilization": 0.619,
+    "instruction_throughput_limiter": 0.6645,
+    "alu_utilization": 0.4156,
+    "occupancy": 0.142,
+    "registers": 166,
+    "spilled_bytes": 0,
+    "alu_float": 0.7447,
+    "alu_integer": 0.2553
+  },
+  "validation": {
+    "regress_m4": "59/0/0 (incl. engine.verify_bounded, engine.verify_full)",
+    "quick_parity_long": "5/5",
+    "local_ci": "PASS"
+  }
+}

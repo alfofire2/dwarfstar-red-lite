@@ -125,11 +125,15 @@ python3 -c "import random,struct; random.seed(7); open('$LOG/steer.f32','wb').wr
 expect_line engine.parity.steered "MULTI-TOKEN ENGINE PARITY: YES" env RL_STEER_FILE="$LOG/steer.f32" RL_STEER_LAYERS=10-30 RL_STEER_STRENGTH=3 \
   "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879 --cache-mib 1024 --context 64
 
+# dev72: the 2-row verify (MTP, prompt lookup) against plain steps, with a bounded expert cache
+expect_line engine.verify_bounded "VERIFY CHECK: YES" "$BIN/redlite-engine" verify-check "$MODEL" --tokens 9707,11,1879,13,785,6457,374,264,1273,315 --cache-mib 1024 --context 64
+
 if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   echo "== GPU-routed decode (dev21, full residency; >= 40 GiB) =="
   expect_line engine.parity.gpu_routed "MULTI-TOKEN ENGINE PARITY: YES" "$BIN/redlite-engine" parity "$MODEL" --tokens 9707,11,1879,0,785,12884 --cache-mib full --context 64 --repeat 2
   grep -q "GPU-routed tokens     : 12 speculative" "$LOG/engine.parity.gpu_routed.log" || { echo "FAIL  engine.parity.gpu_routed.count (expected 12 GPU-routed tokens)"; FAIL=$((FAIL + 1)); FAILED+=(engine.parity.gpu_routed.count); }
   # dev56: two sequences in one pass (rl_engine_step_pair) vs each alone, and the --parallel 2 server
+  expect_line engine.verify_full "VERIFY CHECK: YES" "$BIN/redlite-engine" verify-check "$MODEL" --tokens 9707,11,1879,13,785,6457,374,264,1273,315 --cache-mib full --context 64
   expect_line engine.pair "^PASS$" "$BIN/redlite-engine" pair "$MODEL" --tokens 9707,11,1879,0,785,12884,374,264,1273,13 --cache-mib full --context 64
   expect_line server.parallel_greedy "SERVER PARALLEL CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --parallel
   # dev70: prompt lookup speculation, greedy identical to plain decoding, drafts accepted

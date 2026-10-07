@@ -538,6 +538,21 @@ int rl_native_metal_prepare_topk(
     return 1;
 }
 
+int rl_native_metal_plan_subset(const rl_native_topk_plan *u, const uint32_t *union_ids, const uint32_t *ids,
+                                const float *weights, uint32_t k, rl_native_topk_plan *out) {
+    if (!u || !union_ids || !ids || !weights || !out || !k || k > u->top_k) return 0;
+    memset(out, 0, sizeof(*out));
+    out->layer = u->layer; out->ggml_type = u->ggml_type; out->hidden = u->hidden; out->ffn = u->ffn; out->top_k = k;
+    for (uint32_t i = 0; i < k; ++i) {
+        uint32_t j = 0;
+        while (j < u->top_k && union_ids[j] != ids[i]) ++j;
+        if (j == u->top_k) return 0;
+        out->slots[i] = u->slots[j]; out->gate_bytes[i] = u->gate_bytes[j]; out->up_bytes[i] = u->up_bytes[j];
+        out->down_bytes[i] = u->down_bytes[j]; out->weights[i] = weights[i];
+    }
+    return 1;
+}
+
 int rl_native_metal_encode_topk(
         rl_native_metal_runtime *runtime,
         rl_native_topk_plan *plan,

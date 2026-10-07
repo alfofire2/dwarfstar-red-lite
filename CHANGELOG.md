@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.1 — 2026-10-08
+
+**Prompt lookup on 24 GiB Macs too.**
+- **The 2-row verify behind MTP and prompt lookup no longer needs every expert resident.** With a bounded expert cache
+  it loads the union of both rows' experts in one step, with prefetch.
+- **`redlite serve` and `redlite chat` use prompt lookup with a bounded cache too**, with exact routing instead of
+  cache-aware routing. On the M4 Pro 24 GiB with the 4 GiB cache and a 64K window, coding-agent decode was 7–10 %
+  faster than the old default, with exact answers. Rewriting a file there went from 31.9 to 37.8 tok/s.
+- **Fixed on the way:** the expert pool wrote its slot and weight tables into shared buffers at encode time. Two
+  encodes in flight would have read each other's tables; plain decoding never had two. The tables now go into the
+  command buffer.
+- **Measured against MLX** on the M4 Max (FINDINGS section 3).
+  - MLX's 3-bit Coder decodes about 20 % faster and ingests prompts about 50 % faster, but needs 32.5 GiB.
+  - MLX's 2-bit Coder corrupted a file it was asked to copy.
+- **The drift from llama.cpp past 64K is numerics, not a bug:** per-layer dumps were checked at 32K and 64K.
+- **GPU profiling of the kernels with Xcode** (`prefill-attn-bench`, `prefill-expert-bench`, `RL_GPU_CAPTURE`). First
+  profile: the prefill attention is float32-bound, at 14 % occupancy with 166 registers per thread.
+- Validation:
+  - `regress_m4.sh` 59 / 0 / 0, with the new `engine.verify_bounded` and `engine.verify_full`;
+  - `quick_parity.sh --long` 5 / 5;
+  - local CI.
+
+
+- dev72: **bounded-cache verify, MLX, the llama.cpp drift, GPU profiling**
+  (`docs/REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md`).
+
 ## 0.9.0 — 2026-10-07
 
 **Faster coding agents: prompt lookup speculative decoding.**

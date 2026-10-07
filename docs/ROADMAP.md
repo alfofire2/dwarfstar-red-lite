@@ -3,7 +3,7 @@
 Agreed with the project owner on 2026-10-03, updated on 2026-10-06. Updated as steps finish: each step links its milestone document when
 done. Estimates are estimates; only measured numbers go into the results pages.
 
-## Where things stand (0.9.0, 2026-10-07)
+## Where things stand (0.9.1, 2026-10-08)
 
 - **24 GiB Mac** (M4 Pro), file F2:
   - default, experts from the SSD: decode 34 tok/s;
@@ -28,9 +28,16 @@ done. Estimates are estimates; only measured numbers go into the results pages.
   half and float simdgroup matrix products at the same 15.5–15.9 TFLOPS (dev70). The kernels run at 6–8 TFLOPS, so
   the room is in their structure. At 32K the prefill splits into attention 17.5 s, DeltaNet layers 14.7 s,
   experts 19.6 s.
-- **Agreement with llama.cpp past 64K:** the KL rises to 0.025 at 128K. Find which sum drifts (RoPE precision is
-  ruled out, dev67).
+- **Kernels redesigned from the Xcode profiles** (dev72 tools): the prefill attention is float32-bound at 14 %
+  occupancy with 166 registers; the routed-expert kernels are next. MLX ingests prompts about 50 % faster and decodes
+  about 20 % faster on the M4 Max, so the room is real.
+- **MTP with a bounded expert cache** (24 GiB Macs at the default GPU limit): the verify works since dev72; measure it.
 - **G2 at long context** and a 48 GiB Coder mix (dev64).
+
+## Done in 0.9.1 (dev72)
+
+- Prompt lookup with a bounded expert cache: +7–10 % agent decode on the M4 Pro 24 GiB (4 GiB cache), exact answers.
+- The drift from llama.cpp past 64K explained (float sum order, MoE near-ties); MLX measured; Xcode GPU profiling.
 
 ## Done in 0.9.0 (dev70)
 

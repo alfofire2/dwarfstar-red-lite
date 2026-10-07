@@ -125,6 +125,12 @@ const uint32_t *rl_engine_last_router_ids(const rl_engine *engine, rl_engine_bac
 
 /* dev21: 1 when the Metal backend preloaded every routed expert at open (full residency); preload_ms receives the time. */
 int rl_engine_experts_preloaded(const rl_engine *engine, double *preload_ms);
+/* dev72: rl_engine_verify2 can run: every expert resident, or a bounded expert cache with exact routing (no
+ * RL_ROUTE_CACHE_BIAS); the bounded verify loads the union of both rows' experts */
+int rl_engine_verify_available(const rl_engine *engine);
+/* dev72 (dev only): the batched-prefill attention and routed-expert kernels of one layer on buffers of their own (see
+ * rl_metal_prefill_kernel_bench), for timing and small Metal GPU captures */
+int rl_engine_prefill_kernel_bench(rl_engine *engine, uint32_t batch, uint32_t position0, uint32_t layer, char *error, size_t error_cap);
 
 #define RL_ENGINE_CACHE_FULL UINT64_MAX
 /* MiB of expert cache that holds every routed expert of the opened file: 48 x 512 pool slots of the largest

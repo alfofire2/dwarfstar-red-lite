@@ -12,7 +12,7 @@ machine). "Tested synthetically" means model-free tests only.
 | [../README.md](../README.md) | The guide: install, FAQ, what runs, measured performance per Mac, correctness, limits, coding agents |
 | [FINDINGS.md](FINDINGS.md) | **Read first.** What we learned, with charts: where a token's time goes, speed by release vs llama.cpp, exact MTP speculation, 24 GiB cache options, long context, correctness, a better 2-bit file, coding agents |
 | [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) | Every reverted attempt, correctness trap and unreached target, with the measurement that decided it |
-| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.9.0 and what comes next |
+| [ROADMAP.md](ROADMAP.md) | Where things stand after 0.9.1 and what comes next |
 | [../CHANGELOG.md](../CHANGELOG.md) | Every release from 0.6.1 back to 0.3.0, then every dev milestone |
 
 The project site, [redlite.alfonsodaniello.it](https://redlite.alfonsodaniello.it/), renders these pages with a
@@ -22,6 +22,7 @@ search (`scripts/dev/build_site.py`).
 
 | Milestone | Document |
 |---|---|
+| dev72 prompt lookup with a bounded expert cache (24 GiB Macs), MLX comparison, the llama.cpp drift explained, Xcode GPU profiling tools | [REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md](REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md) |
 | dev70 prompt lookup speculative decoding for coding agents (+15–25 % decode, same output), half-precision micro-benchmark | [REDLITE_DEV70_PROMPT_LOOKUP.md](REDLITE_DEV70_PROMPT_LOOKUP.md) |
 | dev67 decode attention: whole-line key reads and a parallel merge (+4–13 % decode at 64K–256K), RoPE precision probe | [REDLITE_DEV67_DECODE_ATTENTION_MERGE.md](REDLITE_DEV67_DECODE_ATTENTION_MERGE.md) |
 | dev66 faster decode attention at long contexts (+16–35 % decode at 62K–256K) | [REDLITE_DEV66_DECODE_ATTENTION.md](REDLITE_DEV66_DECODE_ATTENTION.md) |

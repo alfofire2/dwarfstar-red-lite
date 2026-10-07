@@ -678,6 +678,23 @@ uint32_t rl_engine_prefill_batch(const rl_engine *e) {
     return 2048u;
 }
 
+int rl_engine_prefill_kernel_bench(rl_engine *e, uint32_t batch, uint32_t position0, uint32_t layer, char *error, size_t cap) {
+#ifdef __APPLE__
+    if (e && e->gpu_enabled && e->metal) return rl_metal_prefill_kernel_bench(e, e->metal, batch, position0, layer, error, cap);
+#endif
+    (void)e; (void)batch; (void)position0; (void)layer;
+    set_error(error, cap, "prefill-kernel-bench needs Metal");
+    return 0;
+}
+
+int rl_engine_verify_available(const rl_engine *e) {
+#ifdef __APPLE__
+    if (e && e->gpu_enabled && e->metal) return rl_metal_engine_verify_available(e->metal);
+#endif
+    (void)e;
+    return 0;
+}
+
 int rl_engine_experts_preloaded(const rl_engine *e, double *preload_ms) {
     if (preload_ms) *preload_ms = 0.0;
 #ifdef __APPLE__

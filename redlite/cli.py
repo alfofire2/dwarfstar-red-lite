@@ -315,10 +315,12 @@ def _gpu_tuning(model, cache_mib, args, context: int):
 
 
 def _lookup_for(model, cache_mib, mtp, args) -> bool:
-    """dev70: prompt lookup speculation when every expert is resident and there is no MTP head (Qwen3-Coder-Next):
-    +15-25 % decode in coding-agent sessions on the M4 Max, same output; --no-lookup disables"""
-    from .planner import native_residency
-    lookup = mtp is None and not getattr(args, "no_lookup", False) and _full_residency(native_residency(model), cache_mib)
+    """dev70: prompt lookup speculation when there is no MTP head (Qwen3-Coder-Next), same output; --no-lookup disables.
+    Every expert resident: +15-25 % decode in coding-agent sessions on the M4 Max. dev72: with a bounded cache too (the
+    verify loads both rows' experts), which needs exact routing: +7-10 % over cache-aware routing on the M4 Pro 24 GiB
+    with the 4 GiB cache, so it replaces that default. A user's RL_ROUTE_CACHE_BIAS keeps it off."""
+    import os
+    lookup = mtp is None and not getattr(args, "no_lookup", False) and "RL_ROUTE_CACHE_BIAS" not in os.environ
     if lookup:
         print("[redlite] prompt lookup speculative decoding (same output as plain decoding; --no-lookup disables)")
     return lookup
@@ -329,7 +331,7 @@ def _full_residency(res, cache_mib) -> bool:
     return res is not None and (str(cache_mib) == "full" or (str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib))
 
 
-def _route_bias_env(model, cache_mib, args) -> None:
+def _route_bias_env(model, cache_mib, args, lookup: bool = False) -> None:
     """dev51 (roadmap 2c): cache-aware routing by default with a bounded expert cache.
 
     lambda = 0.5 is +5 % decode on the M4 Pro 24 GiB with a 4 GiB cache, with no measured quality loss: perplexity
@@ -339,8 +341,8 @@ def _route_bias_env(model, cache_mib, args) -> None:
     """
     import os
     from .planner import native_residency
-    if getattr(args, "exact_routing", False) or "RL_ROUTE_CACHE_BIAS" in os.environ:
-        return
+    if lookup or getattr(args, "exact_routing", False) or "RL_ROUTE_CACHE_BIAS" in os.environ:
+        return   # dev72: prompt lookup needs exact routing and gains more
     res = native_residency(model)
     full = str(cache_mib) == "full" or (res is not None and str(cache_mib).isdigit() and int(cache_mib) >= res.cache_mib)
     if not full:
@@ -378,9 +380,9 @@ def cmd_chat(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
-    _route_bias_env(model, cache_mib, args)
     batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
+    _route_bias_env(model, cache_mib, args, lookup)
     try:
         return run_native_chat(
             str(model), args.context, cache_mib, args.max_tokens,
@@ -428,9 +430,9 @@ def _serve_native(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), plan_context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
-    _route_bias_env(model, cache_mib, args)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
+    _route_bias_env(model, cache_mib, args, lookup)
     try:
         return run_native_server(
             str(model), args.host, args.port, context, cache_mib,
