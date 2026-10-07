@@ -1369,6 +1369,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->x = m->normed = m->branch = m->resid = m->ffn_in = m->qkv = m->z = m->ba = m->beta = m->gate = m->conv_silu = nil;
     m->q = m->k = m->delta = m->core = m->ng = m->next_conv = m->rec_scratch = m->qgate_raw = m->k_raw = m->value = nil;
     m->query = m->agate = m->key = m->query_rope = m->gated = m->router_logits = m->sh_gate = m->sh_up = m->sh_act = nil;
+    m->pred_logits_alt = nil;
     m->sh_out = m->scalar = m->routed = m->final_norm = m->logits = m->grid = nil;
     m->p_moe_tail = nil;
     m->steer = nil; m->p_steer = nil;
@@ -2001,8 +2002,10 @@ static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
     const float eps = in->rms_eps;
     if (m->route_bias > 0.0f) { set_error(error, cap, "verify with a bounded expert cache needs exact routing (RL_ROUTE_CACHE_BIAS)"); return 0; }
-    uint32_t ids0[RL_ENGINE_MAX_TOPK], ids1[RL_ENGINE_MAX_TOPK], uids[2u * RL_ENGINE_MAX_TOPK];
+    uint32_t ids0[RL_ENGINE_MAX_TOPK], ids1[RL_ENGINE_MAX_TOPK], uids[2u * RL_ENGINE_MAX_TOPK], pids[2u * RL_ENGINE_MAX_TOPK];
     float w0[RL_ENGINE_MAX_TOPK], w1[RL_ENGINE_MAX_TOPK], uzero[2u * RL_ENGINE_MAX_TOPK];
+    uint32_t npred = 0;   /* dev72: pre-gated prefetch of both rows' predicted experts, as rl_metal_engine_step_sync */
+    if (m->prefetch && !m->pred_logits_alt) m->pred_logits_alt = new_buf(m, (size_t)experts * sizeof(float));
     memset(uzero, 0, sizeof(uzero));
     float *probs = (float *)malloc((size_t)experts * sizeof(float));
     rl_native_topk_plan *plans = (rl_native_topk_plan *)calloc(3u, sizeof(rl_native_topk_plan));   /* union, row 0, row 1 */
@@ -2015,8 +2018,19 @@ static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32
         for (uint32_t l = 0; l < in->n_layer; ++l) {
             emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
             emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0);
+            const int predict = m->prefetch && m->pred_logits_alt && l + 1u < in->n_layer;
+            if (predict) {
+                emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, m->ffn_in, m->pred_logits);
+                emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, ALT(ffn_in), m->pred_logits_alt);
+            }
             em_close(&em);
             [em.cb commit];
+            if (npred) {   /* load this layer's predicted experts while the GPU runs the previous experts and this layer */
+                rl_native_topk_plan *pp = &plans[0];
+                if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, pids, uzero, npred, pp, error, cap) ||
+                    !rl_native_metal_release_topk(m->experts, pp, NULL, error, cap)) { [em.cb waitUntilCompleted]; goto done; }
+                npred = 0;
+            }
             [em.cb waitUntilCompleted];   /* the queue ran the previous layer's experts first */
             if (em.cb.status != MTLCommandBufferStatusCompleted || em.cb.error) {
                 snprintf(error, cap, "verify layer command buffer failed: %s", em.cb.error.localizedDescription.UTF8String ?: "unknown");
@@ -2029,6 +2043,18 @@ static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32
             }
             if (!rl_native_router_select_softmax_topk((const float *)m->router_logits.contents, experts, topk, ids0, w0, probs, error, cap) ||
                 !rl_native_router_select_softmax_topk((const float *)ALT(router_logits).contents, experts, topk, ids1, w1, probs, error, cap)) goto done;
+            if (predict) {   /* union of both rows' predictions for the next layer */
+                uint32_t p0[RL_ENGINE_MAX_TOPK], p1[RL_ENGINE_MAX_TOPK];
+                float pw[RL_ENGINE_MAX_TOPK];
+                if (!rl_native_router_select_softmax_topk((const float *)m->pred_logits.contents, experts, topk, p0, pw, probs, error, cap) ||
+                    !rl_native_router_select_softmax_topk((const float *)m->pred_logits_alt.contents, experts, topk, p1, pw, probs, error, cap)) goto done;
+                for (uint32_t k = 0; k < topk; ++k) pids[npred++] = p0[k];
+                for (uint32_t k = 0; k < topk; ++k) {
+                    uint32_t j = 0;
+                    while (j < topk && p0[j] != p1[k]) ++j;
+                    if (j == topk) pids[npred++] = p1[k];
+                }
+            }
             memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids0, (size_t)topk * sizeof(uint32_t));
             uint32_t nu = 0;
             for (uint32_t k = 0; k < topk; ++k) uids[nu++] = ids0[k];
