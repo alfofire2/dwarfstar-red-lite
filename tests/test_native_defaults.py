@@ -109,7 +109,7 @@ class NativeChatDefaultsCliTests(unittest.TestCase):
         text = self._run(48)
         self.assertIn("--lookup", text)
         self.assertNotIn("--lookup", self._run(48, "--no-lookup").split("redlite-generate", 1)[-1])
-        self.assertNotIn("--lookup", self._run(24))   # bounded 4 GiB cache
+        self.assertIn("--lookup", self._run(24))   # dev72: a bounded cache verifies too
 
     def test_explicit_cache_and_batch_win(self):
         text = self._run(48, "--cache-mib", "1024", "--batch", "128", "--json", "--min-p", "0.05")
@@ -143,7 +143,8 @@ class NativeServeCliTests(unittest.TestCase):
     def test_serve_native_on_24gb_defaults_to_4gb_and_4096_context(self):
         text = self._run(24)
         self.assertIn("--context 4096 --cache-mib 4096", text)
-        self.assertNotIn("--lookup", text)   # dev70: a bounded cache cannot verify two rows
+        self.assertIn("--lookup", text)   # dev72: a bounded cache verifies too, with exact routing
+        self.assertNotIn("cache-aware expert routing", text)
 
     def test_serve_native_full_residency_uses_prompt_lookup(self):
         text = self._run(48)
@@ -219,6 +220,17 @@ class RouteBiasDefaultTests(unittest.TestCase):
     def test_full_residency_does_not(self):
         self.assertIsNone(self._run(17316))
         self.assertIsNone(self._run("full"))
+
+    def test_prompt_lookup_keeps_routing_exact(self):
+        import argparse
+        import os
+        from redlite.cli import _route_bias_env
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RL_ROUTE_CACHE_BIAS", None)
+            with patch("redlite.planner.native_residency", return_value=NativeResidency(17316, GIB)), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                _route_bias_env("/m/x.gguf", 4096, argparse.Namespace(exact_routing=False), lookup=True)
+            self.assertIsNone(os.environ.get("RL_ROUTE_CACHE_BIAS"))
 
     def test_exact_routing_and_user_setting_win(self):
         self.assertIsNone(self._run(4096, exact=True))
