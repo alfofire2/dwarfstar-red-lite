@@ -241,6 +241,11 @@ them.
 - **OLED-MoE (2609.33385): not applicable.** Its inter-iteration expert retention targets diffusion LLMs.
 - **Overlapping CPU encoding with GPU execution (dev38): not attempted.** At full residency the CPU
   gap between GPU-routed tokens is 0.44 ms of 12.1 ms.
+- **32-pair tiles in the batched expert matrix kernels (dev69).** `redmetal_topk_gateup_mm` / `down_mm` serve 16
+  (expert, token) pairs per decoded weight tile; with 2048-token chunks an expert gets about 40 pairs, so 32 would
+  halve the decode work per multiply. Bit-identical (each pair's sums keep their order), but the expert stage of an
+  8,191-token prefill went from 4.0 s to 20.3 s (CF2, M4 Max): twice the accumulators (32 8×8 tiles per simdgroup in
+  gate/up) do not fit in registers. 16 pairs (dev30) stays. Not kept.
 - **4096- and 8192-token prefill chunks (dev68, measured).** dev34 left them untried (they exceed the 32,768 pairs one
   expert plan accepts, a sanity bound; the pair buffers grow on demand). With the bound raised, an 8,191-token prompt
   (CF2, every expert resident, M4 Max, alternated) took 8.69 / 8.99 s in chunks of 2048, 8.51 / 8.74 s in 4096 and
