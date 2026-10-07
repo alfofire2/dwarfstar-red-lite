@@ -128,5 +128,68 @@
     "regress_m4": "55/0/0",
     "quick_parity_long": "5/5",
     "local_ci": "PASS"
+  },
+  "hard_suite_0_8_2": {
+    "method": "agent_eval.py --suite hard --timeout 900 --temperature 0.3, three runs, CF2",
+    "m4max_128k_window": {
+      "passed": 16,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 2,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 3,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 1,
+      "median_wall_s": 121.2,
+      "total_min": 52
+    },
+    "m4max_64k_window_0_8_0": {
+      "passed": 16,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 2,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 3,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 1,
+      "median_wall_s": 112.0,
+      "total_min": 62
+    },
+    "m4pro_64k_4gib_cache": {
+      "passed": 11,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 1,
+        "rename": 3,
+        "write_tests": 2,
+        "c_limit": 0,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 6,
+      "median_wall_s": 455.4,
+      "total_min": 169
+    },
+    "m4pro_64k_4gib_cache_0_8_0": {
+      "passed": 12,
+      "of": 18,
+      "per_task": {
+        "two_bugs": 1,
+        "rename": 3,
+        "write_tests": 3,
+        "c_limit": 0,
+        "explain_kv_pad": 3,
+        "debug_session": 2
+      },
+      "timeouts": 4,
+      "median_wall_s": 392.1,
+      "total_min": 141
+    }
   }
 }

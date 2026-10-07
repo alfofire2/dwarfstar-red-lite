@@ -54,6 +54,19 @@ at 62K), so these are not a comparison.
 (3.38 against 3.76 ms), but in `decode-bench` at 32K the difference is inside the noise (68–71 tok/s against
 66–72). The rule stays at 256 from 12,288 positions.
 
+**Coding agents** (the dev65 hard suite, CF2, temperature 0.3, three runs, 0.8.2):
+
+| Machine, window | 0.8.0 | 0.8.2 | Time for 18 tasks |
+|---|---:|---:|---:|
+| M4 Max, 64K window (0.8.0) / 128K window (0.8.2) | 16 / 18 | 16 / 18 | 62 → 52 min |
+| M4 Pro 24 GiB, 64K window, 4 GiB cache | 12 / 18 | 11 / 18 | 141 → 169 min |
+
+- **A 128K window** passes the same tasks as 64K on the M4 Max (the same 16, per task): these sessions stay under
+  64K, so the larger window neither helps nor hurts.
+- **On the 24 GiB Mac** the change is within the run-to-run spread of the agent (6 runs at the time limit instead
+  of 4). Agent requests sit at 8–30K tokens, where the decode there is bound by expert reads from the SSD, not by
+  attention.
+
 ## 3. Validation
 
 - Kernel self-test: 6 lengths × 4 kernels against double-precision GQA, worst abs 7.56e-8.

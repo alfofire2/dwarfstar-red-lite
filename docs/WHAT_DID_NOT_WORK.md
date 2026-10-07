@@ -186,6 +186,11 @@ them.
   22.4 s against 17.0 s, and 35 s once the four P tiles were held in registers to load each V tile once. The premise
   was wrong: `attn_fa_b2` already runs about 6 TFLOPS at 32K, so it is limited by the matrix units, not by key/value
   reads, and the larger per-thread state only cost occupancy. Not kept.
+- **Two agent suites on one server (dev67, a trap).** A remote start that seemed to fail had started; the second
+  start ran a second copy of the hard suite against the same `redlite-server`. The two pi sessions alternated, so no
+  request extended the held prompt: 0 % prefix reuse instead of 93 %, every turn re-read 15K tokens (80 s on the
+  M4 Pro), 16 of 18 tasks hit the time limit, 1 / 18 passed. Each result line appeared twice in the log. The run was
+  discarded and repeated alone (11 / 18). Check `pgrep -f` for a single suite, and the server log's `cached` counts.
 - **Decode attention variants that did not add to the kept change (dev66).** In `attn_gqa_split_g`, two threads per
   key row with interleaved reads in the score pass (all 256 threads busy instead of 128): −2 to −4 % alone, nothing
   once the value pass had four loads in flight, and it changes the summation order, so it was dropped. Eight value
@@ -236,8 +241,12 @@ them.
 - **OLED-MoE (2609.33385): not applicable.** Its inter-iteration expert retention targets diffusion LLMs.
 - **Overlapping CPU encoding with GPU execution (dev38): not attempted.** At full residency the CPU
   gap between GPU-routed tokens is 0.44 ms of 12.1 ms.
-- **4096-token prefill chunks: not attempted.** They exceed the 32 768 pairs one expert plan
-  accepts and add ~0.5 GB of scratch (dev34).
+- **4096- and 8192-token prefill chunks (dev68, measured).** dev34 left them untried (they exceed the 32,768 pairs one
+  expert plan accepts, a sanity bound; the pair buffers grow on demand). With the bound raised, an 8,191-token prompt
+  (CF2, every expert resident, M4 Max, alternated) took 8.69 / 8.99 s in chunks of 2048, 8.51 / 8.74 s in 4096 and
+  8.43 / 8.57 s in 8192: 3–5 %, all in the expert stage (4.0 → 3.7 s), for about 0.5 / 1.6 GB more scratch. The
+  expert kernels are not starved of tokens per expert at 2048; they are bound by their own arithmetic. Dumps were
+  byte-identical across chunk sizes. Not kept.
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)
   after relinking one oracle library from the same pinned source; it is built in its own tree
   (`.deps/llama.cpp/build-ppl`) by `scripts/dev/perplexity.sh` (dev31).
