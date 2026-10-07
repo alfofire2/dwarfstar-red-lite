@@ -59,7 +59,14 @@ three-run sets with lookup; decode speed from the server logs, by context at the
   and both windows pass the same tasks (dev67).
 
 **Coding agent, M4 Pro 24 GiB** (CF2, every expert resident, 32K window, the same build with and without lookup):
-M4PRO_AGENT_RESULT
+| Context of the request | Without lookup | With lookup | Drafts accepted |
+|---|---:|---:|---:|
+| 0–8K | 33.4 tok/s | 43.2 tok/s (+29 %) | 80 % |
+| 8–16K | 30.9 tok/s | 39.9 tok/s (+29 %) | 89 % |
+| 16–32K | 27.1 tok/s | 34.6 tok/s (+28 %) | 84 % |
+
+Tasks: 10 / 18 with lookup in 153 minutes, 11 / 18 without in 157 (three timeouts each). The decode gain is larger than
+on the M4 Max, because there a token costs more and a verify of two rows less in proportion.
 
 **The 3-bit Coder with lookup** (Bartowski's IQ3_XXS, every expert resident, 64K window, M4 Max, three runs): 15 / 18
 in 49 minutes, decode 13–14 % slower than CF2 with lookup at the same context (82.6 against 96.1 tok/s at 0–8K, 57.6

@@ -339,5 +339,108 @@
       24.3
     ],
     "identical": true
+  },
+  "agent_m4pro_32k_full_residency": {
+    "method": "same suite, CF2, --cache-mib full, 32K window, GPU limit 21741 MiB, same build, three runs each",
+    "without_lookup": {
+      "tasks": {
+        "passed": 11,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 1,
+          "rename": 3,
+          "write_tests": 2,
+          "c_limit": 0,
+          "explain_kv_pad": 2,
+          "debug_session": 3
+        },
+        "timeouts": 3,
+        "total_min": 157
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 137,
+          "tokens": 30658,
+          "tok_s": 33.4,
+          "accepted": null
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 81,
+          "tokens": 11343,
+          "tok_s": 30.9,
+          "accepted": null
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 240,
+          "tokens": 46579,
+          "tok_s": 27.1,
+          "accepted": null
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 0,
+          "tokens": 0,
+          "tok_s": 0.0,
+          "accepted": null
+        }
+      ]
+    },
+    "with_lookup": {
+      "tasks": {
+        "passed": 10,
+        "of": 18,
+        "per_task": {
+          "two_bugs": 0,
+          "rename": 3,
+          "write_tests": 2,
+          "c_limit": 0,
+          "explain_kv_pad": 3,
+          "debug_session": 2
+        },
+        "timeouts": 3,
+        "total_min": 153
+      },
+      "bands": [
+        {
+          "from": 0,
+          "to": 8192,
+          "requests": 145,
+          "tokens": 35986,
+          "tok_s": 43.2,
+          "accepted": 0.795
+        },
+        {
+          "from": 8192,
+          "to": 16384,
+          "requests": 117,
+          "tokens": 12551,
+          "tok_s": 39.9,
+          "accepted": 0.894
+        },
+        {
+          "from": 16384,
+          "to": 32768,
+          "requests": 344,
+          "tokens": 61348,
+          "tok_s": 34.6,
+          "accepted": 0.842
+        },
+        {
+          "from": 32768,
+          "to": null,
+          "requests": 0,
+          "tokens": 0,
+          "tok_s": 0.0,
+          "accepted": null
+        }
+      ]
+    }
   }
 }

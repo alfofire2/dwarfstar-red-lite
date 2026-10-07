@@ -10,6 +10,7 @@
     turns it off.
 - **Coding-agent sessions on the M4 Max (CF2):** decode 15–25 % faster at every context length in two sets of
   runs, with 73–85 % of the drafts accepted.
+- **24 GiB M4 Pro** with every expert resident (raised GPU limit, 32K): agent decode 28–29 % faster.
 - **`redlite chat` does it too** (`redlite-generate --lookup`): a turn that rewrites a function went from 79 to
   110 tok/s.
 - **Rewriting a file:** 80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro 24 GiB. Prose is unchanged, because few

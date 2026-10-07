@@ -330,7 +330,8 @@ from the context (the token that followed the latest earlier occurrence of the l
 the same 2-row pass as MTP. **The answer does not change.** In the hard suite on the M4 Max, 73–79 % of the drafts were
 accepted and decode was 15–25 % faster at every context length, in two separate sets of runs (the time for the
 whole suite varied more with what the agent did: 37 and 50 minutes with lookup, 52 without). Rewriting a file:
-80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. `redlite chat` does it too. It needs every expert resident.
+80 → 109 tok/s on the M4 Max, 45 → 60 on the M4 Pro. On the 24 GiB M4 Pro with every expert resident (raised GPU
+limit, 32K window) the agent decoded 28–29 % faster. `redlite chat` does it too. It needs every expert resident.
 
 <p align="center"><img src="img/agent_lookup.svg" alt="Decode speed in agent sessions with and without prompt lookup, by context"></p>
 
