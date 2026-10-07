@@ -1221,8 +1221,11 @@ static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32
     id<MTLBuffer> grid = topk_grid_for_type(p, ggml_type);
     if (!grid || !cb || !input || !output) { topk_set_error("invalid top-k encode buffers"); return 0; }
     if (![p ensureScratchHidden:hidden_size ffn:ffn_size]) return 0;
-    uint64_t *table = (uint64_t *)[p->_slotTable contents];
-    float *weights = (float *)[p->_weightBuffer contents];
+    /* dev72: the slot addresses and weights go into the command buffer (setBytes), not into shared buffers, so two
+     * encodes may be in flight at once (the bounded-cache 2-row verify) */
+    if (top_k > REDMETAL_TOPK_MAX) { topk_set_error("top-k encode: too many experts"); return 0; }
+    uint64_t table[REDMETAL_TOPK_MAX];
+    float weights[REDMETAL_TOPK_MAX];
     NSMutableArray<id<MTLBuffer>> *resident = [NSMutableArray arrayWithCapacity:top_k];
     for (uint32_t i = 0; i < top_k; ++i) {
         NSUInteger slotBase = 0;
@@ -1244,7 +1247,7 @@ static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32
     if (!enc) { topk_set_error("failed to create top-k compute encoder"); return 0; }
     for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
     [enc setComputePipelineState:p->_gateupPipeline];
-    [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+    [enc setBytes:table length:(NSUInteger)top_k * sizeof(uint64_t) atIndex:0];
     [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:1];
     [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:2];
     [enc setBytes:&up_offset length:sizeof(up_offset) atIndex:3];
@@ -1260,7 +1263,7 @@ static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32
     enc = [cb computeCommandEncoder];
     for (id<MTLBuffer> slab in resident) [enc useResource:slab usage:MTLResourceUsageRead];
     [enc setComputePipelineState:p->_downPipeline];
-    [enc setBuffer:p->_slotTable offset:0 atIndex:0];
+    [enc setBytes:table length:(NSUInteger)top_k * sizeof(uint64_t) atIndex:0];
     [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
     [enc setBytes:&output_row_start length:sizeof(output_row_start) atIndex:2];
     [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
@@ -1277,7 +1280,7 @@ static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32
     enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:p->_sumPipeline];
     [enc setBuffer:p->_tmpBuffer offset:0 atIndex:0];
-    [enc setBuffer:p->_weightBuffer offset:0 atIndex:1];
+    [enc setBytes:weights length:(NSUInteger)top_k * sizeof(float) atIndex:1];
     [enc setBuffer:output offset:output_offset atIndex:2];
     [enc setBytes:&output_row_count length:sizeof(output_row_count) atIndex:3];
     [enc setBytes:&top_k length:sizeof(top_k) atIndex:4];

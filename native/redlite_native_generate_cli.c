@@ -353,7 +353,7 @@ static int interactive_chat(
          * token (end of answer) is not (as in the plain loop below). u = emitted token not yet in the state. */
         double spec_pre_ms = 0.0;
         const int preloaded = rl_engine_experts_preloaded(engine, &spec_pre_ms);
-        const int use_lookup = conv && !rl_engine_mtp_enabled(engine) && preloaded;
+        const int use_lookup = conv && !rl_engine_mtp_enabled(engine) && rl_engine_verify_available(engine);
         const int speculate = ((rl_engine_mtp_enabled(engine) && preloaded) || use_lookup) &&
                               (!g_mtp_max_context || rl_engine_position(engine, RL_BACKEND_GPU) <= g_mtp_max_context);
         uint32_t spec_cycles = 0, spec_accepted = 0;
@@ -635,7 +635,7 @@ int main(int argc, char **argv) {
     double spec_mtp_ms = 0.0, spec_verify_ms = 0.0;
     double pre_ms_unused = 0.0;
     const int preloaded = rl_engine_experts_preloaded(e, &pre_ms_unused);
-    const int use_lookup = g_lookup && !rl_engine_mtp_enabled(e) && preloaded;   /* dev71: drafts from ids[0..) */
+    const int use_lookup = g_lookup && !rl_engine_mtp_enabled(e) && rl_engine_verify_available(e);   /* dev71: drafts from ids[0..) */
     const int speculate = ((cfg.mtp_path && rl_engine_mtp_enabled(e) && preloaded) || use_lookup) &&
                           (!g_mtp_max_context || prompt_len <= g_mtp_max_context) &&
                           !(getenv("RL_MTP_SPECULATE") && atoi(getenv("RL_MTP_SPECULATE")) == 0);

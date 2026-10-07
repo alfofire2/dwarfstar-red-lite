@@ -540,8 +540,8 @@ int main(int argc, char **argv) {
         double pre_ms = 0.0;
         ctx.speculate = !use_cpu && rl_engine_mtp_enabled(e) && rl_engine_experts_preloaded(e, &pre_ms);
         if (cfg.mtp_path && !ctx.speculate) fprintf(stderr, "[redlite-server] --mtp ignored: it needs --cache-mib full (every expert resident)\n");
-        ctx.lookup = lookup && !ctx.speculate && !use_cpu && rl_engine_experts_preloaded(e, &pre_ms);
-        if (lookup && !ctx.lookup) fprintf(stderr, "[redlite-server] --lookup ignored: it needs --cache-mib full and no --mtp\n");
+        ctx.lookup = lookup && !ctx.speculate && !use_cpu && rl_engine_verify_available(e);
+        if (lookup && !ctx.lookup) fprintf(stderr, "[redlite-server] --lookup ignored: it needs no --mtp and exact routing (no RL_ROUTE_CACHE_BIAS)\n");
         ctx.nslots = 1;
         if (parallel > 1) {
             if (use_cpu || !rl_engine_experts_preloaded(e, &pre_ms) || !rl_engine_slots_enable(e, error, sizeof(error)))

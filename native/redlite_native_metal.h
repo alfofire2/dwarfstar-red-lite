@@ -89,6 +89,12 @@ typedef struct {
     int active;
 } rl_native_topk_plan;
 
+/* dev72: a plan for some of a prepared plan's experts: ids[0..k) (each one of union_ids[0..union->top_k), the ids the
+ * union plan was prepared with) in this order with these weights, on the union plan's slots. Both rows of a 2-row verify
+ * with a bounded cache are encoded from one prepare of their union; release each encoded subset, not the union. */
+int rl_native_metal_plan_subset(const rl_native_topk_plan *union_plan, const uint32_t *union_ids, const uint32_t *ids,
+                                const float *weights, uint32_t k, rl_native_topk_plan *out);
+
 double rl_native_metal_read_ms(const rl_native_metal_runtime *runtime);
 
 int rl_native_metal_prepare_topk(
