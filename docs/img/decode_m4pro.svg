@@ -3,19 +3,19 @@
 <rect class="bg" width="810" height="318"/>
 <text class="t" x="10" y="24">Decode speed, M4 Pro 24 GiB, IQ2_XXS</text>
 <text class="l" x="222" y="71" text-anchor="end">native dev18 (Sep 2026)</text>
-<rect x="230" y="58" width="247.9" height="15" rx="2" fill="#d64545"/><text class="v" x="482.9" y="70">27.77</text>
+<rect x="230" y="58" width="244.9" height="15" rx="2" fill="#d64545"/><text class="v" x="479.9" y="70">27.77</text>
 <text class="l" x="222" y="99" text-anchor="end">native, 4 GiB cache (0.5.0)</text>
-<rect x="230" y="86" width="289.9" height="15" rx="2" fill="#d64545"/><text class="v" x="524.9" y="98">32.48</text>
+<rect x="230" y="86" width="286.5" height="15" rx="2" fill="#d64545"/><text class="v" x="521.5" y="98">32.48</text>
 <text class="l" x="222" y="127" text-anchor="end">native, all experts resident (dev51)</text>
-<rect x="230" y="114" width="410.5" height="15" rx="2" fill="#d64545"/><text class="v" x="645.5" y="126">45.98</text>
+<rect x="230" y="114" width="405.5" height="15" rx="2" fill="#d64545"/><text class="v" x="640.5" y="126">45.98</text>
 <text class="l" x="222" y="155" text-anchor="end">all resident + MTP (dev51)</text>
-<rect x="230" y="142" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="154">52.65</text>
-<text class="l" x="222" y="183" text-anchor="end">native, 4 GiB cache (0.9.2)</text>
-<rect x="230" y="170" width="332.6" height="15" rx="2" fill="#d64545"/><text class="v" x="567.6" y="182">37.26</text>
-<text class="l" x="222" y="211" text-anchor="end">all experts resident (0.9.2)</text>
-<rect x="230" y="198" width="467.3" height="15" rx="2" fill="#d64545"/><text class="v" x="702.3" y="210">52.35</text>
+<rect x="230" y="142" width="464.4" height="15" rx="2" fill="#d64545"/><text class="v" x="699.4" y="154">52.65</text>
+<text class="l" x="222" y="183" text-anchor="end">native, 4 GiB cache (0.9.3)</text>
+<rect x="230" y="170" width="331.3" height="15" rx="2" fill="#d64545"/><text class="v" x="566.3" y="182">37.56</text>
+<text class="l" x="222" y="211" text-anchor="end">all experts resident (0.9.3)</text>
+<rect x="230" y="198" width="470.0" height="15" rx="2" fill="#d64545"/><text class="v" x="705.0" y="210">53.29</text>
 <text class="l" x="222" y="239" text-anchor="end">llama.cpp launcher 0.2</text>
-<rect x="230" y="226" width="324.9" height="15" rx="2" fill="#8c959f"/><text class="v" x="559.9" y="238">36.4-38.0</text>
+<rect x="230" y="226" width="321.0" height="15" rx="2" fill="#8c959f"/><text class="v" x="556.0" y="238">36.4-38.0</text>
 <text class="n" x="10" y="293">tok/s. 4 GiB cache: about 5 GiB in use. All resident: GPU limit raised with sudo sysctl iogpu.wired_limit_mb (18-20 GiB in</text>
 <text class="n" x="10" y="308">use). llama.cpp launcher: whole model resident, range of its sweep. Six-prompt medians except dev18 and llama.cpp.</text>
 </svg>

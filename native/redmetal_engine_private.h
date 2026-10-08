@@ -70,6 +70,7 @@ struct rl_metal_engine {
     mlayer *layers;
     mweight output_norm, output;
     __unsafe_unretained id<MTLBuffer> *conv_state, *rec_state, *kcache, *vcache;
+    void **mark_states;   /* dev77: host copies of conv / rec states (rl_engine_mark), interleaved per recurrent layer */
     NSMutableArray *keep;
     uint32_t n_recurrent, n_attention;
     id<MTLBuffer> x, normed, branch, resid, ffn_in;

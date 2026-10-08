@@ -360,6 +360,13 @@ the cache-aware routing that had been the default there, with exact answers.
 own tests read the machine's GPU limit, raised on that Mac, so they failed before the agent did anything, and the
 tasks that run them could not pass. Running the checks on an untouched copy on the same machine found it.
 
+**Where an agent session's time goes** (dev77, M4 Max, the hard suite, 64K window): prefill took longer than decode
+(773 against 648 s over two runs). Most of it was a few requests that recomputed a whole 20–40K-token conversation,
+because pi sent the model's last answer back re-rendered and the server reused its state only for an exact
+extension. The server now marks the state after every prompt and returns to that mark. Full recomputes over 4K
+tokens fell from 5 to 2 in two runs each; the ones left are pi's context compactions, which start a new
+conversation.
+
 ## 10. 48 GiB Macs: a better file in the remaining room
 
 Bartowski's IQ3_XXS (29.55 GiB) leaves room on a 48 GiB Mac, so dev64 tried spending it, from the same Q8_0 source:

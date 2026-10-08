@@ -489,10 +489,35 @@ int rl_engine_reset(rl_engine *e, rl_engine_backend b, char *error, size_t cap) 
     rl_backend_state *s = e ? state_for(e, b) : NULL;
     if (!s) { set_error(error, cap, "backend not enabled"); return 0; }
     rl_backend_state_reset(e, s);
+    s->has_mark = 0;
 #ifdef __APPLE__
     if (b == RL_BACKEND_GPU && e->metal && !rl_metal_engine_reset(e->metal, error, cap)) return 0;
 #endif
     return 1;
+}
+
+int rl_engine_mark(rl_engine *e, rl_engine_backend b, char *error, size_t cap) {
+    rl_backend_state *s = e ? state_for(e, b) : NULL;
+    if (!s || b != RL_BACKEND_GPU) { set_error(error, cap, "marks need the GPU backend"); return 0; }
+#ifdef __APPLE__
+    if (!e->metal || !rl_metal_engine_mark_io(e->metal, 0)) { set_error(error, cap, "mark failed"); return 0; }
+    s->mark_position = s->position; s->has_mark = 1;
+    return 1;
+#else
+    set_error(error, cap, "marks need Metal"); return 0;
+#endif
+}
+
+int rl_engine_rewind(rl_engine *e, rl_engine_backend b, char *error, size_t cap) {
+    rl_backend_state *s = e ? state_for(e, b) : NULL;
+    if (!s || !s->has_mark) { set_error(error, cap, "no mark to rewind to"); return 0; }
+#ifdef __APPLE__
+    if (!e->metal || !rl_metal_engine_mark_io(e->metal, 1)) { set_error(error, cap, "rewind failed"); return 0; }
+    s->position = s->mark_position;
+    return 1;
+#else
+    set_error(error, cap, "marks need Metal"); return 0;
+#endif
 }
 
 /* dev65: development benchmark only. Moves a reset backend to `position` without running the tokens before it, so

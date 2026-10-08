@@ -1453,6 +1453,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
         if (@available(macOS 15.0, *)) { [m->queue removeResidencySet:(id<MTLResidencySet>)m->engine_rs]; [(id<MTLResidencySet>)m->engine_rs removeAllAllocations]; }
         m->engine_rs = nil;
     }
+    if (m->mark_states) { for (uint32_t r = 0; r < 2u * m->n_recurrent; ++r) free(m->mark_states[r]); free(m->mark_states); }
     free(m->layers); free(m->conv_state); free(m->rec_state); free(m->kcache); free(m->vcache); free(m->routed_host);
     free(m->conv_park); free(m->rec_park); free(m->k_park); free(m->v_park);
     free(m->snap_conv); free(m->snap_rec);
@@ -1483,6 +1484,33 @@ int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap) {
     for (uint32_t a = 0; a < m->n_attention + (m->mtp ? 1u : 0u); ++a) {
         memset(m->kcache[a].contents, 0, m->kcache[a].length);
         memset(m->vcache[a].contents, 0, m->vcache[a].length);
+    }
+    return 1;
+}
+
+/* dev77: copy of the recurrent states for rl_engine_mark / rl_engine_rewind (host memory; the engine is idle between
+ * calls, and the states are shared buffers) */
+int rl_metal_engine_mark_io(rl_metal_engine *m, int restore) {
+    if (!m) return 0;
+    if (!m->mark_states) {
+        if (restore) return 0;
+        void **ms = (void **)calloc(2u * m->n_recurrent, sizeof(void *));
+        if (!ms) return 0;
+        for (uint32_t r = 0; r < m->n_recurrent; ++r) {
+            ms[2u * r] = malloc(m->conv_state[r].length);
+            ms[2u * r + 1u] = malloc(m->rec_state[r].length);
+            if (!ms[2u * r] || !ms[2u * r + 1u]) {   /* all or nothing: a partial table is never kept */
+                for (uint32_t i = 0; i < 2u * m->n_recurrent; ++i) free(ms[i]);
+                free(ms);
+                return 0;
+            }
+        }
+        m->mark_states = ms;
+    }
+    for (uint32_t r = 0; r < m->n_recurrent; ++r) {
+        void *cs = m->conv_state[r].contents, *rs = m->rec_state[r].contents;
+        if (restore) { memcpy(cs, m->mark_states[2u * r], m->conv_state[r].length); memcpy(rs, m->mark_states[2u * r + 1u], m->rec_state[r].length); }
+        else { memcpy(m->mark_states[2u * r], cs, m->conv_state[r].length); memcpy(m->mark_states[2u * r + 1u], rs, m->rec_state[r].length); }
     }
     return 1;
 }
