@@ -76,6 +76,9 @@ there. The shared-expert overlap was extended to the fused 2-row verify (+0.7 %,
 The file rewrite with prompt lookup on the M4 Pro: 38.8 → 40.7 tok/s with the 4 GiB cache, 60.3 → 66.5 with every
 expert resident, identical tokens.
 
+**M4 Pro, Bartowski's IQ2_XXS** (`small_mac_ab.sh`, six prompts × 256 tokens, medians): 4 GiB cache 33.9 → 37.3 tok/s
+(+10 %, the same 29.5 expert misses per token), every expert resident 46.2 → 52.4 (+13 %).
+
 **Quality is unchanged.** Engine perplexity of CF2 (first 8,192 ids, 512-token chunks, every expert resident):
 code 2.5623 → 2.5637, text 16.6578 → 16.6554.
 

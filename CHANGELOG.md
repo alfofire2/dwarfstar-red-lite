@@ -16,7 +16,8 @@
     than MLX's 3-bit file (94–96 tok/s), which is 14.5 GiB larger;
   - M4 Pro 24 GiB: 31.8 → 35.4 tok/s with the 4 GiB expert cache, 48.0 → 58.1 with every expert resident (+11 % and
     +15 % at 32K);
-  - Bartowski's IQ2_XXS (fewer Q4_K weights), M4 Max: 83.5 → 90.9 tok/s, and 53.0 → 56.0 with the 4 GiB cache.
+  - Bartowski's IQ2_XXS (fewer Q4_K weights): M4 Max 83.5 → 90.9 tok/s (53.0 → 56.0 with the 4 GiB cache); M4 Pro
+    33.9 → 37.3 with the 4 GiB cache and 46.2 → 52.4 with every expert resident (six-prompt medians).
   - a file rewrite with prompt lookup, M4 Max: 108.7 → 117.2 tok/s with every expert resident, with output identical
     to 0.9.1.
 - **Prompt ingestion and quality are unchanged** (engine perplexity of CF2: code 2.5623 → 2.5637, text 16.658 → 16.655).
