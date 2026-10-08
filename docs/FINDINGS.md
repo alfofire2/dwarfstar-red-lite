@@ -56,7 +56,8 @@ token ids.
   a file rewrite), and ingests prompts about 50 % faster (1,427 against 929 tok/s at 1.7K tokens).
 - **0.9.2 closed the decode gap** (dev74): CF2 decodes at 97.8 tok/s on the same Mac, after four kernels were rewritten
   from the profile of a real token. The largest cost was not the experts but the Q4_K dense projections (864 MiB per
-  token). Prompt ingestion is still about a third slower than MLX.
+  token). Prompt ingestion is still slower than MLX: 1,026 tok/s at 1.4K tokens in 0.9.3 (dev75, Apple's GEMM for the
+  dense projections), against MLX's 1,427 at 1.7K measured in dev72.
 - **MLX's 2-bit file** (23.2 GiB) is faster still, but corrupted the file it was asked to copy; CF2 copied it exactly.
 - **Neither MLX file runs on a 24 GiB Mac.** The gap says Red Lite's kernels have room; dev72 started profiling them.
 
