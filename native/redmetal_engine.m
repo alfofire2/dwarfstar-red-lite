@@ -667,7 +667,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 /* per head: RMSNorm (q or k weight), NeoX partial RoPE, write query_rope / key+value cache; threadgroup per head */
 "kernel void attn_qk_prep(device uint *rl_abort [[buffer(30)]], device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
 "    device const float *qw [[buffer(3)]], device const float *kw [[buffer(4)]], device float *query_rope [[buffer(5)]], device float *gate [[buffer(6)]],\n"
-"    device float *key_cache [[buffer(7)]], device float *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
+"    device RL_KV *key_cache [[buffer(7)]], device RL_KV *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
 "    constant uint &query_heads [[buffer(10)]], constant uint &kv_heads [[buffer(11)]], constant uint &position [[buffer(12)]],\n"
 "    constant uint &rope_dims [[buffer(13)]], constant float &freq_base [[buffer(14)]], constant float &eps [[buffer(15)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -692,9 +692,9 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        r = i < rhalf ? (x0 * c - x1 * sn) : (x0 * sn + x1 * c);\n"
 "    }\n"
 "    if (is_q) { query_rope[head * head_dim + i] = r; gate[head * head_dim + i] = qgate_raw[src + head_dim + i]; }\n"
-"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = r; value_cache[dst] = value[head * head_dim + i]; }\n"
+"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = RL_KV(r); value_cache[dst] = RL_KV(value[head * head_dim + i]); }\n"
 "}\n"
-"kernel void attn_gqa(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_gqa(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]], device const RL_KV *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -708,7 +708,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        const uint chunk = min(1024u, seq_len - chunk_start);\n"
 "        for (uint pos = tid; pos < chunk; pos += 256u) {\n"
 "            const uint kbase = ((chunk_start + pos) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
+"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], float(key_cache[kbase + i]), dot);\n"
 "            scores[pos] = dot * scale;\n"
 "        }\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -722,7 +722,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        l = l * alpha + total;\n"
 "        if (tid < head_dim) {\n"
 "            acc *= alpha;\n"
-"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid], acc);\n"
+"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], float(value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid]), acc);\n"
 "        }\n"
 "        m = new_m;\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -734,8 +734,8 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
  * dot products (lanes stride the head dimension: coalesced key reads); the block's max, exp-sum and unnormalized
  * value accumulation are written as a partial. attn_gqa_merge combines a head's partials with the online-softmax
  * algebra of attn_gqa (rescale by exp(m_b - M)), normalizes and applies the output gate. head_dim <= 256. */
-"kernel void attn_gqa_split(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
-"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"kernel void attn_gqa_split(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]],\n"
+"    device const RL_KV *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
 "    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
@@ -748,8 +748,8 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (tid < head_dim) qv[tid] = query[head * head_dim + tid];\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    for (uint p = simd_id; p < len; p += 8u) {\n"
-"        device const float *kr = key_cache + ulong((start + p) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"        for (uint i = simd_lane; i < head_dim; i += 32u) dot = fma(qv[i], kr[i], dot);\n"
+"        device const RL_KV *kr = key_cache + ulong((start + p) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
+"        for (uint i = simd_lane; i < head_dim; i += 32u) dot = fma(qv[i], float(kr[i]), dot);\n"
 "        dot = simd_sum(dot); if (simd_lane == 0) scores[p] = dot * scale;\n"
 "    }\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -762,16 +762,16 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    const ulong part = ulong(head) * nblocks + block;\n"
 "    if (tid == 0u) { float bl = 0.0f; for (uint k = 0; k < 8u; ++k) bl += red[k]; part_ml[part] = float2(bm, bl); }\n"
 "    if (tid < head_dim) {\n"
-"        device const float *vc = value_cache + ulong(start * kv_heads + kv_head) * head_dim + tid; const ulong stride = ulong(kv_heads) * head_dim;\n"
-"        float acc = 0.0f; for (uint p = 0; p < len; ++p) acc = fma(scores[p], vc[ulong(p) * stride], acc);\n"
+"        device const RL_KV *vc = value_cache + ulong(start * kv_heads + kv_head) * head_dim + tid; const ulong stride = ulong(kv_heads) * head_dim;\n"
+"        float acc = 0.0f; for (uint p = 0; p < len; ++p) acc = fma(scores[p], float(vc[ulong(p) * stride]), acc);\n"
 "        part_acc[part * head_dim + tid] = acc;\n"
 "    }\n"
 "}\n"
 /* dev35: the same partials, one threadgroup per (block of blk <= 256 positions, KV head) for all the query heads sharing
  * that KV head (8 here): each K and V row is read once instead of once per query head. Scores: one thread per position,
  * float4 K loads, one accumulator per query head. Values: one thread per dimension. head_dim == 256, <= 8 heads per group. */
-"kernel void attn_gqa_split_g(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
-"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"kernel void attn_gqa_split_g(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]],\n"
+"    device const RL_KV *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
 "    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    constant uint &blk [[buffer(9)]], uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
@@ -784,9 +784,9 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    for (uint r = tid >> 3; r < len; r += 32u) {   /* dev67: eight lanes per key row, each 128-byte line read whole */\n"
 "        const uint sub = tid & 7u;\n"
-"        device const float4 *kr = (device const float4 *)(key_cache + ulong((start + r) * kv_heads + kvh) * 256u);\n"
+"        device const RL_KV4 *kr = (device const RL_KV4 *)(key_cache + ulong((start + r) * kv_heads + kvh) * 256u);\n"
 "        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
-"        for (uint j = 0; j < 8u; ++j) { const uint i = j * 8u + sub; const float4 k = kr[i]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] += dot(qv[h * 64u + i], k); }\n"
+"        for (uint j = 0; j < 8u; ++j) { const uint i = j * 8u + sub; const float4 k = float4(kr[i]); for (uint h = 0; h < 8u; ++h) if (h < G) a[h] += dot(qv[h * 64u + i], k); }\n"
 "        for (uint h = 0; h < 8u; ++h) if (h < G) {\n"
 "            float t = a[h]; t += simd_shuffle_xor(t, 1); t += simd_shuffle_xor(t, 2); t += simd_shuffle_xor(t, 4);\n"
 "            if (sub == 0u) sc[h * 256u + r] = t * scale;\n"
@@ -803,14 +803,14 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    }\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (tid < head_dim) {\n"
-"        device const float *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
+"        device const RL_KV *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
 "        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
 "        uint p = 0;\n"
 "        for (; p + 4u <= len; p += 4u) {   /* dev66: four loads in flight (-18 % at 256K); same summation order */\n"
-"            float v[4]; for (uint j = 0; j < 4u; ++j) v[j] = vc[ulong(p + j) * stride];\n"
+"            float v[4]; for (uint j = 0; j < 4u; ++j) v[j] = float(vc[ulong(p + j) * stride]);\n"
 "            for (uint h = 0; h < 8u; ++h) if (h < G) for (uint j = 0; j < 4u; ++j) a[h] = fma(sc[h * 256u + p + j], v[j], a[h]);\n"
 "        }\n"
-"        for (; p < len; ++p) { const float v = vc[ulong(p) * stride]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
+"        for (; p < len; ++p) { const float v = float(vc[ulong(p) * stride]); for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
 "        for (uint h = 0; h < 8u; ++h) if (h < G) part_acc[(ulong(kvh * G + h) * nblocks + block) * 256u + tid] = a[h];\n"
 "    }\n"
 "}\n"
@@ -942,11 +942,16 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (gid < count) dst[gid] = src[gid];\n"
 "}\n";
 
+const char *rl_kv_defines(void) {
+    return rl_kv_elem_bytes() == 2u ? "#define RL_KV half\n#define RL_KV4 half4\n#define RL_KV_HALF 1\n"
+                                    : "#define RL_KV float\n#define RL_KV4 float4\n#define RL_KV_HALF 0\n";
+}
+
 /* the engine's kernel library (also compiled by the model-free kernel self-test, redmetal_engine_selftest.m) */
 id<MTLLibrary> rl_metal_engine_library(id<MTLDevice> dev, NSError **err) {
     char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
     if (!iq3) return nil;
-    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kEngineSource];
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s%s\n%@", rl_kv_defines(), iq3, kEngineSource];
     free(iq3);
     return [dev newLibraryWithSource:src options:nil error:err];
 }
@@ -1234,7 +1239,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         const size_t conv_bytes = rl_engine_conv_count(e) * sizeof(float);
         const size_t rec_bytes = rl_engine_rec_count(e) * sizeof(float);
         /* + RL_ENGINE_KV_PAD positions: the dev30 tiled prefill attention reads whole 32-position key blocks */
-        const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
+        const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * rl_kv_elem_bytes();
         m->conv_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         m->rec_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         /* + 1: dev45 MTP block KV rows at index n_attention (m->n_attention stays the trunk's count) */
@@ -1319,7 +1324,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
                     snprintf(error, cap, "MTP tensor %s has no Metal row kernel", pairs[i].src->name); rl_metal_engine_destroy(m); return NULL;
                 }
             }
-            const size_t kvb = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
+            const size_t kvb = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * rl_kv_elem_bytes();
             m->kcache[in->n_attention] = new_buf(m, kvb);
             m->vcache[in->n_attention] = new_buf(m, kvb);
             m->mtp_emb = new_buf(m, hb); m->mtp_ea = new_buf(m, hb); m->mtp_eb = new_buf(m, hb); m->mtp_cat = new_buf(m, 2u * hb);

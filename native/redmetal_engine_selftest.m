@@ -216,17 +216,23 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
     const uint32_t max_len = 1500u, nblocks_max = (max_len + 127u) / 128u;
     id<MTLBuffer> q = [m->dev newBufferWithLength:qheads * head_dim * 4u options:MTLResourceStorageModeShared];
     id<MTLBuffer> gate = [m->dev newBufferWithLength:qheads * head_dim * 4u options:MTLResourceStorageModeShared];
-    id<MTLBuffer> kc = [m->dev newBufferWithLength:(size_t)max_len * kvheads * head_dim * 4u options:MTLResourceStorageModeShared];
-    id<MTLBuffer> vc = [m->dev newBufferWithLength:(size_t)max_len * kvheads * head_dim * 4u options:MTLResourceStorageModeShared];
+    const size_t kvn = (size_t)max_len * kvheads * head_dim, kve = rl_kv_elem_bytes();   /* dev74: half or float KV cache */
+    id<MTLBuffer> kc = [m->dev newBufferWithLength:kvn * kve options:MTLResourceStorageModeShared];
+    id<MTLBuffer> vc = [m->dev newBufferWithLength:kvn * kve options:MTLResourceStorageModeShared];
     id<MTLBuffer> out = [m->dev newBufferWithLength:qheads * head_dim * 4u options:MTLResourceStorageModeShared];
     id<MTLBuffer> ml = [m->dev newBufferWithLength:(size_t)qheads * nblocks_max * 8u options:MTLResourceStorageModeShared];
     id<MTLBuffer> acc = [m->dev newBufferWithLength:(size_t)qheads * nblocks_max * head_dim * 4u options:MTLResourceStorageModeShared];
     double *ref = (double *)malloc((size_t)qheads * head_dim * sizeof(double));
     double *sc = (double *)malloc((size_t)max_len * sizeof(double));
-    if (!q || !gate || !kc || !vc || !out || !ml || !acc || !ref || !sc) { free(ref); free(sc); snprintf(error, cap, "self-test allocation failed"); return 0; }
-    float *qf = (float *)q.contents, *gf = (float *)gate.contents, *kf = (float *)kc.contents, *vf = (float *)vc.contents;
+    float *kf = (float *)malloc(kvn * sizeof(float)), *vf = (float *)malloc(kvn * sizeof(float));
+    if (!q || !gate || !kc || !vc || !out || !ml || !acc || !ref || !sc || !kf || !vf) { free(ref); free(sc); free(kf); free(vf); snprintf(error, cap, "self-test allocation failed"); return 0; }
+    float *qf = (float *)q.contents, *gf = (float *)gate.contents;
     for (uint32_t i = 0; i < qheads * head_dim; ++i) { qf[i] = 0.5f * st_uniform(); gf[i] = 2.0f * st_uniform(); }
-    for (size_t i = 0; i < (size_t)max_len * kvheads * head_dim; ++i) { kf[i] = 0.5f * st_uniform(); vf[i] = st_uniform(); }
+    for (size_t i = 0; i < kvn; ++i) {   /* the reference reads the values the cache holds (rounded to half for a half cache) */
+        kf[i] = 0.5f * st_uniform(); vf[i] = st_uniform();
+        if (kve == 2u) { kf[i] = (float)(_Float16)kf[i]; vf[i] = (float)(_Float16)vf[i]; ((_Float16 *)kc.contents)[i] = (_Float16)kf[i]; ((_Float16 *)vc.contents)[i] = (_Float16)vf[i]; }
+        else { ((float *)kc.contents)[i] = kf[i]; ((float *)vc.contents)[i] = vf[i]; }
+    }
     int ok = 1;
     for (uint32_t c = 0; c < 6u && ok; ++c) {
         const uint32_t seq_len = lens[c];
@@ -280,7 +286,7 @@ static int st_attention(rl_metal_engine *m, uint32_t *cases, double *worst, char
         }
         if (ok) (*cases)++;
     }
-    free(ref); free(sc);
+    free(ref); free(sc); free(kf); free(vf);
     return ok;
 }
 
@@ -390,7 +396,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                 const uint32_t hd = 256u, qh = 16u, kvh = 2u, layers = 12u;
                 static const uint32_t lens[] = { 1024u, 2048u, 4096u, 8192u, 16384u, 32768u, 65536u, 131072u, 262144u };
                 const uint32_t maxlen = lens[sizeof(lens) / sizeof(lens[0]) - 1u];
-                const size_t kvb = (size_t)maxlen * kvh * hd * 4u;
+                const size_t kvb = (size_t)maxlen * kvh * hd * rl_kv_elem_bytes();
                 /* RL_BENCH_ATTN_DISTINCT=1: one K and one V buffer per layer, as the engine allocates them (12 GiB at
                  * 256K positions), instead of one pair read by every layer */
                 const char *dv = getenv("RL_BENCH_ATTN_DISTINCT");
@@ -400,7 +406,10 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                     kcs[bi] = [m->dev newBufferWithLength:kvb options:MTLResourceStorageModeShared];
                     vcs[bi] = [m->dev newBufferWithLength:kvb options:MTLResourceStorageModeShared];
                     if (!kcs[bi] || !vcs[bi]) { snprintf(error, cap, "attention bench KV allocation failed"); goto bout; }
-                    for (size_t i = 0; i < kvb / 4u; ++i) { ((float *)kcs[bi].contents)[i] = st_uniform(); ((float *)vcs[bi].contents)[i] = st_uniform(); }
+                    for (size_t i = 0; i < kvb / rl_kv_elem_bytes(); ++i) {
+                        if (rl_kv_elem_bytes() == 2u) { ((_Float16 *)kcs[bi].contents)[i] = (_Float16)st_uniform(); ((_Float16 *)vcs[bi].contents)[i] = (_Float16)st_uniform(); }
+                        else { ((float *)kcs[bi].contents)[i] = st_uniform(); ((float *)vcs[bi].contents)[i] = st_uniform(); }
+                    }
                 }
                 id<MTLBuffer> kc = kcs[0], vc = vcs[0];
                 id<MTLBuffer> q = [m->dev newBufferWithLength:(size_t)qh * hd * 4u options:MTLResourceStorageModeShared];
@@ -435,7 +444,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
                         const double ms = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
                         if (rep > 0 && ms < best) best = ms;
                     }
-                    const double bytes = (double)seq * kvh * hd * 4.0 * 2.0 * layers;
+                    const double bytes = (double)seq * kvh * hd * (double)rl_kv_elem_bytes() * 2.0 * layers;
                     off += (size_t)snprintf(report + off, off < report_cap ? report_cap - off : 0,
                         "attention x%u layers, %6u positions, blk %3u, %2u KV pairs  %8.2f ms/token  %6.1f GB/s\n", layers, seq, blk, nbuf, best, bytes / (best * 1e6));
                 }
