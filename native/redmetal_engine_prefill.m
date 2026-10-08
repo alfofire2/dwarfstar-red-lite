@@ -21,6 +21,7 @@
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 #include "redmetal_engine_private.h"
 #include "redlite_native_quant_cpu.h"
@@ -589,6 +590,8 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "}\n";
 
 struct rl_metal_prefill {
+    NSMutableDictionary *mps_gemm;   /* dev75: MPSMatrixMultiplication per (rows, cols, tokens) */
+    int mps;                 /* dev75: dense prefill GEMM through MPS (RL_PREFILL_MPS=0 -> rl_gemm_tg) */
     uint32_t cap;
     id<MTLLibrary> lib;
     uint32_t cap_pad;        /* token capacity rounded up to the 32-token GEMM tile */
@@ -625,7 +628,7 @@ void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = pf->p_rowsb_iq3 = pf->p_dq_iq3 = nil;
     pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
         pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_attn_fa2 = pf->p_sh_scalar = pf->p_sh_silu = nil;
-    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil;
+    pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil; pf->mps_gemm = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
     pf->q = pf->k = pf->core = pf->ng = pf->qgate_raw = pf->k_raw = pf->value = pf->query_rope = pf->agate = pf->gated = nil;
     pf->router_logits = pf->sh_gate = pf->sh_up = pf->sh_act = pf->sh_out = pf->scalar = pf->routed = nil;
@@ -785,6 +788,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         }
     }
     { const char *gt = getenv("RL_PREFILL_GEMM_TG"); pf->gemm_tg = !gt || atoi(gt) != 0; }
+    { const char *mp = getenv("RL_PREFILL_MPS"); pf->mps = !mp || atoi(mp) != 0; pf->mps_gemm = [NSMutableDictionary dictionary]; }
     { const char *ss = getenv("RL_PREFILL_STATE_SG"); pf->state_sg = (!ss || atoi(ss) != 0) && in->d_state == 128u; }
     return pf;
 }
@@ -874,6 +878,27 @@ static void enc_gemm(rl_metal_engine *m, struct rl_metal_prefill *pf, id<MTLComm
         }
         [enc endEncoding];
         wbuf = pf->wdq; woff = 0;
+    }
+    if (pf->mps && woff % 16u == 0u) {
+        /* dev75: Apple's f32 GEMM (MetalPerformanceShaders): 12.6-12.9 TFLOPS on the 8192 / 4096 x 2048 and 2048 x 4096
+         * projections at 2048 tokens against 10.1-10.8 for rl_gemm_tg (M4 Max). out (ntok x rows) = x (ntok x cols) W^T */
+        NSArray *key = @[@(w->rows), @(w->cols), @(ntok)];
+        MPSMatrixMultiplication *mm = pf->mps_gemm[key];
+        if (!mm) {
+            mm = [[MPSMatrixMultiplication alloc] initWithDevice:m->dev transposeLeft:NO transposeRight:YES resultRows:ntok
+                                                   resultColumns:w->rows interiorColumns:w->cols alpha:1.0 beta:0.0];
+            if (mm) pf->mps_gemm[key] = mm;
+        }
+        if (mm) {
+            MPSMatrix *mw = [[MPSMatrix alloc] initWithBuffer:wbuf offset:woff descriptor:[MPSMatrixDescriptor
+                matrixDescriptorWithRows:w->rows columns:w->cols rowBytes:(NSUInteger)w->cols * 4u dataType:MPSDataTypeFloat32]];
+            MPSMatrix *mx = [[MPSMatrix alloc] initWithBuffer:x offset:0 descriptor:[MPSMatrixDescriptor
+                matrixDescriptorWithRows:ntok columns:w->cols rowBytes:(NSUInteger)w->cols * 4u dataType:MPSDataTypeFloat32]];
+            MPSMatrix *mo = [[MPSMatrix alloc] initWithBuffer:out offset:0 descriptor:[MPSMatrixDescriptor
+                matrixDescriptorWithRows:ntok columns:w->rows rowBytes:(NSUInteger)w->rows * 4u dataType:MPSDataTypeFloat32]];
+            [mm encodeToCommandBuffer:cb leftMatrix:mx rightMatrix:mw resultMatrix:mo];
+            return;
+        }
     }
     const uint32_t ntok_pad = (ntok + 31u) & ~31u;
     const int tgk = pf->gemm_tg && w->rows % 64u == 0u && w->cols % 32u == 0u;

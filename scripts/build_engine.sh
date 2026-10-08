@@ -51,7 +51,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_engine.m" \
     "$ROOT/native/redmetal_engine_prefill.m" \
     "$ROOT/native/redmetal_engine_selftest.m" \
-    -framework Foundation -framework Metal -lm -lpthread \
+    -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -lpthread \
     -o "$OUT/redlite-engine"
   "$OUT/redlite-engine" --help >/dev/null || true
   "$OUT/redlite-engine" kernel-selftest
@@ -67,7 +67,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$ROOT/native/redmetal_router.m" \
     "$ROOT/native/redmetal_engine.m" \
     "$ROOT/native/redmetal_engine_prefill.m" \
-    -framework Foundation -framework Metal -lm -lpthread \
+    -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -lpthread \
     -o "$OUT/redlite-generate"
   "$OUT/redlite-generate" --help >/dev/null
 else

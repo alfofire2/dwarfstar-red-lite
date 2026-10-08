@@ -32,7 +32,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   "${CC_CMD[@]}" "${FLAGS[@]}" -Wno-gnu-conditional-omitted-operand -Wno-nullability-extension \
     -fobjc-arc "${NATIVE_MAIN[@]}" \
     "$N/redlite_native_metal.c" "$N/redmetal_topk.m" \
-    -framework Foundation -framework Metal -lm -o "$OUT/redlite-native"
+    -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -o "$OUT/redlite-native"
 else
   build redlite-native "${NATIVE_MAIN[@]}"
 fi
@@ -64,7 +64,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$N/redlite_native_cache.c" "$N/redlite_native_model.c" "$N/redlite_native_tables.c" \
     "$N/redlite_native_reference.c" "$N/redlite_native_metal.c" "$N/redmetal_topk.m" "$N/redmetal_router.m" \
     "$N/redmetal_engine.m" "$N/redmetal_engine_prefill.m" "$N/redmetal_engine_selftest.m" \
-    -framework Foundation -framework Metal -lm -lpthread -o "$OUT/redlite-engine"
+    -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -lpthread -o "$OUT/redlite-engine"
 fi
 
 export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=1:abort_on_error=1}"

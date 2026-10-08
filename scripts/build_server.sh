@@ -41,7 +41,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     "$N/redlite_native_server_cli.c" "$N/redlite_native_server.c" \
     "${ENGINE[@]}" "$N/redlite_native_metal.c" \
     "$N/redmetal_topk.m" "$N/redmetal_router.m" "$N/redmetal_engine.m" "$N/redmetal_engine_prefill.m" \
-    -framework Foundation -framework Metal -lm -lpthread \
+    -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -lpthread \
     -o "$OUT/redlite-server"
 else
   CC_BIN="${CC:-cc}"
