@@ -160,6 +160,14 @@ int main(int argc, char **argv) {
         if (!rl_metal_prefill_attn_bench_standalone(b, p0, err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
         return 0;
     }
+    if (argc >= 2 && strcmp(argv[1], "prefill-gemm-bench") == 0) {
+        /* dev74: one dense prefill GEMM kernel, no model: prefill-gemm-bench [ROWS [K [TOKENS [KERNEL]]]] (8192 2048 512 rl_gemm_tg) */
+        char err[256] = {0};
+        const uint32_t rows = argc > 2 ? (uint32_t)atoi(argv[2]) : 8192u, k = argc > 3 ? (uint32_t)atoi(argv[3]) : 2048u;
+        const uint32_t b = argc > 4 ? (uint32_t)atoi(argv[4]) : 512u;
+        if (!rl_metal_prefill_gemm_bench_standalone(rows, k, b, argc > 5 ? argv[5] : "rl_gemm_tg", err, sizeof(err))) { fprintf(stderr, "%s\n", err); return 1; }
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "kernel-bench") == 0) {
         char report[4096] = {0}, err[512] = {0};
         if (!rl_metal_kernel_bench(report, sizeof(report), err, sizeof(err))) { fprintf(stderr, "kernel bench failed: %s\n", err); return 1; }

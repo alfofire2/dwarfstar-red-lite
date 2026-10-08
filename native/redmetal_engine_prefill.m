@@ -1486,6 +1486,57 @@ int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char 
     return 1;
 }
 
+/* dev74 (dev only): one dense prefill GEMM kernel (rl_gemm_tg or rl_gemm_wt) on random f32 data, no model:
+ * ROWS x K weights, B tokens. RL_GPU_CAPTURE=FILE captures the third run. */
+int rl_metal_prefill_gemm_bench_standalone(uint32_t rows, uint32_t K, uint32_t B, const char *kernel, char *error, size_t cap) {
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        id<MTLCommandQueue> queue = [dev newCommandQueue];
+        char *iq3 = rl_iq3_metal_source();
+        if (!dev || !queue || !iq3) { set_error(error, cap, "Metal setup failed"); free(iq3); return 0; }
+        NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kPrefillSource];
+        free(iq3);
+        NSError *le = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:src options:nil error:&le];
+        id<MTLComputePipelineState> pipe = lib ? make_pipe(dev, lib, [NSString stringWithUTF8String:kernel], error, cap) : nil;
+        if (!pipe) { if (!lib) set_error(error, cap, "prefill library compile failed"); return 0; }
+        const int tg = strcmp(kernel, "rl_gemm_tg") == 0;
+        const uint32_t ntok_pad = (B + 31u) & ~31u;
+        srand(74);
+        id<MTLBuffer> w = rnd_buf(dev, (size_t)rows * K), x = rnd_buf(dev, (size_t)ntok_pad * K);
+        id<MTLBuffer> o = [dev newBufferWithLength:(size_t)ntok_pad * rows * 4u options:MTLResourceStorageModeShared];
+        const char *cap_path = getenv("RL_GPU_CAPTURE");
+        int capturing = 0;
+        double ms[12];
+        for (int rep = 0; rep < 12; ++rep) {
+            if (rep == 2 && cap_path) {
+                MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+                d.captureObject = queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+                d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+                NSError *ce = nil;
+                capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+                if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
+            }
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+            [enc setComputePipelineState:pipe];
+            [enc setBuffer:w offset:0 atIndex:0]; [enc setBuffer:x offset:0 atIndex:1]; [enc setBuffer:o offset:0 atIndex:2];
+            [enc setBytes:&rows length:4 atIndex:3]; [enc setBytes:&K length:4 atIndex:4]; [enc setBytes:&ntok_pad length:4 atIndex:5];
+            if (tg) [enc dispatchThreadgroups:MTLSizeMake(rows / 64u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+            else [enc dispatchThreadgroups:MTLSizeMake((rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+            [enc endEncoding];
+            [cb commit]; [cb waitUntilCompleted];
+            ms[rep] = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); capturing = 0; }
+        }
+        for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
+        const double med = (ms[6] + ms[7]) / 2.0;
+        printf("%s: %u x %u weights, %u tokens: min %.3f ms, median %.3f ms, %.2f TFLOPS (10 warm runs)\n", kernel, rows, K, B, ms[2], med,
+               2.0 * rows * K * (double)B / (med * 1e9));
+    }
+    return 1;
+}
+
 /* dev72 (dev only): the batched routed-expert kernels (redmetal_topk_gateup_mm / down_mm / sum) of layer `layer` with no
  * model buffer on the GPU: `e` is a CPU-only engine (GGUF and expert map), the layer's expert tensors are copied into
  * three buffers of their own, the pool is a one-slot pool used for its pipelines. B tokens x top_k uniformly random
