@@ -91,6 +91,12 @@ them.
 - **dev77, a 128K agent window:** no compactions, but longer sessions, slower decode and 9 / 12 tasks against 11 / 12
   at 64K in two runs each. The default stays 64K ([DEV77](REDLITE_DEV77_AGENT_PREFILL.md)).
 
+- **dev78, the next layer's dense part encoded while the CPU waits for the GPU** (synchronous decode with a bounded
+  expert cache; committed after the layer's experts, so the GPU order and the output are unchanged): 57.3 against
+  57.0 tok/s (CF2, 4 GiB cache, M4 Max, three pairs). CPU encoding is not on the critical path. On the 48 GiB M4 Max
+  the "SSD" expert reads of repeated runs come from the macOS file cache (37 tok/s on the first run, 57 after), so
+  the bounded path has to be studied on the 24 GiB M4 Pro.
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
