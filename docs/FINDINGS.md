@@ -54,10 +54,11 @@ token ids.
 **Against MLX** (dev72, M4 Max, Qwen3-Coder-Next, two prompts, greedy):
 - **MLX's 3-bit file** (32.5 GiB) decodes at 94–96 tok/s against Red Lite CF2's 80 in 0.9.1 (109 with prompt lookup on
   a file rewrite), and ingests prompts about 50 % faster (1,427 against 929 tok/s at 1.7K tokens).
-- **0.9.2 closed the decode gap** (dev74): CF2 decodes at 97.8 tok/s on the same Mac, after four kernels were rewritten
-  from the profile of a real token. The largest cost was not the experts but the Q4_K dense projections (864 MiB per
-  token). Prompt ingestion is still slower than MLX: 1,026 tok/s at 1.4K tokens in 0.9.3 (dev75, Apple's GEMM for the
-  dense projections), against MLX's 1,427 at 1.7K measured in dev72.
+- **Measured again the same day, interleaved with cooling** (dev76, after 0.9.3): Red Lite CF2 decodes at 99.3 tok/s
+  against 87–90 for MLX's 3-bit file (+12 %), and 125 tok/s on the file rewrite with prompt lookup. MLX still ingests
+  the 1.7K-token prompt faster: 1,435 against 1,070 tok/s. Red Lite uses 18.2 GiB, MLX 36.8 GB. The dev74 kernels
+  (Q4_K dense projections first, the largest cost of a token) and dev75 (Apple's GEMM for the dense prefill) closed
+  most of the gap.
 - **MLX's 2-bit file** (23.2 GiB) is faster still, but corrupted the file it was asked to copy; CF2 copied it exactly.
 - **Neither MLX file runs on a 24 GiB Mac.** The gap says Red Lite's kernels have room; dev72 started profiling them.
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- dev76: **MLX measured again the same day, one more prefill step** (`docs/REDLITE_DEV76_MLX_SAMEDAY.md`).
+  - CF2 decodes at 99 tok/s against 87–90 for MLX's 3-bit file, with half the memory. MLX ingests long prompts a
+    third faster (1,435 against 1,070 tok/s).
+  - The prefill DeltaNet recurrence handles two state rows per simdgroup (bit-identical, −1 % prefill time).
+  - Three ideas weighed and not started: a chunked DeltaNet prefill, a new expert format, and 32-pair gate/up passes.
+
 ## 0.9.3 — 2026-10-08
 
 **Prompt ingestion +9 %, and `--kv f16` in the launcher.**

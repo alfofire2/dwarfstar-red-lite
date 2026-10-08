@@ -79,6 +79,11 @@ them.
   - **The paired remap for every type**, before it became a function-constant variant: IQ2_XS layers 20.07 →
     20.5–21.1 ms.
   - **8 gate/up lanes per decode row**: decode expert bench 2.50 ms against 2.38 (32 lanes) and 2.27 (16, kept).
+  - **Gate and up as two passes over 32-pair slices** (each decoded weight tile serves twice the pairs, still 16
+    accumulators per simdgroup, bit-identical by construction): IQ1_M layer 18.89 → 20.95 ms, IQ2_XS layer 19.97 →
+    20.84 ms. With about 40 pairs per expert per 2048-token chunk, a 32-pair slice leaves an 8-pair one whose tile
+    wastes three quarters of its matrix work; halving the decode per pair does not pay for that. Fifth layout of
+    larger expert tiles that loses (dev40, dev50, dev69, dev72).
 
 ## Correctness traps (found, fixed or guarded)
 
