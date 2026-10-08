@@ -189,7 +189,7 @@ NATIVE_SLOT_ALIGNMENT = 4096
 # (limit 21,741: MTP + 32K context + 512-token chunks out of GPU memory at 22,302; no MTP + 32K + 2048 fine at 21,087;
 # MTP + 4K + 2048 fine at 21,530).
 NATIVE_GPU_BASE_MIB = 580                       # pool, scratch and buffers above slots + dense, at 512-token prefill chunks
-NATIVE_KV_MIB_PER_POS = 48.0 / 1024.0           # 12 attention layers x K,V x 512 floats per position
+NATIVE_KV_MIB_PER_POS = 24.0 / 1024.0           # 12 attention layers x K,V x 512 halves per position (dev74 half KV; was 48)
 NATIVE_BATCH_MIB_PER_TOKEN = 572.0 / 1536.0     # prefill scratch per token of chunk above 512 (2048: +572 MiB)
 NATIVE_MTP_MIB = 1787                           # the resident MTP block (Q8_0 head file)
 # dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
@@ -244,7 +244,7 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
     if wired_mib > 0:
         return native_full_residency_mib(residency, context, batch, mtp) <= wired_mib
     extra = NATIVE_MTP_MIB * 1024 * 1024 if mtp else 0
-    # dev64: the context's KV cache counts too (1.5 GiB at 32K), since it is memory the run really holds. At 25K-token
+    # dev64: the context's KV cache counts too (768 MiB at 32K with the dev74 half KV), since it is memory the run really holds. At 25K-token
     # prompts on the M4 Max 48 GiB, G2 (65.1 % of RAM) swapped and slowed prompt ingestion with or without MTP; this
     # rule keeps MTP off for it above ~13.5K positions, it does not remove that.
     kv = int((context or 4096) * NATIVE_KV_MIB_PER_POS * 1024 * 1024)
@@ -252,7 +252,7 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
             <= ram_bytes * NATIVE_WORKING_SET_FRACTION)
 
 
-NATIVE_SLOT_STATE_POSITIONS = 1536   # dev56: a second slot's DeltaNet state (72 MiB) in 48 KiB KV positions
+NATIVE_SLOT_STATE_POSITIONS = 3072   # dev56: a second slot's DeltaNet state (72 MiB) in 24 KiB KV positions (dev74)
 
 
 def native_plan_context(context: int, parallel: int = 1) -> int:
