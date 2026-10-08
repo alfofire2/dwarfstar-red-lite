@@ -314,6 +314,17 @@ def _gpu_tuning(model, cache_mib, args, context: int):
     return batch, head
 
 
+def _kv_env(args) -> None:
+    """dev75: --kv f16 stores the native KV cache as half (RL_KV_F16=1 for the binary and the planner): half the
+    context memory, +9 % decode at 32K and +13 % at 64K on the M4 Max (dev74). Not the default: logits drift from the
+    float cache (KL up to 5.8e-2 on CF2 at 1.1K positions), see docs/REDLITE_DEV74_DECODE_KERNELS.md."""
+    import os
+    if getattr(args, "kv", "f32") == "f16":
+        os.environ["RL_KV_F16"] = "1"
+    if os.environ.get("RL_KV_F16") == "1":
+        print("[redlite] half-precision KV cache (half the context memory; outputs can differ slightly from the float cache)")
+
+
 def _lookup_for(model, cache_mib, mtp, args) -> bool:
     """dev70: prompt lookup speculation when there is no MTP head (Qwen3-Coder-Next), same output; --no-lookup disables.
     Every expert resident: +15-25 % decode in coding-agent sessions on the M4 Max. dev72: with a bounded cache too (the
@@ -375,6 +386,7 @@ def cmd_chat(args) -> int:
         print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():
         _die(f"Model not found: {model}")
+    _kv_env(args)
     cache_mib = args.cache_mib
     if cache_mib is None:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context)
@@ -421,6 +433,7 @@ def _serve_native(args) -> int:
         print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
     if not model.is_file():
         _die(f"Model not found: {model}")
+    _kv_env(args)
     cache_mib = args.cache_mib
     context = args.context or 4096
     # dev56: a second slot holds another KV cache and DeltaNet state (72 MiB = 1536 positions at 48 KiB): the GPU
@@ -551,6 +564,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-lookup", action="store_true",
                    help="No prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="Bounded cache: pick experts exactly as the model does (no cache-aware routing)")
+    s.add_argument("--kv", choices=("f32", "f16"), default="f32",
+                   help="KV cache precision (default f32; f16 halves the context memory and is faster at long contexts, "
+                        "outputs can differ slightly)")
     s.add_argument("--steer", default=None, help="Activation steering vector (scripts/dev/steer_extract.py); /steer S in the chat changes the strength")
     s.add_argument("--steer-layers", default=None, help="Steered layers A-B (default 16-31)")
     s.add_argument("--steer-strength", type=float, default=None, help="Steering strength (default 1; typical 0.2-0.5 over 8-12 layers)")
@@ -577,6 +593,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-lookup", action="store_true",
                    help="--native: no prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
+    s.add_argument("--kv", choices=("f32", "f16"), default="f32",
+                   help="--native: KV cache precision (default f32; f16 halves the context memory, outputs can differ slightly)")
     s.add_argument("--steer", default=None, help="--native: activation steering vector for the generated tokens")
     s.add_argument("--steer-layers", default=None, help="--native: steered layers A-B (default 16-31)")
     s.add_argument("--steer-strength", type=float, default=None, help="--native: steering strength (default 1)")

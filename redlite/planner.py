@@ -190,6 +190,13 @@ NATIVE_SLOT_ALIGNMENT = 4096
 # MTP + 4K + 2048 fine at 21,530).
 NATIVE_GPU_BASE_MIB = 580                       # pool, scratch and buffers above slots + dense, at 512-token prefill chunks
 NATIVE_KV_MIB_PER_POS = 48.0 / 1024.0           # 12 attention layers x K,V x 512 floats per position
+
+
+def native_kv_mib_per_pos() -> float:
+    """dev75: KV cache MiB per position: 48 KiB, or 24 KiB with the half cache (RL_KV_F16=1, set by --kv f16; the
+    native binaries read the same variable)"""
+    import os
+    return NATIVE_KV_MIB_PER_POS / 2 if os.environ.get("RL_KV_F16") == "1" else NATIVE_KV_MIB_PER_POS
 NATIVE_BATCH_MIB_PER_TOKEN = 572.0 / 1536.0     # prefill scratch per token of chunk above 512 (2048: +572 MiB)
 NATIVE_MTP_MIB = 1787                           # the resident MTP block (Q8_0 head file)
 # dev31: native models in preference order (better quality first); `redlite chat` without a model path takes the
@@ -234,7 +241,7 @@ def native_residency(model_path: str | Path) -> NativeResidency | None:
 
 def native_full_residency_mib(residency: NativeResidency, context: int = 4096, batch: int = 2048, mtp: bool = False) -> int:
     """GPU memory full residency needs (dev55 model): the value to give iogpu.wired_limit_mb."""
-    need = (residency.cache_mib + residency.dense_bytes / (1024 * 1024) + NATIVE_GPU_BASE_MIB + context * NATIVE_KV_MIB_PER_POS
+    need = (residency.cache_mib + residency.dense_bytes / (1024 * 1024) + NATIVE_GPU_BASE_MIB + context * native_kv_mib_per_pos()
             + max(0, batch - 512) * NATIVE_BATCH_MIB_PER_TOKEN + (NATIVE_MTP_MIB if mtp else 0))
     return int(-(-need // 1))
 
@@ -247,17 +254,17 @@ def native_full_residency_fits(ram_bytes: int, residency: NativeResidency, wired
     # dev64: the context's KV cache counts too (1.5 GiB at 32K), since it is memory the run really holds. At 25K-token
     # prompts on the M4 Max 48 GiB, G2 (65.1 % of RAM) swapped and slowed prompt ingestion with or without MTP; this
     # rule keeps MTP off for it above ~13.5K positions, it does not remove that.
-    kv = int((context or 4096) * NATIVE_KV_MIB_PER_POS * 1024 * 1024)
+    kv = int((context or 4096) * native_kv_mib_per_pos() * 1024 * 1024)
     return (residency.cache_mib * 1024 * 1024 + residency.dense_bytes + extra + kv
             <= ram_bytes * NATIVE_WORKING_SET_FRACTION)
 
 
-NATIVE_SLOT_STATE_POSITIONS = 1536   # dev56: a second slot's DeltaNet state (72 MiB) in 48 KiB KV positions
+NATIVE_SLOT_STATE_MIB = 72   # dev56: a second slot's DeltaNet state, counted in KV positions (1536 at 48 KiB)
 
 
 def native_plan_context(context: int, parallel: int = 1) -> int:
     """dev56: positions the GPU plan sizes for when `parallel` slots each hold a `context`-position state."""
-    return context * parallel + NATIVE_SLOT_STATE_POSITIONS * (parallel - 1)
+    return context * parallel + round(NATIVE_SLOT_STATE_MIB / native_kv_mib_per_pos()) * (parallel - 1)
 
 
 def native_gpu_plan(residency: NativeResidency, wired_mib: int, context: int, mtp_available: bool) -> tuple[int, bool] | None:

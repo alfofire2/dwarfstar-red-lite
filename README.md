@@ -99,6 +99,11 @@ every expert resident and use MTP when its head is in `models/`:
   Below 40 GiB, MTP is skipped for answers starting past 8,192 positions, where it stops paying;
 - **for good:** a LaunchDaemon sets the limit at every boot, and `redlite doctor` recognizes it.
 
+**Long contexts in less memory: `--kv f16`** (dev75). `redlite chat` and `redlite serve --native` take `--kv f16`
+to keep the attention cache in half precision: 24 KiB per position instead of 48 (1.5 GiB instead of 3 at 64K),
+and decode +9 % at 32K and +13 % at 64K on the M4 Max. On a 24 GiB Mac at the raised GPU limit it lets MTP run
+with a 32K context. Answers can differ slightly from the default float cache (dev74), so it is opt-in.
+
 Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_24GB.md`.
 
 **Use with a coding agent** (dev59, dev60). The server speaks OpenAI tool calling, so agents such as
