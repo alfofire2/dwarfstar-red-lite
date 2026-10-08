@@ -86,7 +86,7 @@ struct rl_metal_engine {
     uint64_t misses_seen;          /* pool cache misses observed so far (to know whether the last token missed) */
     int last_token_missed;         /* the previous token needed a load: decode the next one synchronously */
     id<MTLComputePipelineState> p_route, p_copy;
-    id<MTLComputePipelineState> p_rows2_q4k, p_rows2_q6k, p_rows2_iq2xxs, p_rows2_f32;   /* dev22 sub-block decode GEMV */
+    id<MTLComputePipelineState> p_rows2_q4k, p_rows2_q6k, p_rows2_iq2xxs, p_rows2_f32, p_rows2_q5k, p_r2_q5k2;   /* dev22 sub-block decode GEMV */
     int rows2;
     id<MTLBuffer> abort, abort_zero;
     int prefetch;                      /* dev23: RL_ENGINE_PREFETCH != 0 (default): pre-gated expert prefetch in the synchronous decode */

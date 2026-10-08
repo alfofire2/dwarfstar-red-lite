@@ -341,6 +341,24 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    }\n"
 "    return acc;\n"
 "}\n"
+/* dev74: Q5_K like rl_q4k_pair: sub-blocks 2p (low nibbles, qh bit 2p) and 2p+1 (high nibbles, qh bit 2p+1) in one item */
+"inline float2 rl_q5k_pair_xy(device const uchar *bp, uint p, device const float *x, device const float *y, bool two) {\n"
+"    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
+"    const uchar2 sm0 = scale_min(2u * p, bp + 4u), sm1 = scale_min(2u * p + 1u, bp + 4u);\n"
+"    device const uint *qh = (device const uint *)(bp + 16u); device const uint *ql = (device const uint *)(bp + 48u + p * 32u);\n"
+"    float a0 = 0.0f, s0 = 0.0f, a1 = 0.0f, s1 = 0.0f, b0 = 0.0f, t0 = 0.0f, b1 = 0.0f, t1 = 0.0f;\n"
+"    for (uint l = 0; l < 8u; ++l) {\n"
+"        const uint w = ql[l], h = qh[l] >> (2u * p);\n"
+"        const float4 q0 = float4(as_type<uchar4>((w & 0x0F0F0F0Fu) | ((h & 0x01010101u) << 4)));\n"
+"        const float4 q1 = float4(as_type<uchar4>(((w >> 4) & 0x0F0F0F0Fu) | ((h & 0x02020202u) << 3)));\n"
+"        const float4 x0 = *(device const float4 *)(x + 4u * l), x1 = *(device const float4 *)(x + 32u + 4u * l);\n"
+"        a0 += dot(x0, q0); s0 += (x0.x + x0.y) + (x0.z + x0.w); a1 += dot(x1, q1); s1 += (x1.x + x1.y) + (x1.z + x1.w);\n"
+"        if (two) { const float4 y0 = *(device const float4 *)(y + 4u * l), y1 = *(device const float4 *)(y + 32u + 4u * l);\n"
+"            b0 += dot(y0, q0); t0 += (y0.x + y0.y) + (y0.z + y0.w); b1 += dot(y1, q1); t1 += (y1.x + y1.y) + (y1.z + y1.w); }\n"
+"    }\n"
+"    return float2(((d * float(sm0.x)) * a0 - (dmin * float(sm0.y)) * s0) + ((d * float(sm1.x)) * a1 - (dmin * float(sm1.y)) * s1),\n"
+"                  ((d * float(sm0.x)) * b0 - (dmin * float(sm0.y)) * t0) + ((d * float(sm1.x)) * b1 - (dmin * float(sm1.y)) * t1));\n"
+"}\n"
 "inline float2 rl_q6k_sub2(device const uchar *bp, uint il0, device const float *x, device const float *x1) {\n"
 "    device const ushort *ql0 = (device const ushort *)(bp + 0ul);\n"
 "    device const ushort *qh0 = (device const ushort *)(bp + 128ul);\n"
@@ -398,8 +416,10 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "}\n"
 RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub2(bp, s, xc, xc1, grid)", "", ", device const uchar *grid [[buffer(6)]]")
 RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q4k", "256", "144", "4", "64", "rl_q4k_pair2(bp, s, xc, xc1)", "", "")
+RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q5k", "256", "176", "4", "64", "rl_q5k_pair_xy(bp, s, xc, xc1, true)", "", "")
 RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q6k", "256", "210", "16", "16", "rl_q6k_sub2(bp, s, xc, xc1)", "", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_q4k", "256", "144", "4", "64", "rl_q4k_pair(bp, s, xc)", "")
+RL_ROWS_SUB_KERNEL("rl_rows2_q5k", "256", "176", "4", "64", "rl_q5k_pair_xy(bp, s, xc, xc, false).x", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_q6k", "256", "210", "16", "16", "rl_q6k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp, s, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
 /* dev31: IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS rows: one lane per 32-value item (4 groups of rl_iq3_group8) */
@@ -1016,8 +1036,6 @@ uint32_t lanes_for(uint32_t type, uint32_t ncols) {
     return lanes;
 }
 
-/* out[row] = W[row] . x for all rows of the weight, as one dispatch in an open encoder */
-/* dev22: sub-block decode kernel for a type (nil: use the block kernel) and its lanes per row */
 /* dev74: DeltaNet recurrence with one SIMD group per state row (dn_state_sg) for 128-wide states; RL_ENGINE_STATE_SG=0 -> dn_state_fused */
 static int rl_state_sg(uint32_t S) {
     static int on = -1;
@@ -1025,12 +1043,15 @@ static int rl_state_sg(uint32_t S) {
     return on && S == 128u;
 }
 
+/* out[row] = W[row] . x for all rows of the weight, as one dispatch in an open encoder */
+/* dev22: sub-block decode kernel for a type (nil: use the block kernel) and its lanes per row */
 static id<MTLComputePipelineState> rows2_pipe(rl_metal_engine *m, uint32_t type, uint32_t ncols, uint32_t *lanes) {
     uint32_t items;
     id<MTLComputePipelineState> p;
     switch (type) {
         case 0:  p = m->p_rows2_f32;    items = ncols / 4u; break;
         case 12: p = m->p_rows2_q4k;    items = (ncols / 256u) * 4u; break;
+        case 13: p = m->p_rows2_q5k;    items = (ncols / 256u) * 4u; break;
         case 14: p = m->p_rows2_q6k;    items = (ncols / 256u) * 16u; break;
         case 16: p = m->p_rows2_iq2xxs; items = (ncols / 256u) * 8u; break;
         case 18: case 21: case 22: case 23: p = m->p_rows_iq3; items = (ncols / 256u) * 8u; break;   /* dev31: already sub-block */
@@ -1067,7 +1088,7 @@ static void emit_rows_r2(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, c
     uint32_t lanes = 0;
     id<MTLComputePipelineState> p = nil;
     if (rows2_pipe(m, w->type, w->cols, &lanes)) {
-        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs :
+        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 13u ? m->p_r2_q5k2 : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs :
             rl_iq3_supported(w->type) ? m->p_r2_iq3 : nil;
     } else if (w->type == 8u || w->type == 13u) {
         p = w->type == 8u ? m->p_r2_q8 : m->p_r2_q5k;
@@ -1163,7 +1184,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
             {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
-            {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"},
+            {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q5k, @"rl_rows2_q5k"}, {&m->p_r2_q5k2, @"rl_rows2r2_q5k"},
             {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             {&m->p_r2_f32, @"rl_rows2r2_f32"}, {&m->p_r2_q8, @"rl_rowsr2_q8"}, {&m->p_r2_q4k, @"rl_rows2r2_q4k"},
             {&m->p_r2_q5k, @"rl_rowsr2_q5k"}, {&m->p_r2_q6k, @"rl_rows2r2_q6k"}, {&m->p_r2_iq2xxs, @"rl_rows2r2_iq2xxs"}, {&m->p_r2_iq3, @"rl_rows_iq3_r2"},

@@ -301,7 +301,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
             struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
                 {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q5k, @"rl_rows_q5k"},
                 {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
-                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
+                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q5k, @"rl_rows2_q5k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
             };
             for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
                 *pipes[i].slot = make_pipe(m->dev, m->lib, pipes[i].name, error, cap);
@@ -444,7 +444,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
         ok = 1;
     bout:
         m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
-        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q6k = m->p_rows2_iq2xxs = nil;
+        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q5k = m->p_rows2_q6k = m->p_rows2_iq2xxs = nil;
         m->grid = nil; m->abort_zero = nil; m->lib = nil; m->queue = nil; m->dev = nil;
         free(m);
         return ok;
@@ -464,8 +464,8 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
         if (!m->queue || !m->lib) { snprintf(error, cap, "Metal engine library compile failed: %s", le.localizedDescription.UTF8String ?: "no device"); goto out; }
         {
             struct { __strong id<MTLComputePipelineState> *slot; NSString *name; } pipes[] = {
-                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
-                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
+                {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q4k, @"rl_rows_q4k"}, {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
+                {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q5k, @"rl_rows2_q5k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"},
                 {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
                 {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             };
@@ -481,13 +481,13 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
         if (!m->grid || !m->abort || !m->abort_zero) { snprintf(error, cap, "self-test allocation failed"); goto out; }
         memset(m->abort.contents, 0, 16u); memset(m->abort_zero.contents, 0, 16u);
         {
-            static const uint32_t types[8] = { 0u, 12u, 14u, 16u, 18u, 21u, 22u, 23u };
+            static const uint32_t types[9] = { 0u, 12u, 14u, 16u, 18u, 21u, 22u, 23u, 13u };
             static const uint32_t cols_q[4] = { 256u, 768u, 2048u, 4096u };
             static const uint32_t cols_f[4] = { 64u, 516u, 2048u, 4096u };
-            double worst[8] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+            double worst[9] = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
             uint32_t shapes = 0, route_cases = 0, attn_cases = 0;
             double attn_worst = 0.0;
-            for (uint32_t t = 0; t < 8u; ++t)
+            for (uint32_t t = 0; t < 9u; ++t)
                 for (uint32_t c = 0; c < 4u; ++c) {
                     if (!st_rows_case(m, types[t], 37u, types[t] == 0u ? cols_f[c] : cols_q[c], &worst[t], error, cap)) goto out;
                     shapes++;
@@ -497,17 +497,17 @@ int rl_metal_kernel_selftest(char *report, size_t report_cap, char *error, size_
             if (!st_attention(m, &attn_cases, &attn_worst, error, cap)) goto out;
             snprintf(report, report_cap,
                 "rows/rows2 vs CPU row dot: %u shapes x 2 kernels OK (worst relative error F32 %.2e Q4_K %.2e Q6_K %.2e IQ2_XXS %.2e\n"
-                "                           IQ3_XXS %.2e IQ3_S %.2e IQ2_S %.2e IQ4_XS %.2e)\n"
+                "                           IQ3_XXS %.2e IQ3_S %.2e IQ2_S %.2e IQ4_XS %.2e Q5_K %.2e)\n"
                 "early-out guard       : OK (rl_rows2, rl_copy_f32, rl_route return with the flag set)\n"
                 "rl_copy_f32           : OK\n"
                 "rl_route vs CPU router: %u cases OK (ids, weights, slots, ties, miss -> early-out flag)\n"
                 "decode attention      : %u lengths x 4 kernels OK vs double GQA (split-K + merge, single group; worst abs %.2e)",
-                shapes, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], route_cases, attn_cases, attn_worst);
+                shapes, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], worst[8], route_cases, attn_cases, attn_worst);
         }
         ok = 1;
     out:
         m->p_rows_f32 = m->p_rows_q4k = m->p_rows_q6k = m->p_rows_iq2xxs = nil;
-        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q6k = m->p_rows2_iq2xxs = m->p_route = m->p_copy = nil;
+        m->p_rows2_f32 = m->p_rows2_q4k = m->p_rows2_q5k = m->p_rows2_q6k = m->p_rows2_iq2xxs = m->p_route = m->p_copy = nil;
         m->p_attn_gqa = m->p_attn_split = m->p_attn_merge = m->p_attn_split_g = nil;
         m->grid = m->abort = m->abort_zero = nil; m->lib = nil; m->queue = nil; m->dev = nil;
         free(m);
