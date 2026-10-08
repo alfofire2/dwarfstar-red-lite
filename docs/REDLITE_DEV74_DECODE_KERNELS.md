@@ -60,6 +60,11 @@ releases measured the same day): every expert resident 83.5 → 90.9 tok/s (+9 %
 (+6 %). This file has only 230 MiB of Q4_K dense weights, so it gains less. Prompt ingestion of 1100 tokens: 587.6
 against 584.1 tok/s (unchanged).
 
+**Rewriting a file with prompt lookup** (the dev72 test, CF2, M4 Max, greedy, two alternated pairs): every expert
+resident 108.7 → 117.2 tok/s (+8 %), 4 GiB expert cache 68.7 → 70.4 (+2.5 %), with 85 % of the drafts accepted. The
+output tokens are identical to 0.9.1's. The bounded-cache verify waits on expert loads, so the kernels matter less
+there. The shared-expert overlap was extended to the fused 2-row verify (+0.7 %, identical output).
+
 **M4 Pro 24 GiB, CF2** (`decode-bench`, four alternated pairs; dev74 before the two scheduling changes):
 
 | Setting | 0.9.1 | dev74 | Gain |
