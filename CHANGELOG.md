@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.9.4 — 2026-10-08
+
+**Coding agents: no more recomputing whole conversations.**
+- **The server rewinds instead of starting over.** When pi sends the model's last answer back re-rendered (a tool call
+  re-serialized), the server used to prefill the whole 20–40K-token conversation again (30–75 s on the M4 Max). It
+  now keeps the DeltaNet state of the end of each prompt and returns to it. On the M4 Max the hard agent suite went
+  from 5 to 2 full recomputes over two runs (the 2 left are pi's own compactions), and from 386 to 282 s of prefill
+  per run. The answers are exactly those of a fresh server.
+- **Measured on the 24 GiB M4 Pro** (0.9.3 against 0.9.1): decode +11–12 % with the 4 GiB expert cache and +19–23 %
+  with every expert resident, prompt ingestion +6–11 %.
+- **Against MLX, the same day** (M4 Max, Qwen3-Coder-Next): Red Lite CF2 decodes at 99 tok/s against 87–90 for MLX's
+  3-bit file, with half the memory; MLX ingests long prompts a third faster.
+- Prompt ingestion: the DeltaNet recurrence handles two state rows per simdgroup (bit-identical, −1 %).
+- Validation: `regress_m4.sh` 60 / 0 / 0 on the reference file with the new `server.rewind_greedy`; local CI.
+
 
 - dev77: **the server rewinds instead of recomputing a conversation** (`docs/REDLITE_DEV77_AGENT_PREFILL.md`).
   - Coding-agent sessions spent more time in prefill than in decode (773 against 648 s on the M4 Max). Most of it went
