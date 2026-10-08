@@ -97,6 +97,10 @@ const rl_engine_info *rl_engine_info_get(const rl_engine *engine);
 int rl_engine_reset(rl_engine *engine, rl_engine_backend backend, char *error, size_t error_cap);
 
 uint32_t rl_engine_position(const rl_engine *engine, rl_engine_backend backend);
+/* dev77: remember the recurrent (DeltaNet) state at the current position, and later return to it. Tokens after the
+ * mark only write KV rows at or past it, so rewinding is exact. GPU backend only; a second mark replaces the first. */
+int rl_engine_mark(rl_engine *engine, rl_engine_backend backend, char *error, size_t error_cap);
+int rl_engine_rewind(rl_engine *engine, rl_engine_backend backend, char *error, size_t error_cap);
 /* dev65: development benchmark only (redlite-engine decode-bench): set a backend's position without decoding. */
 int rl_engine_bench_set_position(rl_engine *engine, rl_engine_backend backend, uint32_t position, char *error, size_t error_cap);
 

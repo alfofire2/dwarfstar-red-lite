@@ -193,15 +193,15 @@
      ]
     },
     {
-     "label": "native, 4 GiB cache (0.9.2)",
+     "label": "native, 4 GiB cache (0.9.3)",
      "values": [
-      37.26
+      37.56
      ]
     },
     {
-     "label": "all experts resident (0.9.2)",
+     "label": "all experts resident (0.9.3)",
      "values": [
-      52.35
+      53.29
      ]
     },
     {
@@ -218,7 +218,8 @@
     "benchmarks/m4pro-24gb-dev51-cache-sweep.json",
     "benchmarks/m4pro-24gb-dev51-full-residency.json",
     "benchmarks/m4pro-24gb-sweep-2026-09-02.json",
-    "benchmarks/m4-dev74-decode-kernels.json"
+    "benchmarks/m4-dev74-decode-kernels.json",
+    "benchmarks/m4pro-dev77-093.json"
    ]
   },
   {

@@ -54,6 +54,7 @@ typedef struct {               /* dev56: one sequence state of the engine */
     float *logits, *logits1;
     uint32_t *history;         /* token ids the slot's state holds, in order (context entries) */
     uint32_t history_len;
+    uint32_t mark_len;         /* dev77: the engine mark is the state after history[0 .. mark_len) (the last prompt) */
     int busy;
 } srv_slot;
 
@@ -247,11 +248,22 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         fprintf(stderr, "[redlite-server] reuse: prompt diverges at token %u of %u held: held \"%s\" | new \"%s\"\n",
                 at, S->history_len, held, got);
     }
+    /* dev77: the prompt extends the previous prompt but not the answer the state holds (the client re-rendered the
+     * answer, e.g. a tool call's arguments): return to the mark left after that prompt instead of starting over */
+    uint32_t rewound = 0;
+    if (!reused && c->reuse && c->nslots == 1u && S->mark_len && S->mark_len < (uint32_t)needed && S->mark_len <= S->history_len &&
+        memcmp(S->history, ids, (size_t)S->mark_len * sizeof(uint32_t)) == 0 && rl_engine_rewind(c->engine, c->backend, NULL, 0))
+        rewound = S->mark_len;
+    S->mark_len = 0;
     S->history_len = 0;   /* invalid until this request's ids are in the state */
     rl_engine_step_stats st;
     memset(&st, 0, sizeof(st));
     const double t_prefill = now_ms();
     int ok;
+    if (rewound) {
+        reused = rewound;
+        fprintf(stderr, "[redlite-server] reuse: back to the end of the previous prompt (%u tokens)\n", rewound);
+    }
     if (reused) {
         ok = rl_engine_prefill(c->engine, c->backend, ids + reused, (uint32_t)needed - reused, S->logits, &st, error, cap);
     } else {   /* dev43: restore the longest stored prefix (rl_statecache_prefill resets when there is none) */
@@ -260,6 +272,7 @@ static int engine_generate(void *user, const rl_chat_request *req, rl_server_emi
         reused = loaded;
     }
     const uint32_t start_position = rl_engine_position(c->engine, c->backend);
+    if (ok && c->reuse && c->nslots == 1u && rl_engine_mark(c->engine, c->backend, NULL, 0)) S->mark_len = (uint32_t)needed;   /* dev77 */
     eng_unlock(c);
     const double prefill_ms = now_ms() - t_prefill;
     if (ok) { memcpy(S->history, ids, (size_t)needed * sizeof(uint32_t)); S->history_len = (uint32_t)needed; }

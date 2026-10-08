@@ -136,6 +136,8 @@ if [[ "$(sysctl -n hw.memsize)" -ge 42949672960 ]]; then
   expect_line engine.verify_full "VERIFY CHECK: YES" "$BIN/redlite-engine" verify-check "$MODEL" --tokens 9707,11,1879,13,785,6457,374,264,1273,315 --cache-mib full --context 64
   expect_line engine.pair "^PASS$" "$BIN/redlite-engine" pair "$MODEL" --tokens 9707,11,1879,0,785,12884,374,264,1273,13 --cache-mib full --context 64
   expect_line server.parallel_greedy "SERVER PARALLEL CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --parallel
+  # dev77: a re-rendered answer rewinds to the end of the previous prompt, with the cold answer
+  expect_line server.rewind_greedy "SERVER REWIND CHECK: YES" python3 "$ROOT/scripts/dev/server_rewind_check.py" "$MODEL" "$BIN"
   # dev70: prompt lookup speculation, greedy identical to plain decoding, drafts accepted
   expect_line server.lookup_greedy "SERVER LOOKUP CHECK: YES" python3 "$ROOT/scripts/dev/server_check.py" "$MODEL" --bin "$BIN" --lookup
 fi

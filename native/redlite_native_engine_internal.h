@@ -43,6 +43,7 @@ typedef struct {
     float *layer_out;   /* [n_layer][hidden] */
     float *final_norm;  /* [hidden] */
     uint32_t *router_ids; /* [n_layer][top_k] */
+    uint32_t mark_position; int has_mark;   /* dev77: rl_engine_mark */
 } rl_backend_state;
 
 typedef struct rl_metal_engine rl_metal_engine;
@@ -91,6 +92,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m);
 int rl_metal_engine_reset(rl_metal_engine *m, char *error, size_t cap);
 int rl_metal_engine_set_steering(rl_metal_engine *m, const float *vector, uint32_t hidden, char *error, size_t cap);   /* dev52 */
 int rl_metal_engine_state_io(rl_metal_engine *m, FILE *f, size_t kv_bytes, int save);   /* dev43 */
+int rl_metal_engine_mark_io(rl_metal_engine *m, int restore);   /* dev77: recurrent states to / from the mark copy */
 int rl_metal_engine_verify2(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1, char *error, size_t cap);
 int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted, char *error, size_t cap);   /* dev45 */
 int rl_metal_engine_verify_available(const rl_metal_engine *m);   /* dev72 */
