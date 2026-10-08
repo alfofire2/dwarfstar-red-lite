@@ -40,6 +40,33 @@ static void set_error(char *dst, size_t cap, const char *msg) {
     if (dst && cap) snprintf(dst, cap, "%s", msg ? msg : "unknown Metal prefill error");
 }
 
+/* dev75: dn_state_seq_sg with R state rows of one head per simdgroup (R = 2 is used): the rows share the k / q / gate / beta loads and
+ * their recurrences interleave. Every row's arithmetic is dn_state_seq_sg's (bit-identical) */
+#define RL_DN_STATE_ROWS(NAME, R) \
+"kernel void " NAME "(device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n" \
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n" \
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n" \
+"    constant uint &ntok [[buffer(10)]], constant uint &qk_stride [[buffer(11)]], constant uint &v_stride [[buffer(12)]], constant uint &out_stride [[buffer(13)]],\n" \
+"    uint tg [[threadgroup_position_in_grid]], ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n" \
+"    const uint row0 = (tg * 4u + uint(sg)) * " R "u; const uint h = row0 / state_size; const uint j0 = row0 - h * state_size; if (h >= value_heads) return;\n" \
+"    const uint kh = h / kv_ratio; const uint i0 = uint(lane) * 4u; const float norm = 1.0f / sqrt((float)state_size);\n" \
+"    float4 s[" R "]; for (uint r = 0; r < " R "u; ++r) s[r] = *(device float4 *)(state + (ulong(h) * state_size + j0 + r) * state_size + i0);\n" \
+"    for (uint t = 0; t < ntok; ++t) {\n" \
+"        const float g = exp(gate[t * value_heads + h]); const float bt = beta[t * value_heads + h];\n" \
+"        const float4 kv = *(device const float4 *)(k + t * qk_stride + kh * state_size + i0);\n" \
+"        const float4 qv = *(device const float4 *)(q + t * qk_stride + kh * state_size + i0);\n" \
+"        for (uint r = 0; r < " R "u; ++r) {\n" \
+"            s[r] *= g;\n" \
+"            const float sum = simd_sum(dot(s[r], kv));\n" \
+"            const float delta = (v[t * v_stride + h * state_size + j0 + r] - sum) * bt;\n" \
+"            s[r] += kv * delta;\n" \
+"            const float o = simd_sum(dot(s[r], qv));\n" \
+"            if (lane == 0) out[t * out_stride + h * state_size + j0 + r] = o * norm;\n" \
+"        }\n" \
+"    }\n" \
+"    for (uint r = 0; r < " R "u; ++r) *(device float4 *)(state + (ulong(h) * state_size + j0 + r) * state_size + i0) = s[r];\n" \
+"}\n"
+
 static NSString * const kPrefillSource = @
 "#include <metal_stdlib>\n"
 "#include <metal_simdgroup_matrix>\n"
@@ -363,6 +390,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    }\n"
 "    *sp = s;\n"
 "}\n"
+RL_DN_STATE_ROWS("dn_state_seq_sg2", "2")
 "kernel void dn_tail_norm_b(device const float *core [[buffer(0)]], device const float *z [[buffer(1)]], device const float *w [[buffer(2)]],\n"
 "    device float *out [[buffer(3)]], constant float &eps [[buffer(4)]], constant uint &head_dim [[buffer(5)]], constant uint &heads [[buffer(6)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -607,7 +635,7 @@ struct rl_metal_prefill {
     uint64_t *exp_gate_bytes, *exp_up_bytes, *exp_down_bytes;   /* per-expert stride */
     uint32_t *exp_type;
     id<MTLComputePipelineState> p_rms, p_resid_rms, p_scale_add;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_state_sg, p_dn_tail;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_state, p_dn_state_sg, p_dn_tail, p_dn_state_sg2;
     int state_sg;            /* dev30: simdgroup-per-row DeltaNet recurrence (RL_PREFILL_STATE_SG=0 -> dn_state_seq) */
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa, p_attn_fa, p_attn_fa2, p_sh_scalar, p_sh_silu;
     int attn_tiled;          /* dev30: tiled attention (RL_PREFILL_ATTN_TILE=0 -> the dev20 per-(token, head) kernel) */
@@ -626,7 +654,7 @@ struct rl_metal_prefill {
 void rl_metal_prefill_destroy(struct rl_metal_prefill *pf) {
     if (!pf) return;
     pf->p_rowsb_f32 = pf->p_rowsb_q8 = pf->p_rowsb_q4k = pf->p_rowsb_q5k = pf->p_rowsb_q6k = pf->p_rowsb_iq2xxs = pf->p_rowsb_iq3 = pf->p_dq_iq3 = nil;
-    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = nil;
+    pf->p_rms = pf->p_resid_rms = pf->p_scale_add = pf->p_dn_ba = pf->p_dn_conv = pf->p_dn_l2 = pf->p_dn_state = pf->p_dn_state_sg = pf->p_dn_tail = pf->p_dn_state_sg2 = nil;
         pf->p_attn_prep = pf->p_attn_gqa = pf->p_attn_fa = pf->p_attn_fa2 = pf->p_sh_scalar = pf->p_sh_silu = nil;
     pf->p_dq_q8 = pf->p_dq_q4k = pf->p_dq_q5k = pf->p_dq_q6k = pf->p_dq_iq2xxs = pf->p_gemm = pf->p_gemm_tg = nil; pf->wdq = nil; pf->mps_gemm = nil;
     pf->xb = pf->normed = pf->branch = pf->resid = pf->ffn_in = pf->qkv = pf->z = pf->ba = pf->beta = pf->gate = pf->conv_silu = nil;
@@ -725,7 +753,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
         {&pf->p_rowsb_iq3, @"rl_rowsb_iq3"}, {&pf->p_dq_iq3, @"rl_dq_iq3"},
         {&pf->p_rms, @"rl_rms_b"}, {&pf->p_resid_rms, @"rl_resid_rms_b"}, {&pf->p_scale_add, @"rl_scale_add_b"},
         {&pf->p_dn_ba, @"dn_ba_params_b"}, {&pf->p_dn_conv, @"dn_conv_seq"}, {&pf->p_dn_l2, @"dn_qk_l2_b"},
-        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_state_sg, @"dn_state_seq_sg"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
+        {&pf->p_dn_state, @"dn_state_seq"}, {&pf->p_dn_state_sg, @"dn_state_seq_sg"}, {&pf->p_dn_state_sg2, @"dn_state_seq_sg2"}, {&pf->p_dn_tail, @"dn_tail_norm_b"},
         {&pf->p_attn_prep, @"attn_qk_prep_b"}, {&pf->p_attn_gqa, @"attn_gqa_b"}, {&pf->p_attn_fa, @"attn_fa_b"}, {&pf->p_attn_fa2, @"attn_fa_b2"},
         {&pf->p_sh_scalar, @"sh_scalar_gate_b"}, {&pf->p_sh_silu, @"sh_silu_mul_b"},
         {&pf->p_dq_q8, @"rl_dq_q8"}, {&pf->p_dq_q4k, @"rl_dq_q4k"}, {&pf->p_dq_q5k, @"rl_dq_q5k"}, {&pf->p_dq_q6k, @"rl_dq_q6k"},
@@ -959,12 +987,14 @@ static void enc_recurrent_b(rl_engine *e, rl_metal_engine *m, struct rl_metal_pr
 
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
     enc = [cb computeCommandEncoder];
-    [enc setComputePipelineState:pf->state_sg ? pf->p_dn_state_sg : pf->p_dn_state];
+    /* dev75: two state rows per simdgroup (dn_state_seq_sg2, bit-identical, -1 % prefill); RL_PREFILL_STATE_ROWS=1: one */
+    const uint32_t srows = pf->state_sg && S % 8u == 0u && !(getenv("RL_PREFILL_STATE_ROWS") && atoi(getenv("RL_PREFILL_STATE_ROWS")) == 1) ? 2u : 1u;
+    [enc setComputePipelineState:!pf->state_sg ? pf->p_dn_state : srows == 2u ? pf->p_dn_state_sg2 : pf->p_dn_state_sg];
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:pf->q offset:0 atIndex:1]; [enc setBuffer:pf->k offset:0 atIndex:2];
     [enc setBuffer:pf->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:pf->gate offset:0 atIndex:4]; [enc setBuffer:pf->beta offset:0 atIndex:5];
     [enc setBuffer:pf->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
     [enc setBytes:&ntok length:4 atIndex:10]; [enc setBytes:&qk_each length:4 atIndex:11]; [enc setBytes:&channels length:4 atIndex:12]; [enc setBytes:&d_inner length:4 atIndex:13];
-    if (pf->state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / 4u, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    if (pf->state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / (4u * srows), 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
     else [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
     [enc endEncoding];
 
