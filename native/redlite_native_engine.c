@@ -37,10 +37,12 @@ void rl_engine_config_default(rl_engine_config *cfg) {
 size_t rl_engine_conv_count(const rl_engine *e) { return (size_t)(e->info.d_conv - 1u) * e->info.channels; }
 size_t rl_engine_rec_count(const rl_engine *e) { return (size_t)e->info.dt_rank * e->info.head_v * e->info.head_v; }
 size_t rl_engine_kv_row_count(const rl_engine *e) { return (size_t)e->info.n_head_kv * e->info.head_dim; }
-/* dev74: bytes per element of the GPU KV cache: 2 (half, the default) or 4 (float, RL_KV_F16=0); the CPU oracle keeps float */
+/* dev74: bytes per element of the GPU KV cache: 4 (float, the default) or 2 (half, opt-in RL_KV_F16=1). Half is faster
+ * at long context and takes half the memory, but on CF2 it moved the 1200-token comparison with llama.cpp past its
+ * bounds (KL 5.8e-2, one argmax), so it is not the default (docs/REDLITE_DEV74_DECODE_KERNELS.md) */
 size_t rl_kv_elem_bytes(void) {
     static int half_kv = -1;
-    if (half_kv < 0) { const char *v = getenv("RL_KV_F16"); half_kv = !v || atoi(v) != 0; }
+    if (half_kv < 0) { const char *v = getenv("RL_KV_F16"); half_kv = v && atoi(v) != 0; }
     return half_kv ? 2u : 4u;
 }
 

@@ -121,7 +121,7 @@ void rl_backend_state_reset(rl_engine *e, rl_backend_state *s);
 size_t rl_engine_conv_count(const rl_engine *e);
 size_t rl_engine_rec_count(const rl_engine *e);
 size_t rl_engine_kv_row_count(const rl_engine *e);
-size_t rl_kv_elem_bytes(void);   /* dev74: GPU KV cache element size (2 = half, default; RL_KV_F16=0 -> 4) */
+size_t rl_kv_elem_bytes(void);   /* dev74: GPU KV cache element size (4 = float, default; RL_KV_F16=1 -> 2) */
 const char *rl_kv_defines(void);   /* dev74: Metal #defines RL_KV / RL_KV4 / RL_KV_HALF for that element type */
 double rl_engine_now_ms(void);
 
