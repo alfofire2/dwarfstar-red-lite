@@ -22,6 +22,7 @@ search (`scripts/dev/build_site.py`).
 
 | Milestone | Document |
 |---|---|
+| dev74 decode kernels from the profile of a real token (+15 % M4 Max, +11–21 % M4 Pro on CF2), half KV cache as an opt-in | [REDLITE_DEV74_DECODE_KERNELS.md](REDLITE_DEV74_DECODE_KERNELS.md) |
 | dev72 prompt lookup with a bounded expert cache (24 GiB Macs), MLX comparison, the llama.cpp drift explained, Xcode GPU profiling tools | [REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md](REDLITE_DEV72_BOUNDED_VERIFY_PROFILING.md) |
 | dev70 prompt lookup speculative decoding for coding agents (+15–25 % decode, same output), half-precision micro-benchmark | [REDLITE_DEV70_PROMPT_LOOKUP.md](REDLITE_DEV70_PROMPT_LOOKUP.md) |
 | dev67 decode attention: whole-line key reads and a parallel merge (+4–13 % decode at 64K–256K), RoPE precision probe | [REDLITE_DEV67_DECODE_ATTENTION_MERGE.md](REDLITE_DEV67_DECODE_ATTENTION_MERGE.md) |
