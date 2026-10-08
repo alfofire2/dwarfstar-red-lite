@@ -401,3 +401,27 @@ class PreferenceUnderGpuLimitTests(unittest.TestCase):
                  patch.object(planner, "native_full_residency_fits", return_value=True):
                 self.assertEqual(planner.select_native_model(d, 24 * GIB, 21741).name,
                                  "Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf")
+
+
+class HalfKvPlanTests(unittest.TestCase):
+    """dev75: --kv f16 (RL_KV_F16=1) halves the KV term of the GPU plan; dev74 M4 Pro outcomes at a 21,741 MiB limit."""
+    RES = NativeResidency(17316, 1083 * 1024 * 1024)
+
+    def test_half_kv_halves_the_kv_term(self):
+        import os
+        from redlite.planner import native_full_residency_mib, native_plan_context
+        with patch.dict(os.environ, {"RL_KV_F16": "1"}):
+            self.assertEqual(native_full_residency_mib(self.RES), 17316 + 1083 + 580 + 96 + 572)
+            self.assertEqual(native_plan_context(4096, 2), 8192 + 3072)
+            self.assertLessEqual(native_full_residency_mib(self.RES, 32768, 512, True), 21741)    # dev74 observed: ran
+            self.assertLessEqual(native_full_residency_mib(self.RES, 16384, 2048, True), 21741)   # dev74 observed: ran
+            self.assertGreater(native_full_residency_mib(self.RES, 32768, 2048, True), 21741)    # dev74 observed: out of memory
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RL_KV_F16", None)
+            self.assertEqual(native_plan_context(4096, 2), 8192 + 1536)
+
+    def test_kv_option(self):
+        from redlite.cli import build_parser
+        p = build_parser()
+        self.assertEqual(p.parse_args(["chat"]).kv, "f32")
+        self.assertEqual(p.parse_args(["serve", "--native", "--kv", "f16"]).kv, "f16")

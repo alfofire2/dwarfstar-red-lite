@@ -35,7 +35,7 @@ xcrun --sdk "${REDLITE_SDK:-macosx}" clang -O1 -g -std=c11 -D_FILE_OFFSET_BITS=6
   "$N/redlite_native_model.c" "$N/redlite_native_tables.c" "$N/redlite_native_reference.c" \
   "$N/redlite_native_metal.c" "$N/redlite_native_statecache.c" "$N/redmetal_topk.m" "$N/redmetal_router.m" \
   "$N/redmetal_engine.m" "$N/redmetal_engine_prefill.m" \
-  -framework Foundation -framework Metal -lm -lpthread -o "$OUT/redlite-generate"
+  -framework Foundation -framework Metal -framework MetalPerformanceShaders -lm -lpthread -o "$OUT/redlite-generate"
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:detect_leaks=0}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 PROMPT="$(head -c 1400 "$ROOT/tests/fixtures/long_context_prompt.txt") Summarize the text above in two sentences."

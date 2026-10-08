@@ -72,6 +72,14 @@ them.
     `prefill-gemm-bench`, prompt ingestion 383 against 899 tok/s. `rl_gemm_tg` already runs at 64 % of the float32 peak.
   - **The DeltaNet recurrence loading token t+1's inputs while token t computes**: 944 against 945 tok/s.
 
+- **dev75, M4 Max, CF2.**
+  - **IQ2_XS decoded two groups at a time in the batched expert matrix kernels**, in the same pipeline variant as
+    IQ1_M: IQ2_XS layers 19.97 → 19.75 ms, IQ1_M layers 18.88 → 19.98 ms (the second decoder cost registers). A
+    third, IQ2_XS-only pipeline was not worth 1 %.
+  - **The paired remap for every type**, before it became a function-constant variant: IQ2_XS layers 20.07 →
+    20.5–21.1 ms.
+  - **8 gate/up lanes per decode row**: decode expert bench 2.50 ms against 2.38 (32 lanes) and 2.27 (16, kept).
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column

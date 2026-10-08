@@ -59,6 +59,7 @@ struct rl_metal_engine {
     float route_bias;                                         /* dev46: RL_ROUTE_CACHE_BIAS (default 0: off) */
     int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
     int shift_inplace;   /* dev74: DeltaNet conv window shifted in place (RL_ENGINE_SHIFT_INPLACE=0: via next_conv + copy) */
+    int down_tail;   /* dev75: routed down projection + MoE tail in one dispatch (RL_ENGINE_DOWN_TAIL=0: two) */
     int sh_overlap;   /* dev74: shared-expert tail beside the routed experts (RL_ENGINE_SH_OVERLAP=0: after) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
     uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK; 0 = rl_attn_auto_blk) */

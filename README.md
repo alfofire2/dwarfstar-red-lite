@@ -99,6 +99,11 @@ every expert resident and use MTP when its head is in `models/`:
   Below 40 GiB, MTP is skipped for answers starting past 8,192 positions, where it stops paying;
 - **for good:** a LaunchDaemon sets the limit at every boot, and `redlite doctor` recognizes it.
 
+**Long contexts in less memory: `--kv f16`** (dev75). `redlite chat` and `redlite serve --native` take `--kv f16`
+to keep the attention cache in half precision: 24 KiB per position instead of 48 (1.5 GiB instead of 3 at 64K),
+and decode +9 % at 32K and +13 % at 64K on the M4 Max. On a 24 GiB Mac at the raised GPU limit it lets MTP run
+with a 32K context. Answers can differ slightly from the default float cache (dev74), so it is opt-in.
+
 Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_24GB.md`.
 
 **Use with a coding agent** (dev59, dev60). The server speaks OpenAI tool calling, so agents such as
@@ -275,7 +280,8 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 In short:
 - **48 GiB, every expert resident:** decode is 31 % faster than the pinned llama.cpp measured the same day (90.9 vs
   69.3 tok/s, 0.9.2; 86.2 vs 72.5 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
-  slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2 decodes at 97.8 tok/s (0.9.2, dev74).
+  slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2 decodes at 97.8 tok/s (0.9.2, dev74) and ingests
+  prompts at about 1,026 tok/s (0.9.3, dev75, display off).
 - **24 GiB, 0.9.2 (dev74), Qwen3-Coder-Next CF2:** 35.4 tok/s with the 4 GiB cache, 58.1 with every expert resident
   (31.8 and 48.0 in 0.9.1, measured the same day).
 - **24 GiB:** with the 4 GiB cache the native runtime uses about 5 GiB and decodes 32–33 tok/s. With the GPU

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.3 — 2026-10-08
+
+**Prompt ingestion +9 %, and `--kv f16` in the launcher.**
+- **`redlite chat` / `redlite serve --native --kv f16`:** the half-precision KV cache of 0.9.2 as an option, with the
+  GPU planner counting 24 KiB per position. Half the context memory, faster decode at long contexts; outputs can
+  differ slightly from the default float cache.
+- **Prompt ingestion, Qwen3-Coder-Next CF2 on the M4 Max:** 945 → 1,026 tok/s at 1.4K tokens and 940 → 1,026 at 8K:
+  - the dense projections run on Apple's MetalPerformanceShaders GEMM (12.6–12.9 TFLOPS against 10.1–10.8);
+  - the IQ1_M expert matrix kernels decode two weight groups per thread, which share their scales (bit-identical).
+- **Decode about +1 %:** the routed down projection and the MoE tail in one dispatch (identical output), and gate/up
+  rows with 16 lanes.
+- Measured on the M4 Max only.
+- Validation:
+  - `regress_m4.sh` 59 / 0 / 0 on the reference file and 46 / 0 / 13 on CF2;
+  - `quick_parity.sh --long` 5 / 5 on both;
+  - local CI.
+
+
+- dev75: **`--kv f16`, prefill on MPS, two decode steps** (`docs/REDLITE_DEV75_KV_PREFILL_MPS.md`).
+
 ## 0.9.2 — 2026-10-08
 
 **Faster decode: +15 % on the M4 Max and +11–21 % on the 24 GiB M4 Pro with Qwen3-Coder-Next CF2.**
