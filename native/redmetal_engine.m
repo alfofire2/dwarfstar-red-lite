@@ -1494,13 +1494,18 @@ int rl_metal_engine_mark_io(rl_metal_engine *m, int restore) {
     if (!m) return 0;
     if (!m->mark_states) {
         if (restore) return 0;
-        m->mark_states = (void **)calloc(2u * m->n_recurrent, sizeof(void *));
-        if (!m->mark_states) return 0;
+        void **ms = (void **)calloc(2u * m->n_recurrent, sizeof(void *));
+        if (!ms) return 0;
         for (uint32_t r = 0; r < m->n_recurrent; ++r) {
-            m->mark_states[2u * r] = malloc(m->conv_state[r].length);
-            m->mark_states[2u * r + 1u] = malloc(m->rec_state[r].length);
-            if (!m->mark_states[2u * r] || !m->mark_states[2u * r + 1u]) return 0;
+            ms[2u * r] = malloc(m->conv_state[r].length);
+            ms[2u * r + 1u] = malloc(m->rec_state[r].length);
+            if (!ms[2u * r] || !ms[2u * r + 1u]) {   /* all or nothing: a partial table is never kept */
+                for (uint32_t i = 0; i < 2u * m->n_recurrent; ++i) free(ms[i]);
+                free(ms);
+                return 0;
+            }
         }
+        m->mark_states = ms;
     }
     for (uint32_t r = 0; r < m->n_recurrent; ++r) {
         void *cs = m->conv_state[r].contents, *rs = m->rec_state[r].contents;
