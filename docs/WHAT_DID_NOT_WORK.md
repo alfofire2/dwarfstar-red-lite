@@ -85,6 +85,12 @@ them.
     wastes three quarters of its matrix work; halving the decode per pair does not pay for that. Fifth layout of
     larger expert tiles that loses (dev40, dev50, dev69, dev72).
 
+- **dev77, short prefill chunks on the quantized row kernel** (`rl_rowsb_*` instead of dequantize + GEMM): dense
+  stage 60 → 23 ms at 8 tokens, but 61 → 103 ms at 32, 72 → 233 at 64 and 95 → 507 at 128. Short chunks are 6 % of
+  an agent session's prefill time; not kept.
+- **dev77, a 128K agent window:** no compactions, but longer sessions, slower decode and 9 / 12 tasks against 11 / 12
+  at 64K in two runs each. The default stays 64K ([DEV77](REDLITE_DEV77_AGENT_PREFILL.md)).
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column

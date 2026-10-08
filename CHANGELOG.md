@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- dev77: **the server rewinds instead of recomputing a conversation** (`docs/REDLITE_DEV77_AGENT_PREFILL.md`).
+  - Coding-agent sessions spent more time in prefill than in decode (773 against 648 s on the M4 Max). Most of it went
+    to whole conversations recomputed when pi sent the model's last answer back re-rendered.
+  - The server now marks the DeltaNet state after every prompt and returns to it in that case. Full recomputes over
+    4K tokens fell from 5 to 2 in two runs each (the 2 left are pi's compactions), prefill per run 386 → 282 s.
+  - Exact: `server.rewind_greedy` checks that a re-rendered answer rewinds and answers as a cold server.
+  - M4 Pro 24 GiB, 0.9.3 against 0.9.1: decode +11–12 % with the 4 GiB cache and +19–23 % with every expert resident;
+    prompt ingestion +6–11 %.
 - dev76: **MLX measured again the same day, one more prefill step** (`docs/REDLITE_DEV76_MLX_SAMEDAY.md`).
   - CF2 decodes at 99 tok/s against 87–90 for MLX's 3-bit file, with half the memory. MLX ingests long prompts a
     third faster (1,435 against 1,070 tok/s).
