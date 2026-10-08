@@ -1955,13 +1955,14 @@ static void emit_recurrent_mid2(rl_engine *e, emitter *em, const rl_layer_tensor
 
 /* routing, experts and layer end for both verify rows: one router dispatch, the 2 x top_k experts in one pool
  * encode (row 1's read its FFN input from x_split = top_k), one tail */
-static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, char *error, size_t cap) {
+static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, const mlayer *shared_tail, char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k, both = 2u * in->top_k;
     const size_t hb = (size_t)hidden * sizeof(float);
     const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
     const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t);
+    if (shared_tail) em_group(em, 1);   /* dev74: both rows' selection beside both rows' shared SiLU */
     id<MTLComputeCommandEncoder> enc = em_enc(em);
     [enc setComputePipelineState:m->p_route2];
     [enc setBuffer:m->router_logits offset:0 atIndex:0];
@@ -1974,7 +1975,15 @@ static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuff
     rl_native_layer_info li;
     rl_expert_layout lay;
     if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
-        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
+        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) { if (shared_tail) em_group(em, 0); return 0; }
+    if (shared_tail) {
+        emit_sh_silu(m, em, shared_tail);
+        swap_rows(m); emit_sh_silu(m, em, shared_tail); swap_rows(m);
+        em_group(em, 0);
+        em_group(em, 1);   /* both rows' shared down beside the routed gate/up; the pool's barrier after it covers it */
+        emit_rows_r2(m, em_enc(em), &shared_tail->sh_down, m->sh_act, ALT(sh_act), m->sh_out, ALT(sh_out));
+        g_rl_group = 0;
+    }
     if (!redmetal_topk_pool_encode_device_into2(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
             (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, both, rl_native_expert_type_word(li.ggml_type, li.down_type),
             li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes, (__bridge void *)m->ffn_in, 0u, NULL, 0u,
@@ -2007,7 +2016,8 @@ static void swap_state(rl_metal_engine *m) {
  * the parked slot's sequence at position1, with its own DeltaNet and KV state. */
 /* dev72: layer l of a 2-row pass up to the routed experts (both rows' FFN inputs, shared expert outputs and router logits
  * ready); shared by emit_verify2 (GPU routing) and the bounded-cache verify (CPU routing and the expert pool) */
-static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t position, uint32_t position1, int pair) {
+/* dev74: defer_shared leaves both rows' SiLU and shared down projection to emit_layer_experts2 (sh_overlap) */
+static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t position, uint32_t position1, int pair, int defer_shared) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden;
@@ -2073,6 +2083,7 @@ static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t p
     emit_rows_r2(m, em_enc(em), &w->sh_gate, m->ffn_in, ALT(ffn_in), m->sh_gate, ALT(sh_gate));
     emit_rows_r2(m, em_enc(em), &w->sh_up, m->ffn_in, ALT(ffn_in), m->sh_up, ALT(sh_up));
     em_group(em, 0);
+    if (defer_shared) return;
     em_group(em, 1);
     emit_sh_silu(m, em, w);
     swap_rows(m); emit_sh_silu(m, em, w); swap_rows(m);
@@ -2087,9 +2098,10 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
     const uint32_t hidden = in->hidden;
     const float eps = in->rms_eps;
     for (uint32_t l = 0; l < in->n_layer; ++l) {
-        emit_verify2_dense(e, em, l, position, position1, pair);
-        if (m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u) {
-            if (!emit_layer_experts2(e, em, l, resident, error, cap)) return 0;
+        const int fused2 = m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u;
+        emit_verify2_dense(e, em, l, position, position1, pair, fused2 && m->sh_overlap);
+        if (fused2) {
+            if (!emit_layer_experts2(e, em, l, resident, m->sh_overlap ? &m->layers[l] : NULL, error, cap)) return 0;
         } else {
             if (!emit_layer_experts(e, em, l, resident, NULL, error, cap)) return 0;
             swap_rows(m);
@@ -2135,7 +2147,7 @@ static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32
         id<MTLCommandBuffer> pending = nil;
         for (uint32_t l = 0; l < in->n_layer; ++l) {
             emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
-            emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0);
+            emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0, 0);
             const int predict = m->prefetch && m->pred_logits_alt && l + 1u < in->n_layer;
             if (predict) {
                 emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, m->ffn_in, m->pred_logits);
