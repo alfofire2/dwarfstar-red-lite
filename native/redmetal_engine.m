@@ -1272,6 +1272,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
         { const char *so = getenv("RL_ENGINE_SH_OVERLAP"); m->sh_overlap = !so || atoi(so) != 0; }   /* dev74 */
         { const char *si = getenv("RL_ENGINE_SHIFT_INPLACE"); m->shift_inplace = !si || atoi(si) != 0; }   /* dev74 */
+        { const char *dt = getenv("RL_ENGINE_DOWN_TAIL"); m->down_tail = !dt || atoi(dt) != 0; }   /* dev75 */
         { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u; }
@@ -1796,6 +1797,15 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
         em_group(em, 1);
         emit_rows(m, em_enc(em), &shared_tail->sh_down, m->sh_act, m->sh_out);
         g_rl_group = 0;
+    }
+    if (fused && m->down_tail) {   /* dev75: down + tail in one dispatch; -1 = shape not supported, the two-dispatch path below */
+        const int r = redmetal_topk_pool_encode_device_tail(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
+            (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
+            li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes, (__bridge void *)m->ffn_in, 0u,
+            (__bridge void *)m->resid, (__bridge void *)m->sh_out, (__bridge void *)m->scalar, (__bridge void *)m->x,
+            (__bridge void *)m->layer_out_gpu, (NSUInteger)l * hb);
+        if (r == 1) return 1;
+        if (r == 0) { snprintf(error, cap, "GPU-routed expert encode failed: %s", redmetal_topk_last_error()); return 0; }
     }
     if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
             (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),

@@ -247,6 +247,38 @@ static NSString * const kTopKSource = @
 "    if (active && lane == 0u) act[expert * rows + row] = (g / (1.0f + exp(-g))) * u;\n"
 "}\n"
 "\n"
+/* dev75: down projection of every selected expert and the MoE tail in one dispatch (GPU-routed decode, 8 lanes per down
+ * row). One SIMD group per output row; four experts per round on its 8-lane groups, each expert's dot with
+ * redmetal_topk_down_lanes' lanes, parts and reduction; then out = resid + (sum_e w_e * down_e + shared * scalar), the
+ * experts summed in selection order as rl_moe_tail does, written to x and layer_out. Bit-identical to down + tail. */
+"kernel void redmetal_topk_down_tail(\n"
+"    device const redmetal_topk_slots &slots [[buffer(0)]], constant uint &ncols [[buffer(1)]], constant uint &nrows [[buffer(2)]],\n"
+"    constant ulong &down_offset [[buffer(4)]], device const float *act [[buffer(5)]], device const char *grid [[buffer(6)]],\n"
+"    constant uint &top_k [[buffer(7)]], constant uint &type [[buffer(8)]], device const float *weights [[buffer(9)]],\n"
+"    device const float *resid [[buffer(10)]], device const float *shared [[buffer(11)]], device const float *scalar [[buffer(12)]],\n"
+"    device float *x [[buffer(13)]], device float *layer_out [[buffer(14)]], device const uint *rl_abort [[buffer(30)]],\n"
+"    uint tid [[thread_position_in_grid]], ushort simd_lane [[thread_index_in_simdgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint row = tid >> 5; const uint sub = uint(simd_lane) & 7u; const uint grp = uint(simd_lane) >> 3;\n"
+"    const uint blocks = ncols / 256u; const uint dt = rm_down_type(type);\n"
+"    const ulong block_bytes = rm_block_bytes(dt); const ulong row_bytes = ulong(blocks) * block_bytes;\n"
+"    const uint nparts = max(1u, 8u / blocks); const uint part = sub % nparts; const uint lane_block = sub / nparts;\n"
+"    const uint block_lanes = max(1u, 8u / nparts);\n"
+"    const bool active = row < nrows;\n"
+"    float routed = 0.0f;\n"
+"    for (uint e0 = 0; e0 < top_k; e0 += 4u) {\n"
+"        const uint e = e0 + grp; float acc = 0.0f;\n"
+"        if (active && e < top_k) {\n"
+"            device const uchar *drow = slots.slot[e] + down_offset + ulong(row) * row_bytes;\n"
+"            device const float *xe = act + e * ncols;\n"
+"            for (uint b = lane_block; b < blocks; b += block_lanes) acc += redmetal_topk_block(dt, drow + ulong(b) * block_bytes, xe + b * 256u, grid, part, nparts);\n"
+"        }\n"
+"        for (uint off = 4u; off > 0u; off >>= 1) acc += simd_shuffle_xor(acc, ushort(off));\n"
+"        for (uint j = 0; j < 4u; ++j) { const float v = simd_shuffle(acc, ushort(8u * j)); if (e0 + j < top_k) routed += weights[e0 + j] * v; }\n"
+"    }\n"
+"    if (active && simd_lane == 0) { const float v = resid[row] + (routed + shared[row] * scalar[0]); x[row] = v; layer_out[row] = v; }\n"
+"}\n"
+"\n"
 /* tmp[e][r] = down_e[row_start + r] . act[e] */
 "kernel void redmetal_topk_down_lanes(\n"
 "    device const redmetal_topk_slots &slots [[buffer(0)]],\n"
@@ -631,6 +663,7 @@ static NSString * const kTopKSource = @
     id<MTLComputePipelineState> _downPipeline;
     id<MTLComputePipelineState> _sumPipeline;
     id<MTLComputePipelineState> _gateupGPipeline, _downGPipeline, _sumGPipeline;   /* dev23 early-out variants */
+    id<MTLComputePipelineState> _downTailPipeline;   /* dev75: down projection + MoE tail */
     id<MTLComputePipelineState> _gateupG2Pipeline;   /* dev45: guarded, two input vectors */
     id<MTLComputePipelineState> _gateupBPipeline;
     id<MTLComputePipelineState> _downBPipeline;
@@ -799,6 +832,11 @@ static NSString * const kTopKSource = @
     }
     _downGPipeline = [_device newComputePipelineStateWithFunction:downG error:&pipelineError];
     _sumGPipeline = [_device newComputePipelineStateWithFunction:sumG error:&pipelineError];
+    {   /* dev75: optional; the engine falls back to down + rl_moe_tail without it */
+        id<MTLFunction> dtf = [library newFunctionWithName:@"redmetal_topk_down_tail"];
+        NSError *e3 = nil;
+        _downTailPipeline = dtf ? [_device newComputePipelineStateWithFunction:dtf error:&e3] : nil;
+    }
     if (!_gateupGPipeline || !_downGPipeline || !_sumGPipeline) {
         topk_set_error("failed to create early-out top-k pipelines: %s", pipelineError.localizedDescription.UTF8String ?: "unknown Metal error");
         return nil;
@@ -1798,7 +1836,8 @@ static int encode_device_into_impl(
         uint64_t output_offset,
         void *mtl_input1_buffer,
         uint64_t input1_offset,
-        uint32_t x_split) {
+        uint32_t x_split,
+        int gateup_only) {   /* dev75: stop after gate/up (redmetal_topk_pool_encode_device_tail) */
     @autoreleasepool {
         RMTopKPool *p = topk_obj(handle);
         if (!p || !mtl_compute_encoder || !slot_table_buffer || !weight_buffer || !mtl_input_buffer) return 0;
@@ -1836,6 +1875,7 @@ static int encode_device_into_impl(
         [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
         [enc setBytes:&gate_lanes length:sizeof(gate_lanes) atIndex:9];
         [enc dispatchThreads:MTLSizeMake((NSUInteger)ffn_size * gate_lanes, top_k, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)]; if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];   /* dev38 */
+        if (gateup_only) return 1;
 
         [enc setComputePipelineState:p->_downGPipeline];
         [enc setBuffer:table offset:(NSUInteger)slot_table_offset atIndex:0];
@@ -1863,6 +1903,43 @@ static int encode_device_into_impl(
     }
 }
 
+/* dev75: gate/up as encode_device_into, then down + MoE tail in one dispatch (redmetal_topk_down_tail): x and
+ * layer_out (at layer_out_offset) get resid + (sum of the weighted expert outputs + shared * scalar). Returns -1 (nothing
+ * encoded) when the shape does not suit the fused kernel (down rows other than 8 lanes, more than 64 experts). */
+int redmetal_topk_pool_encode_device_tail(
+        redmetal_topk_pool_t handle, void *mtl_compute_encoder, void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint64_t gate_bytes, uint64_t up_bytes, void *mtl_input_buffer, uint64_t input_offset,
+        void *resid_buffer, void *shared_buffer, void *scalar_buffer, void *x_buffer, void *layer_out_buffer, uint64_t layer_out_offset) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        if (!p || !p->_downTailPipeline || lanes_for_blocks(ffn_size / QK_IQ) != 8u || top_k > 64u) return -1;
+        if (!encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset,
+                top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, NULL, 0u, NULL, 0u, 0u, 1))
+            return 0;
+        id<MTLComputeCommandEncoder> enc = (__bridge id<MTLComputeCommandEncoder>)mtl_compute_encoder;
+        const uint64_t down_offset = gate_bytes + up_bytes;
+        [enc setComputePipelineState:p->_downTailPipeline];
+        [enc setBuffer:(__bridge id<MTLBuffer>)slot_table_buffer offset:(NSUInteger)slot_table_offset atIndex:0];
+        [enc setBytes:&ffn_size length:sizeof(ffn_size) atIndex:1];
+        [enc setBytes:&hidden_size length:sizeof(hidden_size) atIndex:2];
+        [enc setBytes:&down_offset length:sizeof(down_offset) atIndex:4];
+        [enc setBuffer:p->_actBuffer offset:0 atIndex:5];
+        [enc setBuffer:topk_grid_for_type(p, ggml_type) offset:0 atIndex:6];
+        [enc setBytes:&top_k length:sizeof(top_k) atIndex:7];
+        [enc setBytes:&ggml_type length:sizeof(ggml_type) atIndex:8];
+        [enc setBuffer:(__bridge id<MTLBuffer>)weight_buffer offset:(NSUInteger)weight_offset atIndex:9];
+        [enc setBuffer:(__bridge id<MTLBuffer>)resid_buffer offset:0 atIndex:10];
+        [enc setBuffer:(__bridge id<MTLBuffer>)shared_buffer offset:0 atIndex:11];
+        [enc setBuffer:(__bridge id<MTLBuffer>)scalar_buffer offset:0 atIndex:12];
+        [enc setBuffer:(__bridge id<MTLBuffer>)x_buffer offset:0 atIndex:13];
+        [enc setBuffer:(__bridge id<MTLBuffer>)layer_out_buffer offset:(NSUInteger)layer_out_offset atIndex:14];
+        [enc dispatchThreads:MTLSizeMake((NSUInteger)hidden_size * 32u, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        if (enc.dispatchType == MTLDispatchTypeConcurrent) [enc memoryBarrierWithScope:MTLBarrierScopeBuffers];
+        return 1;
+    }
+}
+
 int redmetal_topk_pool_encode_device_into(
         redmetal_topk_pool_t handle,
         void *mtl_compute_encoder,
@@ -1878,7 +1955,7 @@ int redmetal_topk_pool_encode_device_into(
         uint64_t input_offset,
         void *mtl_output_buffer,
         uint64_t output_offset) {
-    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, NULL, 0u, 0u);
+    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, NULL, 0u, 0u, 0);
 }
 
 int redmetal_topk_pool_encode_device_into2(
@@ -1899,7 +1976,7 @@ int redmetal_topk_pool_encode_device_into2(
         void *mtl_input1_buffer,
         uint64_t input1_offset,
         uint32_t x_split) {
-    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, mtl_input1_buffer, input1_offset, x_split);
+    return encode_device_into_impl(handle, mtl_compute_encoder, slot_table_buffer, slot_table_offset, weight_buffer, weight_offset, top_k, ggml_type, hidden_size, ffn_size, gate_bytes, up_bytes, mtl_input_buffer, input_offset, mtl_output_buffer, output_offset, mtl_input1_buffer, input1_offset, x_split, 0);
 }
 
 int redmetal_topk_pool_encode(

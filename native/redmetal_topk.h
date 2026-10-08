@@ -154,6 +154,13 @@ int redmetal_topk_pool_encode_device_into2(
         void *weight_buffer, uint64_t weight_offset, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
         uint64_t gate_bytes, uint64_t up_bytes, void *mtl_input_buffer, uint64_t input_offset, void *mtl_output_buffer,
         uint64_t output_offset, void *mtl_input1_buffer, uint64_t input1_offset, uint32_t x_split);
+/* dev75: gate/up, then down + MoE tail in one dispatch: x and layer_out get resid + (weighted expert sum + shared *
+ * scalar), bit-identical to encode_device_into + rl_moe_tail. -1: shape not supported (nothing encoded). */
+int redmetal_topk_pool_encode_device_tail(
+        redmetal_topk_pool_t handle, void *mtl_compute_encoder, void *slot_table_buffer, uint64_t slot_table_offset,
+        void *weight_buffer, uint64_t weight_offset, uint32_t top_k, uint32_t ggml_type, uint32_t hidden_size, uint32_t ffn_size,
+        uint64_t gate_bytes, uint64_t up_bytes, void *mtl_input_buffer, uint64_t input_offset,
+        void *resid_buffer, void *shared_buffer, void *scalar_buffer, void *x_buffer, void *layer_out_buffer, uint64_t layer_out_offset);
 int redmetal_topk_pool_encode_device_into(
     redmetal_topk_pool_t pool,
     void *mtl_compute_encoder,
