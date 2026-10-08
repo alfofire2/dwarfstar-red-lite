@@ -24,7 +24,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-BIN="$ROOT/.deps/redmetal"
+BIN="${REDLITE_BENCH_BIN:-$ROOT/.deps/redmetal}"   # dev74: another build (e.g. a release) to compare on the same day
 MODEL="${1:-}"
 [[ -z "$MODEL" || ! -f "$MODEL" ]] && { echo "usage: $0 MODEL [--reps N] [--only WHAT] [--json FILE]" >&2; exit 2; }
 shift

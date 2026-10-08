@@ -58,6 +58,7 @@ struct rl_metal_engine {
     int attn_group;                                           /* RL_ENGINE_ATTN_GROUP != 0 (default) */
     float route_bias;                                         /* dev46: RL_ROUTE_CACHE_BIAS (default 0: off) */
     int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
+    int sh_overlap;   /* dev74: shared-expert tail beside the routed experts (RL_ENGINE_SH_OVERLAP=0: after) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
     uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK; 0 = rl_attn_auto_blk) */
     id<MTLBuffer> attn_ml, attn_acc;                          /* per (head, 256-position block) partials */

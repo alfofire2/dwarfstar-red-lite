@@ -1261,6 +1261,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
+        { const char *so = getenv("RL_ENGINE_SH_OVERLAP"); m->sh_overlap = !so || atoi(so) != 0; }   /* dev74 */
         { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u; }
@@ -1674,7 +1675,13 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
 }
 
 /* post-attention residual + RMSNorm, router logits, shared expert (gate scalar, gate/up, SiLU*up, down) */
-static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
+/* dev74: defer_shared leaves SiLU and the shared down projection to emit_layer_experts, which overlaps them with the
+ * router selection and the routed gate/up (GPU-routed decode) */
+static void emit_ffn_pre_opt(rl_engine *e, emitter *em, const mlayer *w, int defer_shared);
+static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) { emit_ffn_pre_opt(e, em, w, 0); }
+static void emit_sh_silu(rl_metal_engine *m, emitter *em, const mlayer *w);
+
+static void emit_ffn_pre_opt(rl_engine *e, emitter *em, const mlayer *w, int defer_shared) {
     rl_metal_engine *m = em->m;
     const uint32_t hidden = e->info.hidden;
     const float eps = e->info.rms_eps;
@@ -1697,6 +1704,7 @@ static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
     emit_rows(m, enc, &w->sh_gate, m->ffn_in, m->sh_gate);
     emit_rows(m, enc, &w->sh_up, m->ffn_in, m->sh_up);
     em_group(em, 0);
+    if (defer_shared) return;
     {
         const uint32_t ffn = w->sh_gate.rows;
         [enc setComputePipelineState:m->p_sh_silu];
@@ -1740,7 +1748,7 @@ static void emit_scale_add(rl_engine *e, emitter *em) {
  * (dev21); with the early-out flag bound, everything after the first layer that selects a non-resident
  * expert returns immediately (dev23). */
 /* GPU routing, routed experts and the end of layer l for the current row buffers (the layer's FFN input is ready) */
-static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, char *error, size_t cap) {
+static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, const mlayer *shared_tail, char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
@@ -1748,6 +1756,7 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
     const int fused = m->fuse_tail && m->p_moe_tail;
     const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
     const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
+    if (shared_tail) em_group(em, 1);   /* dev74: the selection and the shared SiLU read different buffers */
     {
         id<MTLComputeCommandEncoder> enc = em_enc(em);
         [enc setComputePipelineState:m->p_route];
@@ -1763,7 +1772,16 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
     rl_native_layer_info li;
     rl_expert_layout lay;
     if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
-        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
+        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) { if (shared_tail) em_group(em, 0); return 0; }
+    if (shared_tail) {
+        emit_sh_silu(m, em, shared_tail);
+        em_group(em, 0);
+        /* the shared down projection with no barrier after it: it runs beside the routed gate/up, whose barrier
+         * (redmetal_topk_pool_encode_device_into) also covers it before the tail reads sh_out */
+        em_group(em, 1);
+        emit_rows(m, em_enc(em), &shared_tail->sh_down, m->sh_act, m->sh_out);
+        g_rl_group = 0;
+    }
     if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
             (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
             li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
@@ -1799,8 +1817,8 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
         emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
         if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, em, t, w);
         else emit_attention(e, em, t, w, position);
-        emit_ffn_pre(e, em, w);
-        if (!emit_layer_experts(e, em, l, resident, error, cap)) return 0;
+        emit_ffn_pre_opt(e, em, w, m->sh_overlap);
+        if (!emit_layer_experts(e, em, l, resident, m->sh_overlap ? w : NULL, error, cap)) return 0;
     }
     emit_rms(m, em_enc(em), m->x, &m->output_norm, m->final_norm, hidden, eps);
     if (want_logits) emit_rows(m, em_enc(em), &m->output, m->final_norm, m->logits);
@@ -2058,9 +2076,9 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
         if (m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u) {
             if (!emit_layer_experts2(e, em, l, resident, error, cap)) return 0;
         } else {
-            if (!emit_layer_experts(e, em, l, resident, error, cap)) return 0;
+            if (!emit_layer_experts(e, em, l, resident, NULL, error, cap)) return 0;
             swap_rows(m);
-            const int ok = emit_layer_experts(e, em, l, resident, error, cap);
+            const int ok = emit_layer_experts(e, em, l, resident, NULL, error, cap);
             swap_rows(m);
             if (!ok) return 0;
         }
