@@ -352,5 +352,174 @@
    "prefill8192": 903.99,
    "note": "bench_m4.sh --only llama, same day"
   }
+ },
+ "m4pro_main_vs_final_tok_s": {
+  "note": "final 0.9.2 build vs 0.9.1, CF2, decode-bench, three alternated pairs",
+  "cache_4096": {
+   "64": {
+    "main": [
+     26.1,
+     32.2,
+     31.8
+    ],
+    "final": [
+     35.2,
+     35.4,
+     35.6
+    ]
+   },
+   "16384": {
+    "main": [
+     27.3,
+     28.4,
+     28.9
+    ],
+    "final": [
+     31.5,
+     31.8,
+     31.8
+    ]
+   },
+   "32768": {
+    "main": [
+     25.2,
+     25.6,
+     25.8
+    ],
+    "final": [
+     27.9,
+     28.5,
+     28.3
+    ]
+   }
+  },
+  "full": {
+   "64": {
+    "main": [
+     48.0,
+     48.1,
+     47.9
+    ],
+    "final": [
+     59.3,
+     58.1,
+     57.8
+    ]
+   },
+   "16384": {
+    "main": [
+     42.3,
+     42.4,
+     42.3
+    ],
+    "final": [
+     50.2,
+     49.7,
+     50.3
+    ]
+   },
+   "32768": {
+    "main": [
+     36.7,
+     36.7,
+     36.6
+    ],
+    "final": [
+     42.1,
+     42.4,
+     42.3
+    ]
+   }
+  }
+ },
+ "lookup_rewrite_tok_s": {
+  "note": "dev72 file rewrite (planner.py of v0.9.1, rename), --lookup, greedy 300 tokens, 85.1 % drafts accepted, output tokens identical across versions",
+  "m4max": {
+   "4096": {
+    "0.9.1": [
+     69.45,
+     67.92
+    ],
+    "0.9.2": [
+     70.79,
+     70.01
+    ]
+   },
+   "full": {
+    "0.9.1": [
+     108.78,
+     108.54
+    ],
+    "0.9.2": [
+     118.55,
+     115.8
+    ]
+   }
+  },
+  "m4pro": {
+   "4096": {
+    "0.9.1": [
+     39.07,
+     38.53
+    ],
+    "0.9.2": [
+     40.72,
+     40.69
+    ]
+   },
+   "full": {
+    "0.9.1": [
+     60.28,
+     60.26
+    ],
+    "0.9.2": [
+     66.5,
+     66.45
+    ]
+   }
+  }
+ },
+ "engine_perplexity_cf2": {
+  "note": "redlite-engine perplexity, first 8192 ids, ctx 512, second halves scored, every expert resident, M4 Max",
+  "code_corpus": {
+   "0.9.1": 2.5623,
+   "0.9.2": 2.5637
+  },
+  "text_corpus": {
+   "0.9.1": 16.6578,
+   "0.9.2": 16.6554
+  }
+ },
+ "agent_m4pro_64k_4gib_lookup": {
+  "note": "hard suite, pi, temperature 0.3, 900 s per task, repository tasks from v0.9.1; server on the M4 Pro, 0.9.1 vs dev74 (4bec996, before the scheduling changes), alternated",
+  "tasks": {
+   "0.9.1": [
+    "6/6",
+    "6/6"
+   ],
+   "dev74": [
+    "6/6",
+    "4/6 (two 900 s timeouts, one a 159-request loop)"
+   ]
+  },
+  "ms_per_decode_pass": {
+   "main_r1": {
+    "0-8K": 50.7,
+    "8-16K": 54.7,
+    "16-32K": 60.8,
+    "32K+": 64.0
+   },
+   "dev74_r1": {
+    "0-8K": 53.0,
+    "8-16K": 62.1,
+    "16-32K": 65.0,
+    "32K+": 73.5
+   },
+   "main_r2": {
+    "16-32K": 74.7,
+    "32K+": 81.7
+   }
+  },
+  "finding": "the same 0.9.1 binary varies more between runs (60.8 vs 74.7 ms per pass at 16-32K) than the kernel change; this suite does not separate the versions with a bounded cache"
  }
 }

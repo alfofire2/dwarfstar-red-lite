@@ -65,12 +65,26 @@ resident 108.7 → 117.2 tok/s (+8 %), 4 GiB expert cache 68.7 → 70.4 (+2.5 %)
 output tokens are identical to 0.9.1's. The bounded-cache verify waits on expert loads, so the kernels matter less
 there. The shared-expert overlap was extended to the fused 2-row verify (+0.7 %, identical output).
 
-**M4 Pro 24 GiB, CF2** (`decode-bench`, four alternated pairs; dev74 before the two scheduling changes):
+**M4 Pro 24 GiB, CF2** (`decode-bench`, final build, medians of three alternated pairs):
 
-| Setting | 0.9.1 | dev74 | Gain |
-|---|---:|---:|---:|
-| 4 GiB expert cache | 33.7 tok/s | 37.9 tok/s | +12 % |
-| Every expert resident (GPU limit 21,741 MiB) | 48.2 tok/s | 57.1 tok/s | +18 % |
+| Context | 4 GiB cache, 0.9.1 | 0.9.2 | Every expert resident, 0.9.1 | 0.9.2 |
+|---:|---:|---:|---:|---:|
+| 64 | 31.8 tok/s | 35.4 (+11 %) | 48.0 tok/s | 58.1 (+21 %) |
+| 16K | 28.4 | 31.8 (+12 %) | 42.3 | 50.2 (+19 %) |
+| 32K | 25.6 | 28.3 (+11 %) | 36.7 | 42.3 (+15 %) |
+
+The file rewrite with prompt lookup on the M4 Pro: 38.8 → 40.7 tok/s with the 4 GiB cache, 60.3 → 66.5 with every
+expert resident, identical tokens.
+
+**Quality is unchanged.** Engine perplexity of CF2 (first 8,192 ids, 512-token chunks, every expert resident):
+code 2.5623 → 2.5637, text 16.6578 → 16.6554.
+
+**Coding agent on the M4 Pro with the 4 GiB cache** (the hard suite, 64K window, prompt lookup, two alternated runs
+each; dev74 before the scheduling changes): 0.9.1 passed 6/6 and 6/6, dev74 6/6 and 4/6 (two 900 s timeouts, one a
+159-request loop). Agent sessions at temperature 0.3 differ from run to run. With experts streamed from the SSD, each
+decode pass took 50–80 ms, and the same 0.9.1 binary varied more between its two runs (60.8 against 74.7 ms per pass
+at 16–32K) than the kernels change. This suite does not separate the two versions in that setting; the deterministic
+tests above do.
 
 ## 4. The half KV cache: built, faster, not the default
 
