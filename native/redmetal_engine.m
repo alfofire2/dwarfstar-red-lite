@@ -1552,7 +1552,9 @@ static void em_copy(emitter *em, id<MTLBuffer> src, NSUInteger soff, id<MTLBuffe
 }
 
 /* dev45: the per-row DeltaNet kernels of a layer (between the input and output projections) */
-static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors *t, const mlayer *w) {
+/* dev74: inplace shifts conv_state itself (plain decode, which then skips the copy back); the verify and paired-slot
+ * callers copy next_conv into conv_state themselves and pass 0 */
+static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors *t, const mlayer *w, int inplace_shift) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t r = t->recurrent_index;
@@ -1581,7 +1583,7 @@ static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors
     [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
     [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
 
-    const int inplace = m->shift_inplace && dconv <= 9u;   /* dev74: shift conv_state itself, no copy at the layer's end */
+    const int inplace = inplace_shift && dconv <= 9u;
     [enc setComputePipelineState:inplace ? m->p_dn_shift_ip : m->p_dn_shift];
     [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1];
     if (!inplace) [enc setBuffer:m->next_conv offset:0 atIndex:2];
@@ -1618,9 +1620,10 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     emit_rows(m, em_enc(em), &w->z, m->normed, m->z);
     emit_rows(m, em_enc(em), &w->ba, m->normed, m->ba);
     em_group(em, 0);
-    emit_recurrent_mid(e, em, t, w);
+    const int inplace = m->shift_inplace && e->info.d_conv <= 9u;   /* dev74 */
+    emit_recurrent_mid(e, em, t, w, inplace);
     emit_rows(m, em_enc(em), &w->ssm_out, m->ng, m->branch);
-    if (!(m->shift_inplace && e->info.d_conv <= 9u)) em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
+    if (!inplace) em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
     em_stage(em, 4);
 }
 
@@ -2025,23 +2028,23 @@ static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t p
         emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
         em_group(em, 0);
         if (pair) {
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_rows(m); swap_state(m);
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_state(m); swap_rows(m);
         } else if (e->info.d_conv <= 9u && m->p_dn_state2) {
             emit_recurrent_mid2(e, em, t, w);
         } else {
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             em_group(em, 1);   /* snapshot of the state after row 0 */
             em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
             em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
             em_group(em, 0);
             swap_rows(m);
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_rows(m);
         }
