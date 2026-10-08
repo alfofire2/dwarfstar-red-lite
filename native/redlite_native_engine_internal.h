@@ -96,7 +96,9 @@ int rl_metal_engine_verify_commit(rl_engine *e, rl_metal_engine *m, int accepted
 int rl_metal_engine_verify_available(const rl_metal_engine *m);   /* dev72 */
 int rl_metal_prefill_kernel_bench(rl_engine *e, rl_metal_engine *m, uint32_t B, uint32_t position0, uint32_t layer, char *error, size_t cap);   /* dev72 */
 int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char *error, size_t cap);   /* dev72 */
+int rl_metal_prefill_gemm_bench_standalone(uint32_t rows, uint32_t K, uint32_t B, const char *kernel, char *error, size_t cap);   /* dev74 */
 int rl_metal_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, uint32_t B, char *error, size_t cap);   /* dev72 */
+int rl_metal_decode_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, char *error, size_t cap);   /* dev74 */
 int rl_metal_engine_slots_enable(rl_engine *e, rl_metal_engine *m, char *error, size_t cap);   /* dev56 */
 void rl_metal_engine_swap_slot(rl_metal_engine *m);
 int rl_metal_engine_step_pair(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32_t t1, float *logits0, float *logits1,
@@ -119,6 +121,8 @@ void rl_backend_state_reset(rl_engine *e, rl_backend_state *s);
 size_t rl_engine_conv_count(const rl_engine *e);
 size_t rl_engine_rec_count(const rl_engine *e);
 size_t rl_engine_kv_row_count(const rl_engine *e);
+size_t rl_kv_elem_bytes(void);   /* dev74: GPU KV cache element size (4 = float, default; RL_KV_F16=1 -> 2) */
+const char *rl_kv_defines(void);   /* dev74: Metal #defines RL_KV / RL_KV4 / RL_KV_HALF for that element type */
 double rl_engine_now_ms(void);
 
 #ifdef __cplusplus

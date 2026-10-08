@@ -52,8 +52,11 @@ token ids.
   - 2048-token chunks, so a bounded cache reloads each expert fewer times.
 
 **Against MLX** (dev72, M4 Max, Qwen3-Coder-Next, two prompts, greedy):
-- **MLX's 3-bit file** (32.5 GiB) decodes at 94–96 tok/s against Red Lite CF2's 80 (109 with prompt lookup on a file
-  rewrite), and ingests prompts about 50 % faster (1,427 against 929 tok/s at 1.7K tokens).
+- **MLX's 3-bit file** (32.5 GiB) decodes at 94–96 tok/s against Red Lite CF2's 80 in 0.9.1 (109 with prompt lookup on
+  a file rewrite), and ingests prompts about 50 % faster (1,427 against 929 tok/s at 1.7K tokens).
+- **0.9.2 closed the decode gap** (dev74): CF2 decodes at 97.8 tok/s on the same Mac, after four kernels were rewritten
+  from the profile of a real token. The largest cost was not the experts but the Q4_K dense projections (864 MiB per
+  token). Prompt ingestion is still about a third slower than MLX.
 - **MLX's 2-bit file** (23.2 GiB) is faster still, but corrupted the file it was asked to copy; CF2 copied it exactly.
 - **Neither MLX file runs on a 24 GiB Mac.** The gap says Red Lite's kernels have room; dev72 started profiling them.
 
@@ -216,6 +219,11 @@ the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from 
     programs sum attention over hundreds of thousands of positions in a different order.
 - **Float16 KV cache** (dev53) halved the context memory without changing the speed. It moved a few expert choices
   between the CPU reference and Metal, which the parity rules do not allow, so it was not kept.
+- **Half KV cache, opt-in** (dev74, `RL_KV_F16=1`): since dev66/67 the decode attention is bound by memory, so half
+  K/V now pays: +9 % decode at 32K and +13 % at 64K (M4 Max, CF2), and MTP plus a 32K context fits a 24 GiB Mac with
+  every expert resident. The CPU oracle rounds K/V the same way, and the reference file passed all 59 regression
+  checks. On CF2 the 1200-token comparison with llama.cpp went past its bounds (KL 5.8e-2, one argmax), so float
+  stays the default.
 
 ## 7. How we know it is correct
 

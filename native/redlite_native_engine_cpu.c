@@ -25,6 +25,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* dev74: f rounded to the nearest half (ties to even, as the Metal float -> half conversion), back as float */
+static float rl_round_half(float f) {
+    uint32_t x; memcpy(&x, &f, 4);
+    const uint32_t a = x & 0x7fffffffu, sign = x & 0x80000000u;
+    if (a >= 0x7f800000u) return f;                                   /* inf, NaN */
+    if (a < 0x38800000u) return ldexpf(rintf(ldexpf(f, 24)), -24);    /* half subnormal range: steps of 2^-24 */
+    uint32_t r = (a + 0x00000fffu + ((a >> 13) & 1u)) & ~0x1fffu;     /* 10 mantissa bits, nearest even */
+    if (r >= 0x47800000u) r = 0x7f800000u;                            /* past 65504: inf */
+    r |= sign; memcpy(&f, &r, 4);
+    return f;
+}
+
 /* ---- parallel rows ---- */
 
 typedef struct {
@@ -277,6 +289,11 @@ static int attention_branch(rl_engine *e, rl_backend_state *s, const rl_layer_te
     }
     memcpy(kcache + (size_t)position * kvcount, key, (size_t)kvcount * sizeof(float));
     memcpy(vcache + (size_t)position * kvcount, value, (size_t)kvcount * sizeof(float));
+    if (rl_kv_elem_bytes() == 2u)   /* dev74: the GPU keeps K and V as half; the oracle reads the same rounded values */
+        for (size_t i = 0; i < kvcount; ++i) {
+            kcache[(size_t)position * kvcount + i] = rl_round_half(kcache[(size_t)position * kvcount + i]);
+            vcache[(size_t)position * kvcount + i] = rl_round_half(vcache[(size_t)position * kvcount + i]);
+        }
     {
         const double scale = 1.0 / sqrt((double)head_dim);
         for (uint32_t h = 0; h < qh_count; ++h) {

@@ -1,0 +1,609 @@
+{
+ "milestone": "dev74",
+ "date": "2026-10-08",
+ "machines": {
+  "m4max": "Apple M4 Max 48 GiB (40-core GPU)",
+  "m4pro": "Apple M4 Pro 24 GiB, GPU limit 21741 MiB, AC"
+ },
+ "model": "Qwen3-Coder-Next-RedLite-CF2.gguf (every expert resident unless noted)",
+ "method": "redlite-engine decode-bench, 32 token ids, alternated pairs (A then B), medians per run",
+ "decode_profile_before": {
+  "source": "RL_GPU_CAPTURE_STEP=12, Xcode full profile, M4 Max, 1046 dispatches",
+  "shares_pct": {
+   "rl_rows2_q4k": 34.54,
+   "redmetal_topk_gateup_lanes": 17.46,
+   "redmetal_topk_down_lanes": 9.31,
+   "rl_route": 7.05,
+   "dn_state_fused": 5.58,
+   "rl_rows_q5k": 5.41,
+   "attn_gqa": 4.85,
+   "rl_rows2_f32": 3.53,
+   "rl_rows2_q6k": 2.73
+  }
+ },
+ "decode_profile_after": {
+  "shares_pct": {
+   "rl_rows2_q4k": 29.83,
+   "redmetal_topk_gateup_lanes": 19.91,
+   "redmetal_topk_down_lanes": 10.2,
+   "rl_route": 8.03,
+   "attn_gqa": 6.2,
+   "rl_rows2_q5k": 5.42,
+   "rl_rows2_f32": 4.26,
+   "rl_rows2_q6k": 3.04,
+   "dn_state_sg": 2.15
+  }
+ },
+ "steps_m4max_short_context_tok_s": [
+  {
+   "change": "Q4_K sub-block pairs, 32-bit loads",
+   "before": [
+    79.5,
+    78.9,
+    79.2,
+    77.5,
+    78.8
+   ],
+   "after": [
+    82.2,
+    82.5,
+    84.4,
+    82.2,
+    79.4
+   ]
+  },
+  {
+   "change": "IQ1_M group pairs",
+   "before": [
+    82.8,
+    82.5,
+    82.2,
+    81.8,
+    83.7,
+    82.3
+   ],
+   "after": [
+    88.1,
+    85.0,
+    85.1,
+    84.3,
+    83.7,
+    84.5
+   ]
+  },
+  {
+   "change": "DeltaNet state one SIMD group per row",
+   "before": [
+    84.5,
+    83.9,
+    84.3,
+    85.4,
+    84.8
+   ],
+   "after": [
+    88.3,
+    86.7,
+    91.6,
+    86.9,
+    87.3
+   ]
+  },
+  {
+   "change": "Q5_K head sub-block pairs",
+   "kernel_bench_us": {
+    "before": [
+     622.3,
+     624.8,
+     611.0
+    ],
+    "after": [
+     537.2,
+     534.9,
+     533.9
+    ]
+   }
+  }
+ ],
+ "kernel_bench_us": {
+  "q4k_qkv_8192x2048": {
+   "before": 35.2,
+   "after": 29.5
+  },
+  "q4k_z_4096x2048": {
+   "before": 18.1,
+   "after": 14.5
+  },
+  "q4k_ssm_out_2048x4096": {
+   "before": 19.1,
+   "after": 15.0
+  },
+  "q4k_65536x2048_gb_s": 453,
+  "q5k_head_gb_s": 463
+ },
+ "m4max_main_vs_dev74_tok_s": {
+  "note": "clean machine (after killing leftover Xcode replay services), three pairs",
+  "64": {
+   "main": [
+    84.9,
+    85.2,
+    86.2
+   ],
+   "dev74": [
+    94.7,
+    95.2,
+    94.6
+   ]
+  },
+  "4096": {
+   "main": [
+    83.6,
+    84.0,
+    84.1
+   ],
+   "dev74": [
+    103.0,
+    93.7,
+    95.3
+   ]
+  },
+  "32768": {
+   "main": [
+    68.1,
+    67.0,
+    66.5
+   ],
+   "dev74": [
+    73.6,
+    72.8,
+    73.1
+   ]
+  }
+ },
+ "m4pro_main_vs_dev74_tok_s": {
+  "note": "position 64, four pairs; dev74 binary before the half KV commit",
+  "cache_4096": {
+   "main": [
+    28.9,
+    33.7,
+    33.7,
+    33.8
+   ],
+   "dev74": [
+    38.1,
+    37.8,
+    38.1,
+    37.7
+   ]
+  },
+  "full": {
+   "main": [
+    48.1,
+    48.3,
+    48.2,
+    48.1
+   ],
+   "dev74": [
+    56.9,
+    57.2,
+    57.0,
+    57.2
+   ]
+  }
+ },
+ "half_kv_opt_in": {
+  "m4max_decode_tok_s": {
+   "4096": {
+    "float": [
+     93.0,
+     93.8
+    ],
+    "half": [
+     94.1,
+     103.3
+    ]
+   },
+   "32768": {
+    "float": [
+     72.6,
+     72.8
+    ],
+    "half": [
+     81.2,
+     77.7
+    ]
+   },
+   "65536": {
+    "float": [
+     59.9,
+     60.0
+    ],
+    "half": [
+     68.1,
+     68.0
+    ]
+   }
+  },
+  "prefill_attn_512_at_32k_ms": {
+   "float": [
+    33.07,
+    32.75,
+    33.21
+   ],
+   "half": [
+    30.35,
+    30.34,
+    30.81
+   ]
+  },
+  "m4pro_mtp_32k_full_residency": {
+   "float": "out of GPU memory",
+   "half": {
+    "tok_s": 52.9,
+    "footprint_mib": 20314.7
+   }
+  },
+  "m4pro_mtp_full_residency_limit_21741": {
+   "16384_batch2048": "ran (half)",
+   "32768_batch2048": "out of GPU memory (half)"
+  },
+  "gate_failed": {
+   "check": "logits.long_context_vs_llama, CF2, positions 1100-1199",
+   "half": {
+    "worst_kl": 0.05773,
+    "argmax_agreement": false
+   },
+   "float_dev74": {
+    "worst_kl": 2.776e-07,
+    "argmax_agreement": true
+   },
+   "float_main": {
+    "worst_kl": 2.779e-07
+   }
+  },
+  "reference_iq2_xxs_regress_with_half": "59 pass / 0 fail"
+ },
+ "m4max_main_vs_final_tok_s": {
+  "note": "final 0.9.2 build vs 0.9.1 (main), CF2, every expert resident, three alternated pairs",
+  "64": {
+   "main": [
+    85.3,
+    85.2,
+    86.0
+   ],
+   "final": [
+    97.8,
+    97.9,
+    97.6
+   ]
+  },
+  "4096": {
+   "main": [
+    83.4,
+    83.8,
+    83.4
+   ],
+   "final": [
+    96.4,
+    97.2,
+    95.8
+   ]
+  },
+  "32768": {
+   "main": [
+    72.5,
+    66.2,
+    66.7
+   ],
+   "final": [
+    74.0,
+    74.1,
+    80.1
+   ]
+  }
+ },
+ "scheduling_changes_tok_s": {
+  "shared_expert_overlap": {
+   "off": [
+    94.3,
+    95.8,
+    94.7,
+    94.5,
+    94.3
+   ],
+   "on": [
+    96.6,
+    97.3,
+    96.9,
+    96.9,
+    97.1
+   ]
+  },
+  "conv_shift_in_place": {
+   "off": [
+    96.4,
+    97.1,
+    96.9,
+    99.4,
+    97.0
+   ],
+   "on": [
+    97.6,
+    97.4,
+    97.6,
+    97.8,
+    98.9
+   ]
+  }
+ },
+ "bench_m4_reference_iq2_xxs": {
+  "note": "scripts/dev/bench_m4.sh, 256 greedy tokens, median of 3 runs with 60 s cooling (prefill 90 s), same day",
+  "0.9.1": {
+   "decode22": 83.5,
+   "decode4": 52.97,
+   "prefill1100": 587.6
+  },
+  "0.9.2": {
+   "decode22": 90.93,
+   "decode4": 55.96,
+   "prefill1100": 584.1
+  },
+  "llama.cpp_pinned": {
+   "decode": 69.25,
+   "prefill8192": 903.99,
+   "note": "bench_m4.sh --only llama, same day"
+  }
+ },
+ "m4pro_main_vs_final_tok_s": {
+  "note": "final 0.9.2 build vs 0.9.1, CF2, decode-bench, three alternated pairs",
+  "cache_4096": {
+   "64": {
+    "main": [
+     26.1,
+     32.2,
+     31.8
+    ],
+    "final": [
+     35.2,
+     35.4,
+     35.6
+    ]
+   },
+   "16384": {
+    "main": [
+     27.3,
+     28.4,
+     28.9
+    ],
+    "final": [
+     31.5,
+     31.8,
+     31.8
+    ]
+   },
+   "32768": {
+    "main": [
+     25.2,
+     25.6,
+     25.8
+    ],
+    "final": [
+     27.9,
+     28.5,
+     28.3
+    ]
+   }
+  },
+  "full": {
+   "64": {
+    "main": [
+     48.0,
+     48.1,
+     47.9
+    ],
+    "final": [
+     59.3,
+     58.1,
+     57.8
+    ]
+   },
+   "16384": {
+    "main": [
+     42.3,
+     42.4,
+     42.3
+    ],
+    "final": [
+     50.2,
+     49.7,
+     50.3
+    ]
+   },
+   "32768": {
+    "main": [
+     36.7,
+     36.7,
+     36.6
+    ],
+    "final": [
+     42.1,
+     42.4,
+     42.3
+    ]
+   }
+  }
+ },
+ "lookup_rewrite_tok_s": {
+  "note": "dev72 file rewrite (planner.py of v0.9.1, rename), --lookup, greedy 300 tokens, 85.1 % drafts accepted, output tokens identical across versions",
+  "m4max": {
+   "4096": {
+    "0.9.1": [
+     69.45,
+     67.92
+    ],
+    "0.9.2": [
+     70.79,
+     70.01
+    ]
+   },
+   "full": {
+    "0.9.1": [
+     108.78,
+     108.54
+    ],
+    "0.9.2": [
+     118.55,
+     115.8
+    ]
+   }
+  },
+  "m4pro": {
+   "4096": {
+    "0.9.1": [
+     39.07,
+     38.53
+    ],
+    "0.9.2": [
+     40.72,
+     40.69
+    ]
+   },
+   "full": {
+    "0.9.1": [
+     60.28,
+     60.26
+    ],
+    "0.9.2": [
+     66.5,
+     66.45
+    ]
+   }
+  }
+ },
+ "engine_perplexity_cf2": {
+  "note": "redlite-engine perplexity, first 8192 ids, ctx 512, second halves scored, every expert resident, M4 Max",
+  "code_corpus": {
+   "0.9.1": 2.5623,
+   "0.9.2": 2.5637
+  },
+  "text_corpus": {
+   "0.9.1": 16.6578,
+   "0.9.2": 16.6554
+  }
+ },
+ "agent_m4pro_64k_4gib_lookup": {
+  "note": "hard suite, pi, temperature 0.3, 900 s per task, repository tasks from v0.9.1; server on the M4 Pro, 0.9.1 vs dev74 (4bec996, before the scheduling changes), alternated",
+  "tasks": {
+   "0.9.1": [
+    "6/6",
+    "6/6"
+   ],
+   "dev74": [
+    "6/6",
+    "4/6 (two 900 s timeouts, one a 159-request loop)"
+   ]
+  },
+  "ms_per_decode_pass": {
+   "main_r1": {
+    "0-8K": 50.7,
+    "8-16K": 54.7,
+    "16-32K": 60.8,
+    "32K+": 64.0
+   },
+   "dev74_r1": {
+    "0-8K": 53.0,
+    "8-16K": 62.1,
+    "16-32K": 65.0,
+    "32K+": 73.5
+   },
+   "main_r2": {
+    "16-32K": 74.7,
+    "32K+": 81.7
+   }
+  },
+  "finding": "the same 0.9.1 binary varies more between runs (60.8 vs 74.7 ms per pass at 16-32K) than the kernel change; this suite does not separate the versions with a bounded cache"
+ },
+ "m4pro_six_prompts_iq2_xxs": {
+  "note": "scripts/dev/small_mac_ab.sh default, six prompts x 256 tokens, 30 s cooling, M4 Pro 24 GiB, GPU limit 21741 MiB, same day",
+  "cache_4096": {
+   "0.9.1": {
+    "runs": [
+     30.04,
+     33.2,
+     33.36,
+     34.59,
+     34.75,
+     34.41
+    ],
+    "median": 33.885,
+    "misses_per_token": 29.5
+   },
+   "0.9.2": {
+    "runs": [
+     37.18,
+     36.8,
+     36.55,
+     37.44,
+     37.63,
+     37.33
+    ],
+    "median": 37.255,
+    "misses_per_token": 29.5
+   }
+  },
+  "full": {
+   "0.9.1": {
+    "runs": [
+     46.29,
+     46.15,
+     46.25,
+     46.2,
+     46.05,
+     46.04
+    ],
+    "median": 46.175
+   },
+   "0.9.2": {
+    "runs": [
+     52.41,
+     52.31,
+     52.51,
+     52.34,
+     52.33,
+     52.36
+    ],
+    "median": 52.35
+   }
+  }
+ },
+ "agent_m4max_64k_full_lookup": {
+  "note": "hard suite, pi, temperature 0.3, 900 s per task, repository tasks from v0.9.1, CF2 every expert resident, 64K, --lookup; 0.9.1 vs final 0.9.2, two alternated runs each; bands aggregate tokens / time over both runs",
+  "tasks": {
+   "0.9.1": [
+    "6/6",
+    "5/6"
+   ],
+   "0.9.2": [
+    "6/6",
+    "5/6"
+   ]
+  },
+  "bands_tok_s": {
+   "0-8K": {
+    "0.9.1": 92.5,
+    "0.9.2": 100.9
+   },
+   "8-16K": {
+    "0.9.1": 88.0,
+    "0.9.2": 97.6
+   },
+   "16-32K": {
+    "0.9.1": 74.0,
+    "0.9.2": 78.8
+   },
+   "32K+": {
+    "0.9.1": 64.5,
+    "0.9.2": 67.9
+   }
+  }
+ }
+}

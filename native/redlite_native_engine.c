@@ -37,6 +37,14 @@ void rl_engine_config_default(rl_engine_config *cfg) {
 size_t rl_engine_conv_count(const rl_engine *e) { return (size_t)(e->info.d_conv - 1u) * e->info.channels; }
 size_t rl_engine_rec_count(const rl_engine *e) { return (size_t)e->info.dt_rank * e->info.head_v * e->info.head_v; }
 size_t rl_engine_kv_row_count(const rl_engine *e) { return (size_t)e->info.n_head_kv * e->info.head_dim; }
+/* dev74: bytes per element of the GPU KV cache: 4 (float, the default) or 2 (half, opt-in RL_KV_F16=1). Half is faster
+ * at long context and takes half the memory, but on CF2 it moved the 1200-token comparison with llama.cpp past its
+ * bounds (KL 5.8e-2, one argmax), so it is not the default (docs/REDLITE_DEV74_DECODE_KERNELS.md) */
+size_t rl_kv_elem_bytes(void) {
+    static int half_kv = -1;
+    if (half_kv < 0) { const char *v = getenv("RL_KV_F16"); half_kv = v && atoi(v) != 0; }
+    return half_kv ? 2u : 4u;
+}
 
 int rl_backend_state_alloc(rl_engine *e, rl_backend_state *s, int host_state, char *error, size_t cap) {
     memset(s, 0, sizeof(*s));
@@ -258,7 +266,7 @@ rl_engine *rl_engine_open(const char *model_path, const rl_engine_config *cfg_in
 
     in->dense_bytes = dense_bytes(e);
     in->state_bytes = (uint64_t)(rl_engine_conv_count(e) + rl_engine_rec_count(e)) * in->n_recurrent * sizeof(float) +
-        (uint64_t)rl_engine_kv_row_count(e) * in->context * in->n_attention * 2u * sizeof(float);
+        (uint64_t)rl_engine_kv_row_count(e) * in->context * in->n_attention * 2u * rl_kv_elem_bytes();
 
     e->cpu_threads = e->cfg.cpu_threads > 0 ? e->cfg.cpu_threads : (int)sysconf(_SC_NPROCESSORS_ONLN);
     if (e->cpu_threads < 1) e->cpu_threads = 1;
@@ -500,14 +508,14 @@ int rl_engine_bench_set_position(rl_engine *e, rl_engine_backend b, uint32_t pos
 uint64_t rl_engine_state_bytes(const rl_engine *e, uint32_t position) {
     if (!e) return 0;
     return (uint64_t)e->info.n_recurrent * (rl_engine_conv_count(e) + rl_engine_rec_count(e)) * sizeof(float) +
-           (uint64_t)e->info.n_attention * 2u * rl_engine_kv_row_count(e) * position * sizeof(float);
+           (uint64_t)e->info.n_attention * 2u * rl_engine_kv_row_count(e) * position * rl_kv_elem_bytes();
 }
 
 uint64_t rl_engine_model_tag(const rl_engine *e) {
     if (!e) return 0;
     uint64_t h = 1469598103934665603ull;   /* FNV-1a over the file size and the shape */
     const uint64_t v[] = {e->gguf.file_size, e->info.n_layer, e->info.hidden, e->info.vocab, e->info.n_expert,
-                          rl_engine_conv_count(e), rl_engine_rec_count(e), rl_engine_kv_row_count(e)};
+                          rl_engine_conv_count(e), rl_engine_rec_count(e), rl_engine_kv_row_count(e), rl_kv_elem_bytes()};   /* dev74: + KV element size */
     for (size_t i = 0; i < sizeof(v) / sizeof(v[0]); ++i)
         for (int b = 0; b < 8; ++b) { h ^= (v[i] >> (8 * b)) & 0xffu; h *= 1099511628211ull; }
     return h;
@@ -517,7 +525,7 @@ int rl_engine_state_write(rl_engine *e, rl_engine_backend b, FILE *f, char *erro
     rl_backend_state *s = e ? state_for(e, b) : NULL;
     if (!s || !f || b != RL_BACKEND_GPU) { set_error(error, cap, "state files need the GPU backend"); return 0; }
 #ifdef __APPLE__
-    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * s->position * sizeof(float), 1)) {
+    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * s->position * rl_kv_elem_bytes(), 1)) {
         set_error(error, cap, "state write failed"); return 0;
     }
     return 1;
@@ -532,7 +540,7 @@ int rl_engine_state_read(rl_engine *e, rl_engine_backend b, FILE *f, uint32_t po
     if (position > e->info.context) { set_error(error, cap, "state position exceeds the context"); return 0; }
     if (!rl_engine_reset(e, b, error, cap)) return 0;
 #ifdef __APPLE__
-    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * position * sizeof(float), 0)) {
+    if (!e->metal || !rl_metal_engine_state_io(e->metal, f, rl_engine_kv_row_count(e) * position * rl_kv_elem_bytes(), 0)) {
         rl_engine_reset(e, b, NULL, 0);
         set_error(error, cap, "state read failed (truncated or mismatched file)"); return 0;
     }

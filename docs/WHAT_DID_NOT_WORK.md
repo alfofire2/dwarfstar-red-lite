@@ -40,6 +40,38 @@ them.
 | dev35 | grouped decode attention, 4 threads per position for the scores | attention 175 vs 165 ms per 64 tokens at ~8400 positions | more threads per row did not add memory parallelism that mattered |
 | dev35 | grouped decode attention with blocks of 256 / 64 / 32 positions | 164 / 146 / 180 ms vs 113 ms with 128 | 256: too few threadgroups (66); 64 and 32: more merge work and shorter loops ([DEV35](REDLITE_DEV35_LONG_DECODE.md)) |
 
+- **Decode kernel attempts that did not pay (dev74, M4 Max, CF2, alternated pairs).** dev74 kept six decode
+  changes (see [DEV74](REDLITE_DEV74_DECODE_KERNELS.md)); these were measured and reverted:
+  - **`rl_route` as one barrier-free SIMD group** (the profiler gave the router 7–8 % of a token): decode 82.7 against
+    82.6 tok/s. The profiler inflates tiny kernels; the selection was never on the critical path.
+  - **IQ2_XS signs as an XOR of the float sign bit** (with or without reading the shared scale byte once): the decode
+    expert bench went from 2.8 to 3.6–4.1 ms. A `select` of ±1 followed by a multiply is cheaper on this GPU,
+    probably because negation is a free operand modifier.
+  - **IQ1_M grid as a half table** (exact: values −1, 0, 1, no int8 → float conversions): 2.65 → 3.09 ms. The 32 KB
+    table misses the cache where the 16 KB int8 table does not.
+  - **Grids in the `constant` address space** (as llama.cpp's program-scope tables): no change (2.65 against 2.64 ms).
+  - **x read once for four dot products** (gate and up of two rows per lane group): 2.65 against 2.63 ms. The
+    activation reads are not what limits the expert kernels.
+  - **One block type compiled into the kernel** (IQ1_M only, no IQ2_XS / IQ3 paths): no change. The 156 registers do
+    not come from the unused decoders.
+  - **Q4_K GEMV with four rows per SIMD group** (x chunk and its sums read once for four rows): qkv 30 → 34 µs,
+    gate 15 → 20 µs. A quarter of the SIMD groups hides less latency.
+  - **Q4_K GEMV with 16 or 8 lanes per row** instead of 32: within ±1 µs.
+  - **Threadgroups of 64–256 threads** for the GEMV and expert dispatches (all are 32): no change for the GEMVs,
+    1–5 % slower for the experts. The kernels do not run out of threadgroup slots.
+  - **Half KV, wider loads in the decode attention** (16 contiguous bytes per lane for keys, `half2` values): 4.6 →
+    4.8–5.0 ms at 64K in `kernel-bench`. The half-cache kernel reads about 350 GB/s against 480 for float; that gap
+    is left.
+  - Measured on the way: a dependent dispatch costs about 1.7 µs of decode time (8 extra trivial stages per DeltaNet
+    layer: +0.48 ms per token), and an expert call (gate/up, down, sum) about 15 µs of fill and drain on top of its
+    weights (12 calls of 40 experts against 48 of 10: 2.05 against 2.6 ms). Experts reach about 160 GB/s.
+- **Prefill attempts (dev74, M4 Max, CF2, alternated).**
+  - **Dense GEMM with weight tiles first in the grid** (consecutive threadgroups sharing a weight tile): 880 against
+    899 tok/s on a 1.4K prompt. The 64 MB dequantized weight is not re-read from DRAM as feared.
+  - **Dense GEMM with 64 × 64 tiles** (each SIMD group 32 × 32, 16 accumulators): 2.0 against 10.4 TFLOPS in the new
+    `prefill-gemm-bench`, prompt ingestion 383 against 899 tok/s. `rl_gemm_tg` already runs at 64 % of the float32 peak.
+  - **The DeltaNet recurrence loading token t+1's inputs while token t computes**: 944 against 945 tok/s.
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
@@ -232,6 +264,12 @@ them.
     best policy gives 1.24× against 1.19×.
   - **Verdict:** at most +5–14 % on decode, about half of an agent's time (+3–7 % overall), for a rewrite of the decode
     path.
+
+- **The DeltaNet convolution shift made in place for every caller (dev74).** Plain decode shifts `conv_state` itself
+  and skips the copy back. The 2-row verify and the paired-slot step call the same mid-layer emitter but copy
+  `next_conv` into `conv_state` afterwards, so they wrote a stale window over the shifted one. `verify-check` passed
+  (the verify uses its own 2-row kernel), `engine.pair` and `server.parallel_greedy` failed in the regression. The
+  in-place shift is now a parameter that only plain decode sets.
 
 ## Not reached, blocked or not attempted
 

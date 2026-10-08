@@ -251,29 +251,35 @@ RL_ROWS_KERNEL("rl_rows_q6k", "256", "210", "rl_q6k_block(bp, xc)", "")
 RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
 /* ---- dev22 decode GEMV: one lane per sub-block (32 values for Q4_K/IQ2_XXS, 16 for Q6_K), up to 32 lanes per row,
  *      float4 activation loads; same dequantization as the block kernels above, summed in a different order ---- */
-"inline float rl_q4k_sub(device const uchar *bp, uint g, device const float *x) {\n"
+/* dev74: both sub-blocks of a 32-byte quant run (2p in the low nibbles, 2p+1 in the high ones) in one item, each byte read once */
+"inline float rl_q4k_pair(device const uchar *bp, uint p, device const float *x) {\n"
 "    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
-"    const uchar2 sm = scale_min(g, bp + 4u);\n"
-"    device const uchar *q = bp + 16u + (g >> 1) * 32u; const uint sh = (g & 1u) * 4u;\n"
-"    float acc = 0.0f; float xs = 0.0f;\n"
-"    for (uint l = 0; l < 32u; l += 4u) {\n"
-"        const float4 xv = *(device const float4 *)(x + l);\n"
-"        const float4 qf = float4((uint4(q[l], q[l + 1u], q[l + 2u], q[l + 3u]) >> sh) & 15u);\n"
-"        acc += dot(xv, qf); xs += (xv.x + xv.y) + (xv.z + xv.w);\n"
+"    const uchar2 sm0 = scale_min(2u * p, bp + 4u), sm1 = scale_min(2u * p + 1u, bp + 4u);\n"
+"    device const uint *q = (device const uint *)(bp + 16u + p * 32u);\n"
+"    float a0 = 0.0f, s0 = 0.0f, a1 = 0.0f, s1 = 0.0f;\n"
+"    for (uint l = 0; l < 8u; ++l) {\n"
+"        const uint w = q[l];\n"
+"        const float4 x0 = *(device const float4 *)(x + 4u * l), x1 = *(device const float4 *)(x + 32u + 4u * l);\n"
+"        a0 += dot(x0, float4(as_type<uchar4>(w & 0x0F0F0F0Fu))); s0 += (x0.x + x0.y) + (x0.z + x0.w);\n"
+"        a1 += dot(x1, float4(as_type<uchar4>((w >> 4) & 0x0F0F0F0Fu))); s1 += (x1.x + x1.y) + (x1.z + x1.w);\n"
 "    }\n"
-"    return (d * float(sm.x)) * acc - (dmin * float(sm.y)) * xs;\n"
+"    return ((d * float(sm0.x)) * a0 - (dmin * float(sm0.y)) * s0) + ((d * float(sm1.x)) * a1 - (dmin * float(sm1.y)) * s1);\n"
 "}\n"
-"inline float2 rl_q4k_sub2(device const uchar *bp, uint g, device const float *x, device const float *x1) {\n"
+"inline float2 rl_q4k_pair2(device const uchar *bp, uint p, device const float *x, device const float *y) {\n"
 "    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
-"    const uchar2 sm = scale_min(g, bp + 4u);\n"
-"    device const uchar *q = bp + 16u + (g >> 1) * 32u; const uint sh = (g & 1u) * 4u;\n"
-"    float acc = 0.0f, xs = 0.0f, acc1 = 0.0f, xs1 = 0.0f;\n"
-"    for (uint l = 0; l < 32u; l += 4u) {\n"
-"        const float4 qf = float4((uint4(q[l], q[l + 1u], q[l + 2u], q[l + 3u]) >> sh) & 15u);\n"
-"        const float4 xv = *(device const float4 *)(x + l); acc += dot(xv, qf); xs += (xv.x + xv.y) + (xv.z + xv.w);\n"
-"        const float4 xw = *(device const float4 *)(x1 + l); acc1 += dot(xw, qf); xs1 += (xw.x + xw.y) + (xw.z + xw.w);\n"
+"    const uchar2 sm0 = scale_min(2u * p, bp + 4u), sm1 = scale_min(2u * p + 1u, bp + 4u);\n"
+"    device const uint *q = (device const uint *)(bp + 16u + p * 32u);\n"
+"    float a0 = 0.0f, s0 = 0.0f, a1 = 0.0f, s1 = 0.0f, b0 = 0.0f, t0 = 0.0f, b1 = 0.0f, t1 = 0.0f;\n"
+"    for (uint l = 0; l < 8u; ++l) {\n"
+"        const uint w = q[l];\n"
+"        const float4 q0 = float4(as_type<uchar4>(w & 0x0F0F0F0Fu)), q1 = float4(as_type<uchar4>((w >> 4) & 0x0F0F0F0Fu));\n"
+"        const float4 x0 = *(device const float4 *)(x + 4u * l), x1 = *(device const float4 *)(x + 32u + 4u * l);\n"
+"        a0 += dot(x0, q0); s0 += (x0.x + x0.y) + (x0.z + x0.w); a1 += dot(x1, q1); s1 += (x1.x + x1.y) + (x1.z + x1.w);\n"
+"        const float4 y0 = *(device const float4 *)(y + 4u * l), y1 = *(device const float4 *)(y + 32u + 4u * l);\n"
+"        b0 += dot(y0, q0); t0 += (y0.x + y0.y) + (y0.z + y0.w); b1 += dot(y1, q1); t1 += (y1.x + y1.y) + (y1.z + y1.w);\n"
 "    }\n"
-"    return float2((d * float(sm.x)) * acc - (dmin * float(sm.y)) * xs, (d * float(sm.x)) * acc1 - (dmin * float(sm.y)) * xs1);\n"
+"    return float2(((d * float(sm0.x)) * a0 - (dmin * float(sm0.y)) * s0) + ((d * float(sm1.x)) * a1 - (dmin * float(sm1.y)) * s1),\n"
+"                  ((d * float(sm0.x)) * b0 - (dmin * float(sm0.y)) * t0) + ((d * float(sm1.x)) * b1 - (dmin * float(sm1.y)) * t1));\n"
 "}\n"
 "inline float rl_iq2xxs_sub(device const uchar *bp, uint g, device const float *x, device const uchar *grid) {\n"
 "    const float d = fp16(bp); device const ushort *q = (device const ushort *)(bp + 2ul) + 4u * g;\n"
@@ -335,6 +341,24 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    }\n"
 "    return acc;\n"
 "}\n"
+/* dev74: Q5_K like rl_q4k_pair: sub-blocks 2p (low nibbles, qh bit 2p) and 2p+1 (high nibbles, qh bit 2p+1) in one item */
+"inline float2 rl_q5k_pair_xy(device const uchar *bp, uint p, device const float *x, device const float *y, bool two) {\n"
+"    const float d = fp16(bp); const float dmin = fp16(bp + 2u);\n"
+"    const uchar2 sm0 = scale_min(2u * p, bp + 4u), sm1 = scale_min(2u * p + 1u, bp + 4u);\n"
+"    device const uint *qh = (device const uint *)(bp + 16u); device const uint *ql = (device const uint *)(bp + 48u + p * 32u);\n"
+"    float a0 = 0.0f, s0 = 0.0f, a1 = 0.0f, s1 = 0.0f, b0 = 0.0f, t0 = 0.0f, b1 = 0.0f, t1 = 0.0f;\n"
+"    for (uint l = 0; l < 8u; ++l) {\n"
+"        const uint w = ql[l], h = qh[l] >> (2u * p);\n"
+"        const float4 q0 = float4(as_type<uchar4>((w & 0x0F0F0F0Fu) | ((h & 0x01010101u) << 4)));\n"
+"        const float4 q1 = float4(as_type<uchar4>(((w >> 4) & 0x0F0F0F0Fu) | ((h & 0x02020202u) << 3)));\n"
+"        const float4 x0 = *(device const float4 *)(x + 4u * l), x1 = *(device const float4 *)(x + 32u + 4u * l);\n"
+"        a0 += dot(x0, q0); s0 += (x0.x + x0.y) + (x0.z + x0.w); a1 += dot(x1, q1); s1 += (x1.x + x1.y) + (x1.z + x1.w);\n"
+"        if (two) { const float4 y0 = *(device const float4 *)(y + 4u * l), y1 = *(device const float4 *)(y + 32u + 4u * l);\n"
+"            b0 += dot(y0, q0); t0 += (y0.x + y0.y) + (y0.z + y0.w); b1 += dot(y1, q1); t1 += (y1.x + y1.y) + (y1.z + y1.w); }\n"
+"    }\n"
+"    return float2(((d * float(sm0.x)) * a0 - (dmin * float(sm0.y)) * s0) + ((d * float(sm1.x)) * a1 - (dmin * float(sm1.y)) * s1),\n"
+"                  ((d * float(sm0.x)) * b0 - (dmin * float(sm0.y)) * t0) + ((d * float(sm1.x)) * b1 - (dmin * float(sm1.y)) * t1));\n"
+"}\n"
 "inline float2 rl_q6k_sub2(device const uchar *bp, uint il0, device const float *x, device const float *x1) {\n"
 "    device const ushort *ql0 = (device const ushort *)(bp + 0ul);\n"
 "    device const ushort *qh0 = (device const ushort *)(bp + 128ul);\n"
@@ -391,9 +415,11 @@ RL_ROWS_KERNEL("rl_rows_iq2xxs", "256", "66", "rl_iq2xxs_block(bp, xc, grid)", "
 "    if (active && lane == 0u) { out[row] = acc; out1[row] = acc1; }\n" \
 "}\n"
 RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub2(bp, s, xc, xc1, grid)", "", ", device const uchar *grid [[buffer(6)]]")
-RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q4k", "256", "144", "8", "32", "rl_q4k_sub2(bp, s, xc, xc1)", "", "")
+RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q4k", "256", "144", "4", "64", "rl_q4k_pair2(bp, s, xc, xc1)", "", "")
+RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q5k", "256", "176", "4", "64", "rl_q5k_pair_xy(bp, s, xc, xc1, true)", "", "")
 RL_ROWS_SUB_KERNEL_R2("rl_rows2r2_q6k", "256", "210", "16", "16", "rl_q6k_sub2(bp, s, xc, xc1)", "", "")
-RL_ROWS_SUB_KERNEL("rl_rows2_q4k", "256", "144", "8", "32", "rl_q4k_sub(bp, s, xc)", "")
+RL_ROWS_SUB_KERNEL("rl_rows2_q4k", "256", "144", "4", "64", "rl_q4k_pair(bp, s, xc)", "")
+RL_ROWS_SUB_KERNEL("rl_rows2_q5k", "256", "176", "4", "64", "rl_q5k_pair_xy(bp, s, xc, xc, false).x", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_q6k", "256", "210", "16", "16", "rl_q6k_sub(bp, s, xc)", "")
 RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp, s, xc, grid)", ", device const uchar *grid [[buffer(6)]]")
 /* dev31: IQ3_XXS / IQ3_S / IQ2_S / IQ4_XS rows: one lane per 32-value item (4 groups of rl_iq3_group8) */
@@ -486,6 +512,15 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    for (uint j = 0; j + 1u < ns; ++j) next_state[b + j] = state[b + j + 1u];\n"
 "    next_state[b + ns - 1u] = qkv[gid];\n"
 "}\n"
+/* dev74: the same shift in place (the window is read into registers first): no next_conv copy back afterwards */
+"kernel void dn_shift_inplace(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *qkv [[buffer(1)]],\n"
+"    constant uint &channels [[buffer(3)]], constant uint &dconv [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    if (gid >= channels) return; const uint ns = dconv - 1u; const uint b = gid * ns;\n"
+"    float w[8]; for (uint j = 0; j < ns; ++j) w[j] = state[b + j];\n"
+"    for (uint j = 0; j + 1u < ns; ++j) state[b + j] = w[j + 1u];\n"
+"    state[b + ns - 1u] = qkv[gid];\n"
+"}\n"
 /* fused gated delta rule for one (value head, state row j): decay, delta, in-place update, output */
 "kernel void dn_state_fused(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
 "    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
@@ -503,6 +538,23 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    float o = simd_sum(s * q[kh * state_size + i]); if (simd_lane == 0) red[simd_id] = o; threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (i == 0u) { float total = 0.0f; for (uint n = 0; n < nsimd; ++n) total += red[n]; out[h * state_size + j] = total * (1.0f / sqrt((float)state_size)); }\n"
+"}\n"
+/* dev74: the recurrence with one SIMD group per state row (4 values per lane, 4 rows per threadgroup, no threadgroup
+ * barrier), the arithmetic of the prefill's dn_state_seq_sg (dev30) for one token; state_size 128 only */
+"kernel void dn_state_sg(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint row = tg * 4u + uint(sg); const uint h = row / state_size; const uint j = row - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint i0 = uint(lane) * 4u;\n"
+"    device float4 *sp = (device float4 *)(state + (ulong(h) * state_size + j) * state_size + i0);\n"
+"    float4 s = *sp * exp(gate[h]);\n"
+"    const float4 kv = *(device const float4 *)(k + kh * state_size + i0);\n"
+"    const float delta = (v[h * state_size + j] - simd_sum(dot(s, kv))) * beta[h];\n"
+"    s += kv * delta; *sp = s;\n"
+"    const float o = simd_sum(dot(s, *(device const float4 *)(q + kh * state_size + i0)));\n"
+"    if (lane == 0) out[h * state_size + j] = o * (1.0f / sqrt((float)state_size));\n"
 "}\n"
 /* ---- dev45: the DeltaNet kernels for the two verify rows, one dispatch each; every row's arithmetic is the 1-row
  *      kernel's, row 1 starts from row 0's state, and the state after row 0 is written to the snapshot buffers ---- */
@@ -545,6 +597,29 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    float total = 0.0f; for (uint s = 0; s < (head_dim + 31u) / 32u; ++s) total += red[s];\n"
 "    const float scale = 1.0f / max(sqrt(total), eps);\n"
 "    if (i < head_dim) { if (which == 0u) qq[head * head_dim + i] = x * scale; else kk[head * head_dim + i] = x * scale; }\n"
+"}\n"
+/* dev74: dn_state_sg for the two verify rows (each row's arithmetic is dn_state_sg's; row 0's state goes to the snapshot) */
+"kernel void dn_state2_sg(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
+"    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
+"    device float *out [[buffer(6)]], constant uint &state_size [[buffer(7)]], constant uint &kv_ratio [[buffer(8)]], constant uint &value_heads [[buffer(9)]],\n"
+"    device const float *q1 [[buffer(10)]], device const float *k1 [[buffer(11)]], device const float *v1 [[buffer(12)]], device const float *gate1 [[buffer(13)]],\n"
+"    device const float *beta1 [[buffer(14)]], device float *out1 [[buffer(15)]], device float *snap [[buffer(16)]],\n"
+"    uint tg [[threadgroup_position_in_grid]], ushort lane [[thread_index_in_simdgroup]], ushort sg [[simdgroup_index_in_threadgroup]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    const uint row = tg * 4u + uint(sg); const uint h = row / state_size; const uint j = row - h * state_size; if (h >= value_heads) return;\n"
+"    const uint kh = h / kv_ratio; const uint i0 = uint(lane) * 4u; const ulong idx = (ulong(h) * state_size + j) * state_size + i0;\n"
+"    float4 s = *(device float4 *)(state + idx);\n"
+"    for (uint r = 0; r < 2u; ++r) {\n"
+"        device const float *qq = r ? q1 : q; device const float *kk = r ? k1 : k; device const float *vv = r ? v1 : v;\n"
+"        device const float *gg = r ? gate1 : gate; device const float *bb = r ? beta1 : beta; device float *oo = r ? out1 : out;\n"
+"        s = s * exp(gg[h]);\n"
+"        const float4 kv = *(device const float4 *)(kk + kh * state_size + i0);\n"
+"        const float delta = (vv[h * state_size + j] - simd_sum(dot(s, kv))) * bb[h];\n"
+"        s += kv * delta;\n"
+"        *(device float4 *)((r == 0u ? snap : state) + idx) = s;\n"
+"        const float o = simd_sum(dot(s, *(device const float4 *)(qq + kh * state_size + i0)));\n"
+"        if (lane == 0) oo[h * state_size + j] = o * (1.0f / sqrt((float)state_size));\n"
+"    }\n"
 "}\n"
 "kernel void dn_state2(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
 "    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
@@ -601,7 +676,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 /* per head: RMSNorm (q or k weight), NeoX partial RoPE, write query_rope / key+value cache; threadgroup per head */
 "kernel void attn_qk_prep(device uint *rl_abort [[buffer(30)]], device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
 "    device const float *qw [[buffer(3)]], device const float *kw [[buffer(4)]], device float *query_rope [[buffer(5)]], device float *gate [[buffer(6)]],\n"
-"    device float *key_cache [[buffer(7)]], device float *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
+"    device RL_KV *key_cache [[buffer(7)]], device RL_KV *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
 "    constant uint &query_heads [[buffer(10)]], constant uint &kv_heads [[buffer(11)]], constant uint &position [[buffer(12)]],\n"
 "    constant uint &rope_dims [[buffer(13)]], constant float &freq_base [[buffer(14)]], constant float &eps [[buffer(15)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -626,9 +701,9 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        r = i < rhalf ? (x0 * c - x1 * sn) : (x0 * sn + x1 * c);\n"
 "    }\n"
 "    if (is_q) { query_rope[head * head_dim + i] = r; gate[head * head_dim + i] = qgate_raw[src + head_dim + i]; }\n"
-"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = r; value_cache[dst] = value[head * head_dim + i]; }\n"
+"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = RL_KV(r); value_cache[dst] = RL_KV(value[head * head_dim + i]); }\n"
 "}\n"
-"kernel void attn_gqa(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_gqa(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]], device const RL_KV *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    uint head [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -642,7 +717,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        const uint chunk = min(1024u, seq_len - chunk_start);\n"
 "        for (uint pos = tid; pos < chunk; pos += 256u) {\n"
 "            const uint kbase = ((chunk_start + pos) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
+"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], float(key_cache[kbase + i]), dot);\n"
 "            scores[pos] = dot * scale;\n"
 "        }\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -656,7 +731,7 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "        l = l * alpha + total;\n"
 "        if (tid < head_dim) {\n"
 "            acc *= alpha;\n"
-"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid], acc);\n"
+"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], float(value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid]), acc);\n"
 "        }\n"
 "        m = new_m;\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -668,8 +743,8 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
  * dot products (lanes stride the head dimension: coalesced key reads); the block's max, exp-sum and unnormalized
  * value accumulation are written as a partial. attn_gqa_merge combines a head's partials with the online-softmax
  * algebra of attn_gqa (rescale by exp(m_b - M)), normalizes and applies the output gate. head_dim <= 256. */
-"kernel void attn_gqa_split(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
-"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"kernel void attn_gqa_split(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]],\n"
+"    device const RL_KV *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
 "    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
@@ -682,8 +757,8 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (tid < head_dim) qv[tid] = query[head * head_dim + tid];\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    for (uint p = simd_id; p < len; p += 8u) {\n"
-"        device const float *kr = key_cache + ulong((start + p) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"        for (uint i = simd_lane; i < head_dim; i += 32u) dot = fma(qv[i], kr[i], dot);\n"
+"        device const RL_KV *kr = key_cache + ulong((start + p) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
+"        for (uint i = simd_lane; i < head_dim; i += 32u) dot = fma(qv[i], float(kr[i]), dot);\n"
 "        dot = simd_sum(dot); if (simd_lane == 0) scores[p] = dot * scale;\n"
 "    }\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -696,16 +771,16 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    const ulong part = ulong(head) * nblocks + block;\n"
 "    if (tid == 0u) { float bl = 0.0f; for (uint k = 0; k < 8u; ++k) bl += red[k]; part_ml[part] = float2(bm, bl); }\n"
 "    if (tid < head_dim) {\n"
-"        device const float *vc = value_cache + ulong(start * kv_heads + kv_head) * head_dim + tid; const ulong stride = ulong(kv_heads) * head_dim;\n"
-"        float acc = 0.0f; for (uint p = 0; p < len; ++p) acc = fma(scores[p], vc[ulong(p) * stride], acc);\n"
+"        device const RL_KV *vc = value_cache + ulong(start * kv_heads + kv_head) * head_dim + tid; const ulong stride = ulong(kv_heads) * head_dim;\n"
+"        float acc = 0.0f; for (uint p = 0; p < len; ++p) acc = fma(scores[p], float(vc[ulong(p) * stride]), acc);\n"
 "        part_acc[part * head_dim + tid] = acc;\n"
 "    }\n"
 "}\n"
 /* dev35: the same partials, one threadgroup per (block of blk <= 256 positions, KV head) for all the query heads sharing
  * that KV head (8 here): each K and V row is read once instead of once per query head. Scores: one thread per position,
  * float4 K loads, one accumulator per query head. Values: one thread per dimension. head_dim == 256, <= 8 heads per group. */
-"kernel void attn_gqa_split_g(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]],\n"
-"    device const float *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
+"kernel void attn_gqa_split_g(device uint *rl_abort [[buffer(30)]], device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]],\n"
+"    device const RL_KV *value_cache [[buffer(2)]], device float2 *part_ml [[buffer(3)]], device float *part_acc [[buffer(4)]],\n"
 "    constant uint &head_dim [[buffer(5)]], constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &seq_len [[buffer(8)]],\n"
 "    constant uint &blk [[buffer(9)]], uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
 "    ushort simd_lane [[thread_index_in_simdgroup]], ushort simd_id [[simdgroup_index_in_threadgroup]]) {\n"
@@ -718,9 +793,9 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    for (uint r = tid >> 3; r < len; r += 32u) {   /* dev67: eight lanes per key row, each 128-byte line read whole */\n"
 "        const uint sub = tid & 7u;\n"
-"        device const float4 *kr = (device const float4 *)(key_cache + ulong((start + r) * kv_heads + kvh) * 256u);\n"
+"        device const RL_KV4 *kr = (device const RL_KV4 *)(key_cache + ulong((start + r) * kv_heads + kvh) * 256u);\n"
 "        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
-"        for (uint j = 0; j < 8u; ++j) { const uint i = j * 8u + sub; const float4 k = kr[i]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] += dot(qv[h * 64u + i], k); }\n"
+"        for (uint j = 0; j < 8u; ++j) { const uint i = j * 8u + sub; const float4 k = float4(kr[i]); for (uint h = 0; h < 8u; ++h) if (h < G) a[h] += dot(qv[h * 64u + i], k); }\n"
 "        for (uint h = 0; h < 8u; ++h) if (h < G) {\n"
 "            float t = a[h]; t += simd_shuffle_xor(t, 1); t += simd_shuffle_xor(t, 2); t += simd_shuffle_xor(t, 4);\n"
 "            if (sub == 0u) sc[h * 256u + r] = t * scale;\n"
@@ -737,14 +812,14 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    }\n"
 "    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
 "    if (tid < head_dim) {\n"
-"        device const float *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
+"        device const RL_KV *vc = value_cache + ulong(start * kv_heads + kvh) * 256u + tid; const ulong stride = ulong(kv_heads) * 256u;\n"
 "        float a[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n"
 "        uint p = 0;\n"
 "        for (; p + 4u <= len; p += 4u) {   /* dev66: four loads in flight (-18 % at 256K); same summation order */\n"
-"            float v[4]; for (uint j = 0; j < 4u; ++j) v[j] = vc[ulong(p + j) * stride];\n"
+"            float v[4]; for (uint j = 0; j < 4u; ++j) v[j] = float(vc[ulong(p + j) * stride]);\n"
 "            for (uint h = 0; h < 8u; ++h) if (h < G) for (uint j = 0; j < 4u; ++j) a[h] = fma(sc[h * 256u + p + j], v[j], a[h]);\n"
 "        }\n"
-"        for (; p < len; ++p) { const float v = vc[ulong(p) * stride]; for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
+"        for (; p < len; ++p) { const float v = float(vc[ulong(p) * stride]); for (uint h = 0; h < 8u; ++h) if (h < G) a[h] = fma(sc[h * 256u + p], v, a[h]); }\n"
 "        for (uint h = 0; h < 8u; ++h) if (h < G) part_acc[(ulong(kvh * G + h) * nblocks + block) * 256u + tid] = a[h];\n"
 "    }\n"
 "}\n"
@@ -876,11 +951,16 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    if (gid < count) dst[gid] = src[gid];\n"
 "}\n";
 
+const char *rl_kv_defines(void) {
+    return rl_kv_elem_bytes() == 2u ? "#define RL_KV half\n#define RL_KV4 half4\n#define RL_KV_HALF 1\n"
+                                    : "#define RL_KV float\n#define RL_KV4 float4\n#define RL_KV_HALF 0\n";
+}
+
 /* the engine's kernel library (also compiled by the model-free kernel self-test, redmetal_engine_selftest.m) */
 id<MTLLibrary> rl_metal_engine_library(id<MTLDevice> dev, NSError **err) {
     char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
     if (!iq3) return nil;
-    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kEngineSource];
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s%s\n%@", rl_kv_defines(), iq3, kEngineSource];
     free(iq3);
     return [dev newLibraryWithSource:src options:nil error:err];
 }
@@ -970,6 +1050,13 @@ uint32_t lanes_for(uint32_t type, uint32_t ncols) {
     return lanes;
 }
 
+/* dev74: DeltaNet recurrence with one SIMD group per state row (dn_state_sg) for 128-wide states; RL_ENGINE_STATE_SG=0 -> dn_state_fused */
+static int rl_state_sg(uint32_t S) {
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("RL_ENGINE_STATE_SG"); on = !v || atoi(v) != 0; }
+    return on && S == 128u;
+}
+
 /* out[row] = W[row] . x for all rows of the weight, as one dispatch in an open encoder */
 /* dev22: sub-block decode kernel for a type (nil: use the block kernel) and its lanes per row */
 static id<MTLComputePipelineState> rows2_pipe(rl_metal_engine *m, uint32_t type, uint32_t ncols, uint32_t *lanes) {
@@ -977,7 +1064,8 @@ static id<MTLComputePipelineState> rows2_pipe(rl_metal_engine *m, uint32_t type,
     id<MTLComputePipelineState> p;
     switch (type) {
         case 0:  p = m->p_rows2_f32;    items = ncols / 4u; break;
-        case 12: p = m->p_rows2_q4k;    items = (ncols / 256u) * 8u; break;
+        case 12: p = m->p_rows2_q4k;    items = (ncols / 256u) * 4u; break;
+        case 13: p = m->p_rows2_q5k;    items = (ncols / 256u) * 4u; break;
         case 14: p = m->p_rows2_q6k;    items = (ncols / 256u) * 16u; break;
         case 16: p = m->p_rows2_iq2xxs; items = (ncols / 256u) * 8u; break;
         case 18: case 21: case 22: case 23: p = m->p_rows_iq3; items = (ncols / 256u) * 8u; break;   /* dev31: already sub-block */
@@ -1014,7 +1102,7 @@ static void emit_rows_r2(rl_metal_engine *m, id<MTLComputeCommandEncoder> enc, c
     uint32_t lanes = 0;
     id<MTLComputePipelineState> p = nil;
     if (rows2_pipe(m, w->type, w->cols, &lanes)) {
-        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs :
+        p = w->type == 0u ? m->p_r2_f32 : w->type == 12u ? m->p_r2_q4k : w->type == 13u ? m->p_r2_q5k2 : w->type == 14u ? m->p_r2_q6k : w->type == 16u ? m->p_r2_iq2xxs :
             rl_iq3_supported(w->type) ? m->p_r2_iq3 : nil;
     } else if (w->type == 8u || w->type == 13u) {
         p = w->type == 8u ? m->p_r2_q8 : m->p_r2_q5k;
@@ -1107,15 +1195,15 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
             {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
-            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
+            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_shift_ip, @"dn_shift_inplace"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
             {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
-            {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"},
+            {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q5k, @"rl_rows2_q5k"}, {&m->p_r2_q5k2, @"rl_rows2r2_q5k"},
             {&m->p_attn_split, @"attn_gqa_split"}, {&m->p_attn_merge, @"attn_gqa_merge"}, {&m->p_attn_split_g, @"attn_gqa_split_g"},
             {&m->p_r2_f32, @"rl_rows2r2_f32"}, {&m->p_r2_q8, @"rl_rowsr2_q8"}, {&m->p_r2_q4k, @"rl_rows2r2_q4k"},
             {&m->p_r2_q5k, @"rl_rowsr2_q5k"}, {&m->p_r2_q6k, @"rl_rows2r2_q6k"}, {&m->p_r2_iq2xxs, @"rl_rows2r2_iq2xxs"}, {&m->p_r2_iq3, @"rl_rows_iq3_r2"},
             {&m->p_dn_ba2, @"dn_ba_params2"}, {&m->p_dn_convshift2, @"dn_conv_shift2"}, {&m->p_dn_l2_2, @"dn_qk_l2_2"},
-            {&m->p_dn_state2, @"dn_state2"}, {&m->p_dn_tail2, @"dn_tail_norm2"},
+            {&m->p_dn_state2, @"dn_state2"}, {&m->p_dn_state2_sg, @"dn_state2_sg"}, {&m->p_dn_state_sg, @"dn_state_sg"}, {&m->p_dn_tail2, @"dn_tail_norm2"},
             {&m->p_route2, @"rl_route2"}, {&m->p_moe_tail2, @"rl_moe_tail2"},
         };
         for (size_t i = 0; i < sizeof(pipes) / sizeof(pipes[0]); ++i) {
@@ -1160,7 +1248,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         const size_t conv_bytes = rl_engine_conv_count(e) * sizeof(float);
         const size_t rec_bytes = rl_engine_rec_count(e) * sizeof(float);
         /* + RL_ENGINE_KV_PAD positions: the dev30 tiled prefill attention reads whole 32-position key blocks */
-        const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
+        const size_t kv_bytes = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * rl_kv_elem_bytes();
         m->conv_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         m->rec_state = (__unsafe_unretained id<MTLBuffer> *)calloc(in->n_recurrent ? in->n_recurrent : 1u, sizeof(id));
         /* + 1: dev45 MTP block KV rows at index n_attention (m->n_attention stays the trunk's count) */
@@ -1182,6 +1270,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *as = getenv("RL_ENGINE_ATTN_SPLIT"); m->attn_split = (!as || atoi(as) != 0) && in->head_dim <= 256u && in->n_attention; }
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
+        { const char *so = getenv("RL_ENGINE_SH_OVERLAP"); m->sh_overlap = !so || atoi(so) != 0; }   /* dev74 */
+        { const char *si = getenv("RL_ENGINE_SHIFT_INPLACE"); m->shift_inplace = !si || atoi(si) != 0; }   /* dev74 */
         { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u; }
@@ -1245,7 +1335,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
                     snprintf(error, cap, "MTP tensor %s has no Metal row kernel", pairs[i].src->name); rl_metal_engine_destroy(m); return NULL;
                 }
             }
-            const size_t kvb = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * sizeof(float);
+            const size_t kvb = rl_engine_kv_row_count(e) * ((size_t)in->context + RL_ENGINE_KV_PAD) * rl_kv_elem_bytes();
             m->kcache[in->n_attention] = new_buf(m, kvb);
             m->vcache[in->n_attention] = new_buf(m, kvb);
             m->mtp_emb = new_buf(m, hb); m->mtp_ea = new_buf(m, hb); m->mtp_eb = new_buf(m, hb); m->mtp_cat = new_buf(m, 2u * hb);
@@ -1374,7 +1464,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->p_moe_tail = nil;
     m->steer = nil; m->p_steer = nil;
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
-    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
+    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = m->p_dn_shift_ip = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
     m->p_attn_split = m->p_attn_merge = m->p_attn_split_g = nil; m->attn_ml = m->attn_acc = nil;
     m->keep = nil; m->dev = nil; m->queue = nil; m->lib = nil;
@@ -1462,7 +1552,9 @@ static void em_copy(emitter *em, id<MTLBuffer> src, NSUInteger soff, id<MTLBuffe
 }
 
 /* dev45: the per-row DeltaNet kernels of a layer (between the input and output projections) */
-static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors *t, const mlayer *w) {
+/* dev74: inplace shifts conv_state itself (plain decode, which then skips the copy back); the verify and paired-slot
+ * callers copy next_conv into conv_state themselves and pass 0 */
+static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors *t, const mlayer *w, int inplace_shift) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t r = t->recurrent_index;
@@ -1491,20 +1583,25 @@ static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors
     [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
     [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
 
-    [enc setComputePipelineState:m->p_dn_shift];
-    [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:m->next_conv offset:0 atIndex:2];
+    const int inplace = inplace_shift && dconv <= 9u;
+    [enc setComputePipelineState:inplace ? m->p_dn_shift_ip : m->p_dn_shift];
+    [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1];
+    if (!inplace) [enc setBuffer:m->next_conv offset:0 atIndex:2];
     [enc setBytes:&channels length:4 atIndex:3]; [enc setBytes:&dconv length:4 atIndex:4];
-    enc_1d(enc, m->p_dn_shift, channels, 64u);
+    enc_1d(enc, inplace ? m->p_dn_shift_ip : m->p_dn_shift, channels, 64u);
     em_group(em, 0);
     em_stage(em, 2);
 
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
     enc = em_enc(em);
-    [enc setComputePipelineState:m->p_dn_state];
+    const int state_sg = rl_state_sg(S);
+    [enc setComputePipelineState:state_sg ? m->p_dn_state_sg : m->p_dn_state];
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
     [enc setBuffer:m->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4]; [enc setBuffer:m->beta offset:0 atIndex:5];
     [enc setBuffer:m->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
+    if (state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / 4u, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    rl_after_dispatch(enc);
     em_stage(em, 3);
 
     enc = em_enc(em);
@@ -1523,9 +1620,10 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     emit_rows(m, em_enc(em), &w->z, m->normed, m->z);
     emit_rows(m, em_enc(em), &w->ba, m->normed, m->ba);
     em_group(em, 0);
-    emit_recurrent_mid(e, em, t, w);
+    const int inplace = m->shift_inplace && e->info.d_conv <= 9u;   /* dev74 */
+    emit_recurrent_mid(e, em, t, w, inplace);
     emit_rows(m, em_enc(em), &w->ssm_out, m->ng, m->branch);
-    em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
+    if (!inplace) em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
     em_stage(em, 4);
 }
 
@@ -1592,7 +1690,13 @@ static void emit_attention(rl_engine *e, emitter *em, const rl_layer_tensors *t,
 }
 
 /* post-attention residual + RMSNorm, router logits, shared expert (gate scalar, gate/up, SiLU*up, down) */
-static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
+/* dev74: defer_shared leaves SiLU and the shared down projection to emit_layer_experts, which overlaps them with the
+ * router selection and the routed gate/up (GPU-routed decode) */
+static void emit_ffn_pre_opt(rl_engine *e, emitter *em, const mlayer *w, int defer_shared);
+static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) { emit_ffn_pre_opt(e, em, w, 0); }
+static void emit_sh_silu(rl_metal_engine *m, emitter *em, const mlayer *w);
+
+static void emit_ffn_pre_opt(rl_engine *e, emitter *em, const mlayer *w, int defer_shared) {
     rl_metal_engine *m = em->m;
     const uint32_t hidden = e->info.hidden;
     const float eps = e->info.rms_eps;
@@ -1615,6 +1719,7 @@ static void emit_ffn_pre(rl_engine *e, emitter *em, const mlayer *w) {
     emit_rows(m, enc, &w->sh_gate, m->ffn_in, m->sh_gate);
     emit_rows(m, enc, &w->sh_up, m->ffn_in, m->sh_up);
     em_group(em, 0);
+    if (defer_shared) return;
     {
         const uint32_t ffn = w->sh_gate.rows;
         [enc setComputePipelineState:m->p_sh_silu];
@@ -1658,7 +1763,7 @@ static void emit_scale_add(rl_engine *e, emitter *em) {
  * (dev21); with the early-out flag bound, everything after the first layer that selects a non-resident
  * expert returns immediately (dev23). */
 /* GPU routing, routed experts and the end of layer l for the current row buffers (the layer's FFN input is ready) */
-static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, char *error, size_t cap) {
+static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, const mlayer *shared_tail, char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k;
@@ -1666,6 +1771,7 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
     const int fused = m->fuse_tail && m->p_moe_tail;
     const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
     const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
+    if (shared_tail) em_group(em, 1);   /* dev74: the selection and the shared SiLU read different buffers */
     {
         id<MTLComputeCommandEncoder> enc = em_enc(em);
         [enc setComputePipelineState:m->p_route];
@@ -1681,7 +1787,16 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
     rl_native_layer_info li;
     rl_expert_layout lay;
     if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
-        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
+        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) { if (shared_tail) em_group(em, 0); return 0; }
+    if (shared_tail) {
+        emit_sh_silu(m, em, shared_tail);
+        em_group(em, 0);
+        /* the shared down projection with no barrier after it: it runs beside the routed gate/up, whose barrier
+         * (redmetal_topk_pool_encode_device_into) also covers it before the tail reads sh_out */
+        em_group(em, 1);
+        emit_rows(m, em_enc(em), &shared_tail->sh_down, m->sh_act, m->sh_out);
+        g_rl_group = 0;
+    }
     if (!redmetal_topk_pool_encode_device_into(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
             (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, topk, rl_native_expert_type_word(li.ggml_type, li.down_type),
             li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes,
@@ -1717,8 +1832,8 @@ static int emit_routed_layers(rl_engine *e, emitter *em, uint32_t first, id<MTLB
         emit_rms(m, em_enc(em), m->x, &w->attn_norm, m->normed, hidden, eps);
         if (t->kind == RL_LAYER_MAP_RECURRENT) emit_recurrent(e, em, t, w);
         else emit_attention(e, em, t, w, position);
-        emit_ffn_pre(e, em, w);
-        if (!emit_layer_experts(e, em, l, resident, error, cap)) return 0;
+        emit_ffn_pre_opt(e, em, w, m->sh_overlap);
+        if (!emit_layer_experts(e, em, l, resident, m->sh_overlap ? w : NULL, error, cap)) return 0;
     }
     emit_rms(m, em_enc(em), m->x, &m->output_norm, m->final_norm, hidden, eps);
     if (want_logits) emit_rows(m, em_enc(em), &m->output, m->final_norm, m->logits);
@@ -1820,14 +1935,17 @@ static void emit_recurrent_mid2(rl_engine *e, emitter *em, const rl_layer_tensor
     [enc setBuffer:ALT(conv_silu) offset:0 atIndex:6]; [enc setBuffer:ALT(q) offset:0 atIndex:7]; [enc setBuffer:ALT(k) offset:0 atIndex:8];
     [enc dispatchThreadgroups:MTLSizeMake(4u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
     const NSUInteger v_offset = (NSUInteger)(2u * qk_each) * sizeof(float);
-    [enc setComputePipelineState:m->p_dn_state2];
+    const int state_sg = rl_state_sg(S);
+    [enc setComputePipelineState:state_sg ? m->p_dn_state2_sg : m->p_dn_state2];
     [enc setBuffer:m->rec_state[r] offset:0 atIndex:0]; [enc setBuffer:m->q offset:0 atIndex:1]; [enc setBuffer:m->k offset:0 atIndex:2];
     [enc setBuffer:m->conv_silu offset:v_offset atIndex:3]; [enc setBuffer:m->gate offset:0 atIndex:4]; [enc setBuffer:m->beta offset:0 atIndex:5];
     [enc setBuffer:m->core offset:0 atIndex:6]; [enc setBytes:&S length:4 atIndex:7]; [enc setBytes:&kv_ratio length:4 atIndex:8]; [enc setBytes:&rank length:4 atIndex:9];
     [enc setBuffer:ALT(q) offset:0 atIndex:10]; [enc setBuffer:ALT(k) offset:0 atIndex:11]; [enc setBuffer:ALT(conv_silu) offset:v_offset atIndex:12];
     [enc setBuffer:ALT(gate) offset:0 atIndex:13]; [enc setBuffer:ALT(beta) offset:0 atIndex:14]; [enc setBuffer:ALT(core) offset:0 atIndex:15];
     [enc setBuffer:m->snap_rec[r] offset:0 atIndex:16];
-    [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
+    if (state_sg) [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S / 4u, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+    else [enc dispatchThreadgroups:MTLSizeMake((NSUInteger)rank * S, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)];
+    rl_after_dispatch(enc);
     [enc setComputePipelineState:m->p_dn_tail2];
     [enc setBuffer:m->core offset:0 atIndex:0]; [enc setBuffer:m->z offset:0 atIndex:1]; [enc setBuffer:w->ssm_norm.buf offset:w->ssm_norm.off atIndex:2];
     [enc setBuffer:m->ng offset:0 atIndex:3]; [enc setBytes:&eps length:4 atIndex:4]; [enc setBytes:&head_v length:4 atIndex:5]; [enc setBytes:&rank length:4 atIndex:6];
@@ -1837,13 +1955,14 @@ static void emit_recurrent_mid2(rl_engine *e, emitter *em, const rl_layer_tensor
 
 /* routing, experts and layer end for both verify rows: one router dispatch, the 2 x top_k experts in one pool
  * encode (row 1's read its FFN input from x_split = top_k), one tail */
-static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, char *error, size_t cap) {
+static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffer> resident, const mlayer *shared_tail, char *error, size_t cap) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden, experts = in->n_expert, topk = in->top_k, both = 2u * in->top_k;
     const size_t hb = (size_t)hidden * sizeof(float);
     const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
     const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t);
+    if (shared_tail) em_group(em, 1);   /* dev74: both rows' selection beside both rows' shared SiLU */
     id<MTLComputeCommandEncoder> enc = em_enc(em);
     [enc setComputePipelineState:m->p_route2];
     [enc setBuffer:m->router_logits offset:0 atIndex:0];
@@ -1856,7 +1975,15 @@ static int emit_layer_experts2(rl_engine *e, emitter *em, uint32_t l, id<MTLBuff
     rl_native_layer_info li;
     rl_expert_layout lay;
     if (!rl_native_get_layer_info(&e->expert_map, l, &li, error, cap) ||
-        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) return 0;
+        !rl_native_expert_layout(&e->expert_map, l, 0u, &lay, error, cap)) { if (shared_tail) em_group(em, 0); return 0; }
+    if (shared_tail) {
+        emit_sh_silu(m, em, shared_tail);
+        swap_rows(m); emit_sh_silu(m, em, shared_tail); swap_rows(m);
+        em_group(em, 0);
+        em_group(em, 1);   /* both rows' shared down beside the routed gate/up; the pool's barrier after it covers it */
+        emit_rows_r2(m, em_enc(em), &shared_tail->sh_down, m->sh_act, ALT(sh_act), m->sh_out, ALT(sh_out));
+        g_rl_group = 0;
+    }
     if (!redmetal_topk_pool_encode_device_into2(rl_native_metal_pool_handle(m->experts), (__bridge void *)em_enc(em),
             (__bridge void *)m->plan_slots, slots_off, (__bridge void *)m->plan_weights, weights_off, both, rl_native_expert_type_word(li.ggml_type, li.down_type),
             li.hidden_size, li.ffn_size, lay.gate_bytes, lay.up_bytes, (__bridge void *)m->ffn_in, 0u, NULL, 0u,
@@ -1889,7 +2016,8 @@ static void swap_state(rl_metal_engine *m) {
  * the parked slot's sequence at position1, with its own DeltaNet and KV state. */
 /* dev72: layer l of a 2-row pass up to the routed experts (both rows' FFN inputs, shared expert outputs and router logits
  * ready); shared by emit_verify2 (GPU routing) and the bounded-cache verify (CPU routing and the expert pool) */
-static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t position, uint32_t position1, int pair) {
+/* dev74: defer_shared leaves both rows' SiLU and shared down projection to emit_layer_experts2 (sh_overlap) */
+static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t position, uint32_t position1, int pair, int defer_shared) {
     rl_metal_engine *m = em->m;
     const rl_engine_info *in = &e->info;
     const uint32_t hidden = in->hidden;
@@ -1910,23 +2038,23 @@ static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t p
         emit_rows_r2(m, em_enc(em), &w->ba, m->normed, ALT(normed), m->ba, ALT(ba));
         em_group(em, 0);
         if (pair) {
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_rows(m); swap_state(m);
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_state(m); swap_rows(m);
         } else if (e->info.d_conv <= 9u && m->p_dn_state2) {
             emit_recurrent_mid2(e, em, t, w);
         } else {
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             em_group(em, 1);   /* snapshot of the state after row 0 */
             em_copy(em, m->rec_state[r], 0, m->snap_rec[r], 0, rec_n);
             em_copy(em, m->conv_state[r], 0, m->snap_conv[r], 0, conv_n);
             em_group(em, 0);
             swap_rows(m);
-            emit_recurrent_mid(e, em, t, w);
+            emit_recurrent_mid(e, em, t, w, 0);
             em_copy(em, m->next_conv, 0, m->conv_state[r], 0, conv_n);
             swap_rows(m);
         }
@@ -1955,6 +2083,7 @@ static void emit_verify2_dense(rl_engine *e, emitter *em, uint32_t l, uint32_t p
     emit_rows_r2(m, em_enc(em), &w->sh_gate, m->ffn_in, ALT(ffn_in), m->sh_gate, ALT(sh_gate));
     emit_rows_r2(m, em_enc(em), &w->sh_up, m->ffn_in, ALT(ffn_in), m->sh_up, ALT(sh_up));
     em_group(em, 0);
+    if (defer_shared) return;
     em_group(em, 1);
     emit_sh_silu(m, em, w);
     swap_rows(m); emit_sh_silu(m, em, w); swap_rows(m);
@@ -1969,13 +2098,14 @@ static int emit_verify2(rl_engine *e, emitter *em, id<MTLBuffer> resident, uint3
     const uint32_t hidden = in->hidden;
     const float eps = in->rms_eps;
     for (uint32_t l = 0; l < in->n_layer; ++l) {
-        emit_verify2_dense(e, em, l, position, position1, pair);
-        if (m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u) {
-            if (!emit_layer_experts2(e, em, l, resident, error, cap)) return 0;
+        const int fused2 = m->fuse_tail && m->p_moe_tail2 && 2u * in->top_k <= 64u;
+        emit_verify2_dense(e, em, l, position, position1, pair, fused2 && m->sh_overlap);
+        if (fused2) {
+            if (!emit_layer_experts2(e, em, l, resident, m->sh_overlap ? &m->layers[l] : NULL, error, cap)) return 0;
         } else {
-            if (!emit_layer_experts(e, em, l, resident, error, cap)) return 0;
+            if (!emit_layer_experts(e, em, l, resident, NULL, error, cap)) return 0;
             swap_rows(m);
-            const int ok = emit_layer_experts(e, em, l, resident, error, cap);
+            const int ok = emit_layer_experts(e, em, l, resident, NULL, error, cap);
             swap_rows(m);
             if (!ok) return 0;
         }
@@ -2017,7 +2147,7 @@ static int verify2_bounded(rl_engine *e, rl_metal_engine *m, uint32_t t0, uint32
         id<MTLCommandBuffer> pending = nil;
         for (uint32_t l = 0; l < in->n_layer; ++l) {
             emitter em = { m, [m->queue commandBuffer], nil, m->abort_zero };
-            emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0);
+            emit_verify2_dense(e, &em, l, s->position, s->position + 1u, 0, 0);
             const int predict = m->prefetch && m->pred_logits_alt && l + 1u < in->n_layer;
             if (predict) {
                 emit_rows(m, em_enc(&em), &m->layers[l + 1u].router, m->ffn_in, m->pred_logits);
@@ -2360,12 +2490,27 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
      * per layer that misses, so it only wins when misses are rare. As in dev21 it is tried after a token that
      * needed no expert load; a token with more than RL_ROUTED_MAX_RESTARTS early-outs sends the next tokens
      * back to the synchronous path until one of them loads nothing. */
-    if (m->spec_enabled && !m->last_token_missed) {
-        const int r = step_routed(e, m, token, logits, stats, error, cap);
-        if (r) m->last_token_missed = stats->speculative_fallback > RL_ROUTED_MAX_RESTARTS;
-        return r;
+    /* dev74 (dev only): RL_GPU_CAPTURE=FILE with RL_GPU_CAPTURE_STEP=N records the N-th decode step (0-based) as a Metal
+     * GPU trace (MTL_CAPTURE_ENABLED=1); with the model loaded Xcode profiles it in lite mode: the per-dispatch timeline */
+    static int steps_seen = 0;
+    const char *cap_path = getenv("RL_GPU_CAPTURE_STEP") && atoi(getenv("RL_GPU_CAPTURE_STEP")) == steps_seen ? getenv("RL_GPU_CAPTURE") : NULL;
+    steps_seen++;
+    int capturing = 0;
+    if (cap_path) {
+        MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+        d.captureObject = m->queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+        d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+        NSError *ce = nil;
+        capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+        if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
     }
-    return rl_metal_engine_step_sync(e, m, token, logits, stats, error, cap);
+    int r;
+    if (m->spec_enabled && !m->last_token_missed) {
+        r = step_routed(e, m, token, logits, stats, error, cap);
+        if (r) m->last_token_missed = stats->speculative_fallback > RL_ROUTED_MAX_RESTARTS;
+    } else r = rl_metal_engine_step_sync(e, m, token, logits, stats, error, cap);
+    if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture of a decode step written to %s\n", cap_path); }
+    return r;
 }
 
 int rl_metal_engine_step_sync(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,

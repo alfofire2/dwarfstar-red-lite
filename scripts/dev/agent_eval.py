@@ -314,7 +314,7 @@ def run_task(task: dict, args) -> dict:
     with tempfile.TemporaryDirectory() as d:
         work = Path(d)
         if task.get("repo"):
-            archive = subprocess.run(["git", "-C", str(ROOT), "archive", "HEAD"], capture_output=True, check=True).stdout
+            archive = subprocess.run(["git", "-C", str(ROOT), "archive", args.repo_ref], capture_output=True, check=True).stdout
             subprocess.run(["tar", "-x", "-C", str(work)], input=archive, check=True)
             for name, old, new in task.get("patch", []):
                 text = (work / name).read_text()
@@ -389,6 +389,7 @@ def main() -> int:
     ap.add_argument("--agent-dir", help="pi config dir (default: a models.json for --port in a temporary dir)")
     ap.add_argument("--suite", choices=sorted(SUITES), default="basic", help="basic: 5 small tasks; repo: 4 on a copy of this repository; hard: 6 harder ones (dev65)")
     ap.add_argument("--tasks", help="comma-separated task ids (default: all)")
+    ap.add_argument("--repo-ref", default="HEAD", help="dev74: git ref the repository tasks copy (a fixed tag keeps the tasks identical across commits)")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per task")
     ap.add_argument("--json", help="write the results here")
     args = ap.parse_args()

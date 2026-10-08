@@ -273,8 +273,11 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 </p>
 
 In short:
-- **48 GiB, every expert resident:** decode is 19 % faster than the pinned llama.cpp (86.2 vs 72.5 tok/s, 0.5.0),
-  97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4× slower than llama.cpp (0.3.0) to on par.
+- **48 GiB, every expert resident:** decode is 31 % faster than the pinned llama.cpp measured the same day (90.9 vs
+  69.3 tok/s, 0.9.2; 86.2 vs 72.5 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
+  slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2 decodes at 97.8 tok/s (0.9.2, dev74).
+- **24 GiB, 0.9.2 (dev74), Qwen3-Coder-Next CF2:** 35.4 tok/s with the 4 GiB cache, 58.1 with every expert resident
+  (31.8 and 48.0 in 0.9.1, measured the same day).
 - **24 GiB:** with the 4 GiB cache the native runtime uses about 5 GiB and decodes 32–33 tok/s. With the GPU
   limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
   52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about

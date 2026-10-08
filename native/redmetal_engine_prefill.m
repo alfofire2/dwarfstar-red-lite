@@ -43,6 +43,17 @@ static NSString * const kPrefillSource = @
 "#include <metal_stdlib>\n"
 "#include <metal_simdgroup_matrix>\n"
 "using namespace metal;\n"
+/* dev74: KV cache rows into float simdgroup matrices; a half cache is loaded as half and widened element by element
+ * (the 8x8 layout per thread does not depend on the element type), exact */
+"#if RL_KV_HALF\n"
+"inline void rl_kv_load(thread simdgroup_float8x8 &m, device const half *p, ulong stride) {\n"
+"    simdgroup_half8x8 h; simdgroup_load(h, p, stride); m.thread_elements()[0] = float(h.thread_elements()[0]); m.thread_elements()[1] = float(h.thread_elements()[1]); }\n"
+"inline void rl_kv_load_t(thread simdgroup_float8x8 &m, device const half *p, ulong stride) {\n"
+"    simdgroup_half8x8 h; simdgroup_load(h, p, stride, ulong2(0, 0), true); m.thread_elements()[0] = float(h.thread_elements()[0]); m.thread_elements()[1] = float(h.thread_elements()[1]); }\n"
+"#else\n"
+"inline void rl_kv_load(thread simdgroup_float8x8 &m, device const float *p, ulong stride) { simdgroup_load(m, p, stride); }\n"
+"inline void rl_kv_load_t(thread simdgroup_float8x8 &m, device const float *p, ulong stride) { simdgroup_load(m, p, stride, ulong2(0, 0), true); }\n"
+"#endif\n"
 "static inline ushort rd16(device const uchar *p) { return ushort(p[0]) | (ushort(p[1]) << 8); }\n"
 "static inline float fp16(device const uchar *p) { return float(as_type<half>(rd16(p))); }\n"
 "static inline uchar2 scale_min(uint j, device const uchar *s) {\n"
@@ -366,7 +377,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 /* ---- full attention, B tokens: append all keys/values, then causal GQA per (token, head) ---- */
 "kernel void attn_qk_prep_b(device const float *qgate_raw [[buffer(0)]], device const float *k_raw [[buffer(1)]], device const float *value [[buffer(2)]],\n"
 "    device const float *qw [[buffer(3)]], device const float *kw [[buffer(4)]], device float *query_rope [[buffer(5)]], device float *gate [[buffer(6)]],\n"
-"    device float *key_cache [[buffer(7)]], device float *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
+"    device RL_KV *key_cache [[buffer(7)]], device RL_KV *value_cache [[buffer(8)]], constant uint &head_dim [[buffer(9)]],\n"
 "    constant uint &query_heads [[buffer(10)]], constant uint &kv_heads [[buffer(11)]], constant uint &position0 [[buffer(12)]],\n"
 "    constant uint &rope_dims [[buffer(13)]], constant float &freq_base [[buffer(14)]], constant float &eps [[buffer(15)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint i [[thread_position_in_threadgroup]],\n"
@@ -393,9 +404,9 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "        r = i < rhalf ? (x0 * c - x1 * sn) : (x0 * sn + x1 * c);\n"
 "    }\n"
 "    if (is_q) { query_rope[head * head_dim + i] = r; gate[head * head_dim + i] = qgate_raw[src + head_dim + i]; }\n"
-"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = r; value_cache[dst] = value[head * head_dim + i]; }\n"
+"    else { const uint dst = (position * kv_heads + head) * head_dim + i; key_cache[dst] = RL_KV(r); value_cache[dst] = RL_KV(value[head * head_dim + i]); }\n"
 "}\n"
-"kernel void attn_gqa_b(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_gqa_b(device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]], device const RL_KV *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &position0 [[buffer(8)]],\n"
 "    uint tg [[threadgroup_position_in_grid]], uint tid [[thread_position_in_threadgroup]],\n"
@@ -409,7 +420,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "        const uint chunk = min(1024u, seq_len - chunk_start);\n"
 "        for (uint pos = tid; pos < chunk; pos += 256u) {\n"
 "            const uint kbase = ((chunk_start + pos) * kv_heads + kv_head) * head_dim; float dot = 0.0f;\n"
-"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], key_cache[kbase + i], dot);\n"
+"            for (uint i = 0; i < head_dim; ++i) dot = fma(query[qbase + i], float(key_cache[kbase + i]), dot);\n"
 "            scores[pos] = dot * scale;\n"
 "        }\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -423,7 +434,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "        l = l * alpha + total;\n"
 "        if (tid < head_dim) {\n"
 "            acc *= alpha;\n"
-"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid], acc);\n"
+"            for (uint pos = 0; pos < chunk; ++pos) acc = fma(scores[pos], float(value_cache[((chunk_start + pos) * kv_heads + kv_head) * head_dim + tid]), acc);\n"
 "        }\n"
 "        m = new_m;\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -434,7 +445,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
  * Threadgroup = (query head, 8 consecutive tokens), 4 simdgroups. Key blocks of 32 positions:
  * S = Q K^T (each simdgroup one 8x8 block of positions), online softmax by simdgroup 0 (lane = position),
  * O = diag(alpha) O + P V (each simdgroup 64 of the 256 head dimensions). head_dim == 256 only. */
-"kernel void attn_fa_b(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_fa_b(device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]], device const RL_KV *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &position0 [[buffer(8)]], constant uint &ntok [[buffer(9)]],\n"
 "    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
@@ -452,10 +463,10 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    for (uint kb = 0; kb <= last; kb += 32u) {\n"
 "        {   /* S block: 8 tokens x positions kb + sg*8 .. +8 */\n"
 "            simdgroup_float8x8 acc = simdgroup_float8x8(0.0f), a, b;\n"
-"            device const float *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
+"            device const RL_KV *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
 "            for (uint k = 0; k < 256u; k += 8u) {\n"
 "                simdgroup_load(a, qs + k, 256);\n"
-"                simdgroup_load(b, kp + k, kstride, ulong2(0, 0), true);\n"
+"                rl_kv_load_t(b, kp + k, kstride);\n"
 "                simdgroup_multiply_accumulate(acc, a, b, acc);\n"
 "            }\n"
 "            simdgroup_store(acc, ss + uint(sg) * 8u, 32);\n"
@@ -481,8 +492,8 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "            for (uint i = 0; i < 8u; ++i) simdgroup_multiply(o[i], d, o[i]);\n"
 "            for (uint kk = 0; kk < 4u; ++kk) {\n"
 "                simdgroup_load(p, ss + kk * 8u, 32);\n"
-"                device const float *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
-"                for (uint i = 0; i < 8u; ++i) { simdgroup_load(v, vp + i * 8u, kstride); simdgroup_multiply_accumulate(o[i], p, v, o[i]); }\n"
+"                device const RL_KV *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
+"                for (uint i = 0; i < 8u; ++i) { rl_kv_load(v, vp + i * 8u, kstride); simdgroup_multiply_accumulate(o[i], p, v, o[i]); }\n"
 "            }\n"
 "        }\n"
 "        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -496,7 +507,7 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 /* dev65: attn_fa_b with 16-token tiles and the online softmax spread over the 4 simdgroups (4 rows each) instead of
  * simdgroup 0 alone. Every element is computed in the same order as attn_fa_b, so the output is bit-identical; at long
  * contexts the key/value blocks serve twice the tokens and the serial softmax section is a quarter as long. */
-"kernel void attn_fa_b2(device const float *query [[buffer(0)]], device const float *key_cache [[buffer(1)]], device const float *value_cache [[buffer(2)]],\n"
+"kernel void attn_fa_b2(device const float *query [[buffer(0)]], device const RL_KV *key_cache [[buffer(1)]], device const RL_KV *value_cache [[buffer(2)]],\n"
 "    device const float *gate [[buffer(3)]], device float *gated [[buffer(4)]], constant uint &head_dim [[buffer(5)]],\n"
 "    constant uint &query_heads [[buffer(6)]], constant uint &kv_heads [[buffer(7)]], constant uint &position0 [[buffer(8)]], constant uint &ntok [[buffer(9)]],\n"
 "    uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]],\n"
@@ -514,9 +525,9 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "    for (uint kb = 0; kb <= last; kb += 32u) {\n"
 "        {   /* S block: 16 tokens x positions kb + sg*8 .. +8 */\n"
 "            simdgroup_float8x8 acc0 = simdgroup_float8x8(0.0f), acc1 = simdgroup_float8x8(0.0f), a0, a1, b;\n"
-"            device const float *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
+"            device const RL_KV *kp = key_cache + ulong(kb + uint(sg) * 8u) * kstride + kvh * 256u;\n"
 "            for (uint k = 0; k < 256u; k += 8u) {\n"
-"                simdgroup_load(b, kp + k, kstride, ulong2(0, 0), true);\n"
+"                rl_kv_load_t(b, kp + k, kstride);\n"
 "                simdgroup_load(a0, qs + k, 256);\n"
 "                simdgroup_load(a1, qs + 8u * 256u + k, 256);\n"
 "                simdgroup_multiply_accumulate(acc0, a0, b, acc0);\n"
@@ -547,9 +558,9 @@ RL_DQ_KERNEL("rl_dq_iq2xxs", "256", "66", "dq_iq2xxs(bp, f, grid)", ", device co
 "            for (uint kk = 0; kk < 4u; ++kk) {\n"
 "                simdgroup_load(p0, ss + kk * 8u, 32);\n"
 "                simdgroup_load(p1, ss + 8u * 32u + kk * 8u, 32);\n"
-"                device const float *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
+"                device const RL_KV *vp = value_cache + ulong(kb + kk * 8u) * kstride + kvh * 256u + uint(sg) * 64u;\n"
 "                for (uint i = 0; i < 8u; ++i) {\n"
-"                    simdgroup_load(v, vp + i * 8u, kstride);\n"
+"                    rl_kv_load(v, vp + i * 8u, kstride);\n"
 "                    simdgroup_multiply_accumulate(o0[i], p0, v, o0[i]);\n"
 "                    simdgroup_multiply_accumulate(o1[i], p1, v, o1[i]);\n"
 "                }\n"
@@ -698,7 +709,7 @@ static struct rl_metal_prefill *prefill_create(rl_engine *e, rl_metal_engine *m,
     NSError *le = nil;
     char *iq3 = rl_iq3_metal_source();   /* dev31: codebooks + rl_iq3_group8 */
     if (!iq3) { set_error(error, ecap, "IQ3 Metal source allocation failed"); rl_metal_prefill_destroy(pf); return NULL; }
-    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kPrefillSource];
+    NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s%s\n%@", rl_kv_defines(), iq3, kPrefillSource];
     free(iq3);
     pf->lib = [m->dev newLibraryWithSource:src options:nil error:&le];
     if (!pf->lib) {
@@ -1104,7 +1115,7 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
          * profiler use redlite-engine prefill-attn-bench, which loads no model. */
         static int captured = 0, chunks_seen = 0;
         const int cap_skip = getenv("RL_GPU_CAPTURE_SKIP") ? atoi(getenv("RL_GPU_CAPTURE_SKIP")) : 0;
-        const char *cap_path = captured || chunks_seen++ < cap_skip ? NULL : getenv("RL_GPU_CAPTURE");
+        const char *cap_path = captured || chunks_seen++ < cap_skip || getenv("RL_GPU_CAPTURE_STEP") ? NULL : getenv("RL_GPU_CAPTURE");
         const uint32_t cap_layer = getenv("RL_GPU_CAPTURE_LAYER") ? (uint32_t)atoi(getenv("RL_GPU_CAPTURE_LAYER")) : 3u;
         id<MTLCaptureScope> cap_scope = nil;
         for (uint32_t l = 0; l < in->n_layer; ++l) {
@@ -1356,6 +1367,13 @@ static id<MTLBuffer> rnd_buf(id<MTLDevice> dev, size_t n) {
     if (b) { float *p = (float *)b.contents; for (size_t i = 0; i < n; ++i) p[i] = (float)rand() / (float)RAND_MAX - 0.5f; }
     return b;
 }
+/* dev74: n random KV cache elements of the engine's KV type (half or float) */
+static id<MTLBuffer> rnd_kv_buf(id<MTLDevice> dev, size_t n) {
+    if (rl_kv_elem_bytes() == 4u) return rnd_buf(dev, n);
+    id<MTLBuffer> b = [dev newBufferWithLength:n * 2u options:MTLResourceStorageModeShared];
+    if (b) { _Float16 *p = (_Float16 *)b.contents; for (size_t i = 0; i < n; ++i) p[i] = (_Float16)((float)rand() / (float)RAND_MAX - 0.5f); }
+    return b;
+}
 
 /* dev72 (dev only): the batched-prefill attention (attn_fa_b2) and routed-expert kernels of layer `layer` on buffers of
  * their own (B tokens at position0 over a random KV cache; B x top_k uniformly random experts on the layer's mapped
@@ -1444,7 +1462,7 @@ int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char 
         id<MTLCommandQueue> queue = [dev newCommandQueue];
         char *iq3 = rl_iq3_metal_source();
         if (!dev || !queue || !iq3) { set_error(error, cap, "Metal setup failed"); free(iq3); return 0; }
-        NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s\n%@", iq3, kPrefillSource];
+        NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s%s\n%@", rl_kv_defines(), iq3, kPrefillSource];
         free(iq3);
         NSError *le = nil;
         id<MTLLibrary> lib = [dev newLibraryWithSource:src options:nil error:&le];
@@ -1453,7 +1471,7 @@ int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char 
         const uint32_t head_dim = 256u, qheads = 16u, kvheads = 2u, kvlen = position0 + B + 64u;
         srand(72);
         id<MTLBuffer> q = rnd_buf(dev, (size_t)B * qheads * head_dim), g = rnd_buf(dev, (size_t)B * qheads * head_dim);
-        id<MTLBuffer> kc = rnd_buf(dev, (size_t)kvlen * kvheads * head_dim), vc = rnd_buf(dev, (size_t)kvlen * kvheads * head_dim);
+        id<MTLBuffer> kc = rnd_kv_buf(dev, (size_t)kvlen * kvheads * head_dim), vc = rnd_kv_buf(dev, (size_t)kvlen * kvheads * head_dim);
         id<MTLBuffer> o = [dev newBufferWithLength:(size_t)B * qheads * head_dim * 4u options:MTLResourceStorageModeShared];
         const char *cap_path = getenv("RL_GPU_CAPTURE");
         int capturing = 0;
@@ -1482,6 +1500,57 @@ int rl_metal_prefill_attn_bench_standalone(uint32_t B, uint32_t position0, char 
         }
         for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
         printf("attn_fa_b2: %u tokens at position %u: min %.2f ms, median %.2f ms (10 warm runs)\n", B, position0, ms[2], (ms[6] + ms[7]) / 2.0);
+    }
+    return 1;
+}
+
+/* dev74 (dev only): one dense prefill GEMM kernel (rl_gemm_tg or rl_gemm_wt) on random f32 data, no model:
+ * ROWS x K weights, B tokens. RL_GPU_CAPTURE=FILE captures the third run. */
+int rl_metal_prefill_gemm_bench_standalone(uint32_t rows, uint32_t K, uint32_t B, const char *kernel, char *error, size_t cap) {
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        id<MTLCommandQueue> queue = [dev newCommandQueue];
+        char *iq3 = rl_iq3_metal_source();
+        if (!dev || !queue || !iq3) { set_error(error, cap, "Metal setup failed"); free(iq3); return 0; }
+        NSString *src = [NSString stringWithFormat:@"#include <metal_stdlib>\nusing namespace metal;\n%s%s\n%@", rl_kv_defines(), iq3, kPrefillSource];
+        free(iq3);
+        NSError *le = nil;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:src options:nil error:&le];
+        id<MTLComputePipelineState> pipe = lib ? make_pipe(dev, lib, [NSString stringWithUTF8String:kernel], error, cap) : nil;
+        if (!pipe) { if (!lib) set_error(error, cap, "prefill library compile failed"); return 0; }
+        const int tg = strcmp(kernel, "rl_gemm_tg") == 0;
+        const uint32_t ntok_pad = (B + 31u) & ~31u;
+        srand(74);
+        id<MTLBuffer> w = rnd_buf(dev, (size_t)rows * K), x = rnd_buf(dev, (size_t)ntok_pad * K);
+        id<MTLBuffer> o = [dev newBufferWithLength:(size_t)ntok_pad * rows * 4u options:MTLResourceStorageModeShared];
+        const char *cap_path = getenv("RL_GPU_CAPTURE");
+        int capturing = 0;
+        double ms[12];
+        for (int rep = 0; rep < 12; ++rep) {
+            if (rep == 2 && cap_path) {
+                MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+                d.captureObject = queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+                d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+                NSError *ce = nil;
+                capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+                if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
+            }
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+            [enc setComputePipelineState:pipe];
+            [enc setBuffer:w offset:0 atIndex:0]; [enc setBuffer:x offset:0 atIndex:1]; [enc setBuffer:o offset:0 atIndex:2];
+            [enc setBytes:&rows length:4 atIndex:3]; [enc setBytes:&K length:4 atIndex:4]; [enc setBytes:&ntok_pad length:4 atIndex:5];
+            if (tg) [enc dispatchThreadgroups:MTLSizeMake(rows / 64u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+            else [enc dispatchThreadgroups:MTLSizeMake((rows + 31u) / 32u, ntok_pad / 32u, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+            [enc endEncoding];
+            [cb commit]; [cb waitUntilCompleted];
+            ms[rep] = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); capturing = 0; }
+        }
+        for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
+        const double med = (ms[6] + ms[7]) / 2.0;
+        printf("%s: %u x %u weights, %u tokens: min %.3f ms, median %.3f ms, %.2f TFLOPS (10 warm runs)\n", kernel, rows, K, B, ms[2], med,
+               2.0 * rows * K * (double)B / (med * 1e9));
     }
     return 1;
 }
@@ -1571,5 +1640,87 @@ int rl_metal_expert_bench_standalone(rl_engine *e, const char *model_path, uint3
 done:
     redmetal_topk_pool_destroy(pool);
     free(ids); free(pair_token); free(tok_pair); free(uid); free(expert_start); free(fill); free(umap); free(pair_weight);
+    return ok;
+}
+
+/* dev74 (dev only): the decode routed-expert kernels (redmetal_topk_pool_encode_device_into: gate/up, down, weighted
+ * sum) for one simulated token: 48 calls of top_k experts of layer `layer`, all distinct experts copied from the GGUF
+ * into one packed buffer (gate | up | down per expert, as in a pool slot). `e` is a CPU-only engine. */
+int rl_metal_decode_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, char *error, size_t cap) {
+    const rl_engine_info *in = &e->info;
+    /* RL_BENCH_K=K: K experts per call and 480 / K calls (same total work), to separate per-call cost from per-expert cost */
+    const uint32_t topk = getenv("RL_BENCH_K") ? (uint32_t)atoi(getenv("RL_BENCH_K")) : in->top_k;
+    const uint32_t E = in->n_expert, hidden = in->hidden, ffn = e->gguf.n_ff_exp, calls = topk ? 480u / topk : 0u;
+    if (!topk || topk > 64u) { set_error(error, cap, "RL_BENCH_K must be 1..64"); return 0; }
+    if (layer >= in->n_layer || calls * topk > E) { set_error(error, cap, "layer out of range"); return 0; }
+    rl_native_layer_info li;
+    rl_expert_layout lay0;
+    if (!rl_native_get_layer_info(&e->expert_map, layer, &li, error, cap) || !rl_native_expert_layout(&e->expert_map, layer, 0u, &lay0, error, cap)) return 0;
+    const uint64_t slot = (lay0.gate_bytes + lay0.up_bytes + lay0.down_bytes + 4095u) & ~(uint64_t)4095u;
+    rl_native_quant_tables tables;
+    if (!rl_native_quant_tables_init(&tables, error, cap)) return 0;
+    redmetal_topk_pool_t pool = redmetal_topk_pool_create(model_path, e->expert_map.max_expert_triplet_bytes, e->expert_map.max_expert_triplet_bytes, 1u,
+                                                          tables.iq2_xs, RL_IQ2_XS_GRID_COUNT, tables.iq1_m, RL_IQ1_M_GRID_COUNT);
+    rl_native_quant_tables_free(&tables);
+    if (!pool) { snprintf(error, cap, "pool: %s", redmetal_topk_last_error()); return 0; }
+    int ok = 0;
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        id<MTLCommandQueue> queue = [dev newCommandQueue];
+        id<MTLBuffer> packed = [dev newBufferWithLength:(NSUInteger)(slot * calls * topk) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> table = [dev newBufferWithLength:calls * topk * 8u options:MTLResourceStorageModeShared];
+        id<MTLBuffer> wts = [dev newBufferWithLength:calls * topk * 4u options:MTLResourceStorageModeShared];
+        srand(74);
+        id<MTLBuffer> xin = rnd_buf(dev, hidden);
+        id<MTLBuffer> xout = [dev newBufferWithLength:(size_t)hidden * 4u options:MTLResourceStorageModeShared];
+        if (!queue || !packed || !table || !wts || !xin || !xout) { set_error(error, cap, "bench allocation failed"); goto done; }
+        const uint8_t *base = (const uint8_t *)e->gguf.map;
+        uint8_t *dst = (uint8_t *)packed.contents;
+        uint64_t *tab = (uint64_t *)table.contents;
+        float *w = (float *)wts.contents;
+        uint32_t perm[512];
+        for (uint32_t i = 0; i < E && i < 512u; ++i) perm[i] = i;
+        for (uint32_t i = E - 1u; i > 0; --i) { const uint32_t j = (uint32_t)rand() % (i + 1u); const uint32_t t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+        for (uint32_t i = 0; i < calls * topk; ++i) {
+            rl_expert_layout l;
+            if (!rl_native_expert_layout(&e->expert_map, layer, perm[i], &l, error, cap)) goto done;
+            memcpy(dst + i * slot, base + l.gate_offset, l.gate_bytes);
+            memcpy(dst + i * slot + l.gate_bytes, base + l.up_offset, l.up_bytes);
+            memcpy(dst + i * slot + l.gate_bytes + l.up_bytes, base + l.down_offset, l.down_bytes);
+            tab[i] = (uint64_t)packed.gpuAddress + i * slot;
+            w[i] = 1.0f / (float)topk;
+        }
+        const uint32_t tw = rl_native_expert_type_word(li.ggml_type, li.down_type);
+        const char *cap_path = getenv("RL_GPU_CAPTURE");
+        int capturing = 0;
+        double ms[12];
+        for (int rep = 0; rep < 12; ++rep) {
+            if (rep == 2 && cap_path) {
+                MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+                d.captureObject = queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+                d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+                NSError *ce = nil;
+                capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+            }
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
+            [enc useResource:packed usage:MTLResourceUsageRead];
+            for (uint32_t c = 0; c < calls; ++c)
+                if (!redmetal_topk_pool_encode_device_into(pool, (__bridge void *)enc, (__bridge void *)table, (uint64_t)c * topk * 8u,
+                        (__bridge void *)wts, (uint64_t)c * topk * 4u, topk, tw, hidden, ffn, lay0.gate_bytes, lay0.up_bytes,
+                        (__bridge void *)xin, 0u, (__bridge void *)xout, 0u)) { [enc endEncoding]; snprintf(error, cap, "encode: %s", redmetal_topk_last_error()); goto done; }
+            [enc endEncoding];
+            [cb commit]; [cb waitUntilCompleted];
+            ms[rep] = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); capturing = 0; }
+        }
+        for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
+        const double med = (ms[6] + ms[7]) / 2.0, bytes = (double)calls * topk * (double)(lay0.gate_bytes + lay0.up_bytes + lay0.down_bytes);
+        printf("decode experts, layer %u (%s), %u calls x %u experts: min %.3f ms, median %.3f ms per token, %.1f GB/s\n", layer,
+               li.ggml_type == 17u ? "IQ2_XS" : li.ggml_type == 29u ? "IQ1_M" : "other", calls, topk, ms[2], med, bytes / (med * 1e6));
+        ok = 1;
+    }
+done:
+    redmetal_topk_pool_destroy(pool);
     return ok;
 }
