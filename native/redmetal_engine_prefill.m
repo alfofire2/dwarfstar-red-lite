@@ -1630,7 +1630,10 @@ done:
  * into one packed buffer (gate | up | down per expert, as in a pool slot). `e` is a CPU-only engine. */
 int rl_metal_decode_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, char *error, size_t cap) {
     const rl_engine_info *in = &e->info;
-    const uint32_t E = in->n_expert, topk = in->top_k, hidden = in->hidden, ffn = e->gguf.n_ff_exp, calls = 48u;
+    /* RL_BENCH_K=K: K experts per call and 480 / K calls (same total work), to separate per-call cost from per-expert cost */
+    const uint32_t topk = getenv("RL_BENCH_K") ? (uint32_t)atoi(getenv("RL_BENCH_K")) : in->top_k;
+    const uint32_t E = in->n_expert, hidden = in->hidden, ffn = e->gguf.n_ff_exp, calls = topk ? 480u / topk : 0u;
+    if (!topk || topk > 64u) { set_error(error, cap, "RL_BENCH_K must be 1..64"); return 0; }
     if (layer >= in->n_layer || calls * topk > E) { set_error(error, cap, "layer out of range"); return 0; }
     rl_native_layer_info li;
     rl_expert_layout lay0;
