@@ -1104,7 +1104,7 @@ static int prefill_chunk(rl_engine *e, rl_metal_engine *m, struct rl_metal_prefi
          * profiler use redlite-engine prefill-attn-bench, which loads no model. */
         static int captured = 0, chunks_seen = 0;
         const int cap_skip = getenv("RL_GPU_CAPTURE_SKIP") ? atoi(getenv("RL_GPU_CAPTURE_SKIP")) : 0;
-        const char *cap_path = captured || chunks_seen++ < cap_skip ? NULL : getenv("RL_GPU_CAPTURE");
+        const char *cap_path = captured || chunks_seen++ < cap_skip || getenv("RL_GPU_CAPTURE_STEP") ? NULL : getenv("RL_GPU_CAPTURE");
         const uint32_t cap_layer = getenv("RL_GPU_CAPTURE_LAYER") ? (uint32_t)atoi(getenv("RL_GPU_CAPTURE_LAYER")) : 3u;
         id<MTLCaptureScope> cap_scope = nil;
         for (uint32_t l = 0; l < in->n_layer; ++l) {
@@ -1571,5 +1571,84 @@ int rl_metal_expert_bench_standalone(rl_engine *e, const char *model_path, uint3
 done:
     redmetal_topk_pool_destroy(pool);
     free(ids); free(pair_token); free(tok_pair); free(uid); free(expert_start); free(fill); free(umap); free(pair_weight);
+    return ok;
+}
+
+/* dev74 (dev only): the decode routed-expert kernels (redmetal_topk_pool_encode_device_into: gate/up, down, weighted
+ * sum) for one simulated token: 48 calls of top_k experts of layer `layer`, all distinct experts copied from the GGUF
+ * into one packed buffer (gate | up | down per expert, as in a pool slot). `e` is a CPU-only engine. */
+int rl_metal_decode_expert_bench_standalone(rl_engine *e, const char *model_path, uint32_t layer, char *error, size_t cap) {
+    const rl_engine_info *in = &e->info;
+    const uint32_t E = in->n_expert, topk = in->top_k, hidden = in->hidden, ffn = e->gguf.n_ff_exp, calls = 48u;
+    if (layer >= in->n_layer || calls * topk > E) { set_error(error, cap, "layer out of range"); return 0; }
+    rl_native_layer_info li;
+    rl_expert_layout lay0;
+    if (!rl_native_get_layer_info(&e->expert_map, layer, &li, error, cap) || !rl_native_expert_layout(&e->expert_map, layer, 0u, &lay0, error, cap)) return 0;
+    const uint64_t slot = (lay0.gate_bytes + lay0.up_bytes + lay0.down_bytes + 4095u) & ~(uint64_t)4095u;
+    rl_native_quant_tables tables;
+    if (!rl_native_quant_tables_init(&tables, error, cap)) return 0;
+    redmetal_topk_pool_t pool = redmetal_topk_pool_create(model_path, e->expert_map.max_expert_triplet_bytes, e->expert_map.max_expert_triplet_bytes, 1u,
+                                                          tables.iq2_xs, RL_IQ2_XS_GRID_COUNT, tables.iq1_m, RL_IQ1_M_GRID_COUNT);
+    rl_native_quant_tables_free(&tables);
+    if (!pool) { snprintf(error, cap, "pool: %s", redmetal_topk_last_error()); return 0; }
+    int ok = 0;
+    @autoreleasepool {
+        id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+        id<MTLCommandQueue> queue = [dev newCommandQueue];
+        id<MTLBuffer> packed = [dev newBufferWithLength:(NSUInteger)(slot * calls * topk) options:MTLResourceStorageModeShared];
+        id<MTLBuffer> table = [dev newBufferWithLength:calls * topk * 8u options:MTLResourceStorageModeShared];
+        id<MTLBuffer> wts = [dev newBufferWithLength:calls * topk * 4u options:MTLResourceStorageModeShared];
+        srand(74);
+        id<MTLBuffer> xin = rnd_buf(dev, hidden);
+        id<MTLBuffer> xout = [dev newBufferWithLength:(size_t)hidden * 4u options:MTLResourceStorageModeShared];
+        if (!queue || !packed || !table || !wts || !xin || !xout) { set_error(error, cap, "bench allocation failed"); goto done; }
+        const uint8_t *base = (const uint8_t *)e->gguf.map;
+        uint8_t *dst = (uint8_t *)packed.contents;
+        uint64_t *tab = (uint64_t *)table.contents;
+        float *w = (float *)wts.contents;
+        uint32_t perm[512];
+        for (uint32_t i = 0; i < E && i < 512u; ++i) perm[i] = i;
+        for (uint32_t i = E - 1u; i > 0; --i) { const uint32_t j = (uint32_t)rand() % (i + 1u); const uint32_t t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+        for (uint32_t i = 0; i < calls * topk; ++i) {
+            rl_expert_layout l;
+            if (!rl_native_expert_layout(&e->expert_map, layer, perm[i], &l, error, cap)) goto done;
+            memcpy(dst + i * slot, base + l.gate_offset, l.gate_bytes);
+            memcpy(dst + i * slot + l.gate_bytes, base + l.up_offset, l.up_bytes);
+            memcpy(dst + i * slot + l.gate_bytes + l.up_bytes, base + l.down_offset, l.down_bytes);
+            tab[i] = (uint64_t)packed.gpuAddress + i * slot;
+            w[i] = 1.0f / (float)topk;
+        }
+        const uint32_t tw = rl_native_expert_type_word(li.ggml_type, li.down_type);
+        const char *cap_path = getenv("RL_GPU_CAPTURE");
+        int capturing = 0;
+        double ms[12];
+        for (int rep = 0; rep < 12; ++rep) {
+            if (rep == 2 && cap_path) {
+                MTLCaptureDescriptor *d = [[MTLCaptureDescriptor alloc] init];
+                d.captureObject = queue; d.destination = MTLCaptureDestinationGPUTraceDocument;
+                d.outputURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:cap_path]];
+                NSError *ce = nil;
+                capturing = [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:d error:&ce];
+            }
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
+            [enc useResource:packed usage:MTLResourceUsageRead];
+            for (uint32_t c = 0; c < calls; ++c)
+                if (!redmetal_topk_pool_encode_device_into(pool, (__bridge void *)enc, (__bridge void *)table, (uint64_t)c * topk * 8u,
+                        (__bridge void *)wts, (uint64_t)c * topk * 4u, topk, tw, hidden, ffn, lay0.gate_bytes, lay0.up_bytes,
+                        (__bridge void *)xin, 0u, (__bridge void *)xout, 0u)) { [enc endEncoding]; snprintf(error, cap, "encode: %s", redmetal_topk_last_error()); goto done; }
+            [enc endEncoding];
+            [cb commit]; [cb waitUntilCompleted];
+            ms[rep] = (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+            if (capturing) { [[MTLCaptureManager sharedCaptureManager] stopCapture]; fprintf(stderr, "GPU capture written to %s\n", cap_path); capturing = 0; }
+        }
+        for (int i = 2; i < 12; ++i) for (int j = i + 1; j < 12; ++j) if (ms[j] < ms[i]) { const double t = ms[i]; ms[i] = ms[j]; ms[j] = t; }
+        const double med = (ms[6] + ms[7]) / 2.0, bytes = (double)calls * topk * (double)(lay0.gate_bytes + lay0.up_bytes + lay0.down_bytes);
+        printf("decode experts, layer %u (%s), %u calls x %u experts: min %.3f ms, median %.3f ms per token, %.1f GB/s\n", layer,
+               li.ggml_type == 17u ? "IQ2_XS" : li.ggml_type == 29u ? "IQ1_M" : "other", calls, topk, ms[2], med, bytes / (med * 1e6));
+        ok = 1;
+    }
+done:
+    redmetal_topk_pool_destroy(pool);
     return ok;
 }

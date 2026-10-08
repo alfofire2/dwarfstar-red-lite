@@ -317,6 +317,7 @@ int rl_metal_kernel_bench(char *report, size_t report_cap, char *error, size_t c
             static const struct { const char *what; uint32_t type, rows, cols; } cases[] = {
                 {"attn_qkv IQ2_XXS", 16u, 8192u, 2048u}, {"attn_qkv IQ3_XXS", 18u, 8192u, 2048u},
                 {"attn_q   IQ2_S  ", 22u, 8192u, 2048u}, {"ssm_out  Q4_K   ", 12u, 2048u, 4096u},
+                {"attn_qkv Q4_K   ", 12u, 8192u, 2048u}, {"attn_gat Q4_K   ", 12u, 4096u, 2048u},
                 {"ssm_out  Q8_0   ", 8u, 2048u, 4096u},  {"attn_out Q6_K   ", 14u, 2048u, 4096u},
                 {"shexp up Q8_0   ", 8u, 512u, 2048u},   {"shexp up IQ4_XS ", 23u, 512u, 2048u},
                 {"shexp dn IQ4_XS ", 23u, 2048u, 512u},  {"shexp dn Q8_0   ", 8u, 2048u, 512u},
