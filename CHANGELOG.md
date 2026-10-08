@@ -20,6 +20,8 @@
     33.9 → 37.3 with the 4 GiB cache and 46.2 → 52.4 with every expert resident (six-prompt medians).
   - a file rewrite with prompt lookup, M4 Max: 108.7 → 117.2 tok/s with every expert resident, with output identical
     to 0.9.1.
+- **Coding-agent sessions on the M4 Max** (hard suite, every expert resident, 64K, prompt lookup): decode 5–11 % faster
+  depending on the context, 11 / 12 tasks passed by both releases.
 - **Prompt ingestion and quality are unchanged** (engine perplexity of CF2: code 2.5623 → 2.5637, text 16.658 → 16.655).
 - **Half-precision KV cache, opt-in** (`RL_KV_F16=1`): +9 % decode at 32K, +13 % at 64K, and half the cache memory.
   With it, MTP plus a 32K context fits a 24 GiB Mac with every expert resident. It is not the default because on CF2

@@ -82,6 +82,19 @@ expert resident, identical tokens.
 **Quality is unchanged.** Engine perplexity of CF2 (first 8,192 ids, 512-token chunks, every expert resident):
 code 2.5623 → 2.5637, text 16.6578 → 16.6554.
 
+**Coding agent on the M4 Max** (the hard suite with pi, CF2, every expert resident, 64K window, prompt lookup,
+temperature 0.3, two alternated runs each; decode speed from the server logs by the context at the start of each
+answer):
+
+| Context | 0.9.1 | 0.9.2 | Gain |
+|---|---:|---:|---:|
+| 0–8K | 92.5 tok/s | 100.9 tok/s | +9 % |
+| 8–16K | 88.0 tok/s | 97.6 tok/s | +11 % |
+| 16–32K | 74.0 tok/s | 78.8 tok/s | +7 % |
+| 32K and more | 64.5 tok/s | 67.9 tok/s | +5 % |
+
+Tasks passed: 11 / 12 for each release (the same task failed its check once in each).
+
 **Coding agent on the M4 Pro with the 4 GiB cache** (the hard suite, 64K window, prompt lookup, two alternated runs
 each; dev74 before the scheduling changes): 0.9.1 passed 6/6 and 6/6, dev74 6/6 and 4/6 (two 900 s timeouts, one a
 159-request loop). Agent sessions at temperature 0.3 differ from run to run. With experts streamed from the SSD, each
