@@ -182,9 +182,9 @@ class GpuLimitTests(unittest.TestCase):
 
     def test_needed_limit_includes_margin(self):
         from redlite.planner import native_full_residency_mib
-        # dev55 measured model: slots + dense + 580 + 24 KiB per position (dev74 half KV) + 572 MiB for 2048-token chunks (+1787 MTP)
-        self.assertEqual(native_full_residency_mib(self.IQ2_REAL), 17316 + 1083 + 580 + 96 + 572)
-        self.assertEqual(native_full_residency_mib(self.IQ2_REAL, mtp=True), 17316 + 1083 + 580 + 96 + 572 + 1787)
+        # dev55 measured model: slots + dense + 580 + 48 KiB per position + 572 MiB for 2048-token chunks (+1787 MTP)
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL), 17316 + 1083 + 580 + 192 + 572)
+        self.assertEqual(native_full_residency_mib(self.IQ2_REAL, mtp=True), 17316 + 1083 + 580 + 192 + 572 + 1787)
 
     def test_mtp_needs_room_for_the_head(self):
         import tempfile
@@ -262,24 +262,20 @@ class RedLiteMixPreferenceTests(unittest.TestCase):
 
 
 class GpuPlanTests(unittest.TestCase):
-    """dev55: the measured need explains the M4 Pro outcomes at a 21,741 MiB limit (IQ2_XXS-size file); dev74 outcomes
-    with the half KV cache."""
+    """dev55: the measured need explains the M4 Pro outcomes at a 21,741 MiB limit (IQ2_XXS-size file)."""
     RES = NativeResidency(17316, 1083 * 1024 * 1024)
 
     def test_m4pro_outcomes(self):
         from redlite.planner import native_full_residency_mib
-        self.assertGreater(native_full_residency_mib(self.RES, 32768, 2048, True), 21741)   # dev74 observed: out of GPU memory
-        self.assertLessEqual(native_full_residency_mib(self.RES, 32768, 512, True), 21741)  # dev74 observed: ran (float KV: out of memory)
-        self.assertLessEqual(native_full_residency_mib(self.RES, 16384, 2048, True), 21741)  # dev74 observed: ran
+        self.assertGreater(native_full_residency_mib(self.RES, 32768, 512, True), 21741)    # observed: out of GPU memory
         self.assertLessEqual(native_full_residency_mib(self.RES, 32768, 2048, False), 21741)  # observed: ran
         self.assertLessEqual(native_full_residency_mib(self.RES, 4096, 2048, True), 21741)    # observed: ran (52.7 tok/s)
 
     def test_plan_prefers_mtp_then_big_chunks(self):
         from redlite.planner import native_gpu_plan
         self.assertEqual(native_gpu_plan(self.RES, 21741, 4096, True), (2048, True))
-        self.assertEqual(native_gpu_plan(self.RES, 21741, 32768, True), (512, True))    # dev74 half KV: smaller chunks keep MTP at 32K
-        self.assertEqual(native_gpu_plan(self.RES, 21741, 16384, True), (2048, True))    # dev74: MTP and big chunks at 16K
-        self.assertEqual(native_gpu_plan(self.RES, 21741, 65536, True), (2048, False))   # MTP dropped at 64K
+        self.assertEqual(native_gpu_plan(self.RES, 21741, 32768, True), (2048, False))   # MTP dropped at 32K
+        self.assertEqual(native_gpu_plan(self.RES, 21741, 16384, True), (512, True))     # smaller chunks keep MTP
         self.assertIsNone(native_gpu_plan(self.RES, 19000, 4096, True))
 
 
@@ -328,8 +324,8 @@ class ParallelPlanTests(unittest.TestCase):
     def test_plan_context(self):
         from redlite.planner import native_plan_context
         self.assertEqual(native_plan_context(4096), 4096)
-        self.assertEqual(native_plan_context(4096, 2), 8192 + 3072)
-        self.assertEqual(native_plan_context(2048, 2), 4096 + 3072)
+        self.assertEqual(native_plan_context(4096, 2), 8192 + 1536)
+        self.assertEqual(native_plan_context(2048, 2), 4096 + 1536)
 
 
 class RedLiteF2PreferenceTests(unittest.TestCase):

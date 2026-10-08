@@ -423,7 +423,7 @@ def _serve_native(args) -> int:
         _die(f"Model not found: {model}")
     cache_mib = args.cache_mib
     context = args.context or 4096
-    # dev56: a second slot holds another KV cache and DeltaNet state (72 MiB = 3072 positions at 24 KiB): the GPU
+    # dev56: a second slot holds another KV cache and DeltaNet state (72 MiB = 1536 positions at 48 KiB): the GPU
     # plan sizes for those positions too
     plan_context = native_plan_context(context, args.parallel)
     if cache_mib is None:
