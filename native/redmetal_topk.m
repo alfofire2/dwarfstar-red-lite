@@ -1093,6 +1093,14 @@ static uint32_t lanes_for_blocks(uint32_t blocks) {
     return lanes;
 }
 
+/* dev75: decode gate/up rows: at most 2 lanes per 256-value block (2048 columns: 16 lanes instead of 32). Each lane
+ * then walks a whole half block; decode expert bench 2.38 -> 2.27 ms, CF2 decode 107.4 -> 108.1 tok/s (M4 Max) */
+static uint32_t gate_lanes_for(uint32_t blocks) {
+    uint32_t l = lanes_for_blocks(blocks);
+    while (l > 2u * blocks && l > 1u) l >>= 1;
+    return l;
+}
+
 uint32_t redmetal_topk_abi_version(void) { return REDMETAL_TOPK_ABI_VERSION; }
 const char *redmetal_topk_last_error(void) {
     return g_topk_error[0] ? g_topk_error : "unknown Red Metal top-k error";
@@ -1330,7 +1338,7 @@ static int topk_encode_into(RMTopKPool *p, id<MTLCommandBuffer> cb, const uint32
         weights[i] = router_weights[i];
         if (![resident containsObject:slab]) [resident addObject:slab];
     }
-    const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+    const uint32_t gate_lanes = gate_lanes_for(hidden_size / QK_IQ);
     const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
     const uint64_t up_offset = gate_bytes[0];
     const uint64_t down_offset = gate_bytes[0] + up_bytes[0];
@@ -1471,7 +1479,7 @@ static int topk_encode_batched_dispatch(RMTopKPool *p, id<MTLCommandBuffer> cb, 
             }
         }
     }
-    const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+    const uint32_t gate_lanes = gate_lanes_for(hidden_size / QK_IQ);
     const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
     const uint32_t zero = 0u;
 
@@ -1766,7 +1774,7 @@ int redmetal_topk_pool_encode_device(
         id<MTLBuffer> weights = (__bridge id<MTLBuffer>)weight_buffer;
         id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
         id<MTLBuffer> output = (__bridge id<MTLBuffer>)mtl_output_buffer;
-        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+        const uint32_t gate_lanes = gate_lanes_for(hidden_size / QK_IQ);
         const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
         const uint64_t up_offset = gate_bytes;
         const uint64_t down_offset = gate_bytes + up_bytes;
@@ -1851,7 +1859,7 @@ static int encode_device_into_impl(
         id<MTLBuffer> weights = (__bridge id<MTLBuffer>)weight_buffer;
         id<MTLBuffer> input = (__bridge id<MTLBuffer>)mtl_input_buffer;
         id<MTLBuffer> output = mtl_output_buffer ? (__bridge id<MTLBuffer>)mtl_output_buffer : nil;
-        const uint32_t gate_lanes = lanes_for_blocks(hidden_size / QK_IQ);
+        const uint32_t gate_lanes = gate_lanes_for(hidden_size / QK_IQ);
         const uint32_t down_lanes = lanes_for_blocks(ffn_size / QK_IQ);
         const uint64_t up_offset = gate_bytes;
         const uint64_t down_offset = gate_bytes + up_bytes;
