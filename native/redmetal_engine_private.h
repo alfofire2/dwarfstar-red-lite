@@ -51,13 +51,14 @@ struct rl_metal_engine {
     __unsafe_unretained id<MTLBuffer> *conv_park, *rec_park, *k_park, *v_park;
     id<MTLBuffer> final_park;
     id<MTLComputePipelineState> p_rows_f32, p_rows_q8, p_rows_q4k, p_rows_q5k, p_rows_q6k, p_rows_iq2xxs, p_rows_iq3;
-    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail;
+    id<MTLComputePipelineState> p_dn_ba, p_dn_conv, p_dn_l2, p_dn_shift, p_dn_state, p_dn_tail, p_dn_shift_ip;
     id<MTLComputePipelineState> p_attn_prep, p_attn_gqa;
     id<MTLComputePipelineState> p_attn_split, p_attn_merge;   /* dev26 split-K decode attention */
     id<MTLComputePipelineState> p_attn_split_g;               /* dev35: one threadgroup per KV head and block */
     int attn_group;                                           /* RL_ENGINE_ATTN_GROUP != 0 (default) */
     float route_bias;                                         /* dev46: RL_ROUTE_CACHE_BIAS (default 0: off) */
     int fuse_tail;                                            /* dev39: rl_moe_tail (RL_ENGINE_FUSE_TAIL != 0, default) */
+    int shift_inplace;   /* dev74: DeltaNet conv window shifted in place (RL_ENGINE_SHIFT_INPLACE=0: via next_conv + copy) */
     int sh_overlap;   /* dev74: shared-expert tail beside the routed experts (RL_ENGINE_SH_OVERLAP=0: after) */
     int concurrent;                                           /* dev38: concurrent decode encoders (default; RL_ENGINE_CONCURRENT=0 or profile: serial) */
     uint32_t attn_blk;                                        /* positions per grouped split-K block (RL_ENGINE_ATTN_BLK; 0 = rl_attn_auto_blk) */

@@ -512,6 +512,15 @@ RL_ROWS_SUB_KERNEL("rl_rows2_iq2xxs", "256", "66", "8", "32", "rl_iq2xxs_sub(bp,
 "    for (uint j = 0; j + 1u < ns; ++j) next_state[b + j] = state[b + j + 1u];\n"
 "    next_state[b + ns - 1u] = qkv[gid];\n"
 "}\n"
+/* dev74: the same shift in place (the window is read into registers first): no next_conv copy back afterwards */
+"kernel void dn_shift_inplace(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *qkv [[buffer(1)]],\n"
+"    constant uint &channels [[buffer(3)]], constant uint &dconv [[buffer(4)]], uint gid [[thread_position_in_grid]]) {\n"
+"    if (rl_abort[0] != 0u) return;\n"
+"    if (gid >= channels) return; const uint ns = dconv - 1u; const uint b = gid * ns;\n"
+"    float w[8]; for (uint j = 0; j < ns; ++j) w[j] = state[b + j];\n"
+"    for (uint j = 0; j + 1u < ns; ++j) state[b + j] = w[j + 1u];\n"
+"    state[b + ns - 1u] = qkv[gid];\n"
+"}\n"
 /* fused gated delta rule for one (value head, state row j): decay, delta, in-place update, output */
 "kernel void dn_state_fused(device uint *rl_abort [[buffer(30)]], device float *state [[buffer(0)]], device const float *q [[buffer(1)]], device const float *k [[buffer(2)]],\n"
 "    device const float *v [[buffer(3)]], device const float *gate [[buffer(4)]], device const float *beta [[buffer(5)]],\n"
@@ -1186,7 +1195,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
             {&m->p_rows_f32, @"rl_rows_f32"}, {&m->p_rows_q8, @"rl_rows_q8"}, {&m->p_rows_q4k, @"rl_rows_q4k"},
             {&m->p_rows_q5k, @"rl_rows_q5k"}, {&m->p_rows_q6k, @"rl_rows_q6k"}, {&m->p_rows_iq2xxs, @"rl_rows_iq2xxs"}, {&m->p_rows_iq3, @"rl_rows_iq3"},
             {&m->p_dn_ba, @"dn_ba_params"}, {&m->p_dn_conv, @"dn_conv_silu"}, {&m->p_dn_l2, @"dn_qk_l2_tg"},
-            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
+            {&m->p_dn_shift, @"dn_shift_state"}, {&m->p_dn_shift_ip, @"dn_shift_inplace"}, {&m->p_dn_state, @"dn_state_fused"}, {&m->p_dn_tail, @"dn_tail_norm"},
             {&m->p_attn_prep, @"attn_qk_prep"}, {&m->p_attn_gqa, @"attn_gqa"}, {&m->p_sh_scalar, @"sh_scalar_gate"}, {&m->p_sh_silu, @"sh_silu_mul"},
             {&m->p_route, @"rl_route"}, {&m->p_copy, @"rl_copy_f32"},
             {&m->p_rows2_q4k, @"rl_rows2_q4k"}, {&m->p_rows2_q6k, @"rl_rows2_q6k"}, {&m->p_rows2_iq2xxs, @"rl_rows2_iq2xxs"}, {&m->p_rows2_f32, @"rl_rows2_f32"}, {&m->p_rows2_q5k, @"rl_rows2_q5k"}, {&m->p_r2_q5k2, @"rl_rows2r2_q5k"},
@@ -1262,6 +1271,7 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         { const char *ag = getenv("RL_ENGINE_ATTN_GROUP"); m->attn_group = !ag || atoi(ag) != 0; }
         { const char *ft = getenv("RL_ENGINE_FUSE_TAIL"); m->fuse_tail = !ft || atoi(ft) != 0; }
         { const char *so = getenv("RL_ENGINE_SH_OVERLAP"); m->sh_overlap = !so || atoi(so) != 0; }   /* dev74 */
+        { const char *si = getenv("RL_ENGINE_SHIFT_INPLACE"); m->shift_inplace = !si || atoi(si) != 0; }   /* dev74 */
         { const char *rb = getenv("RL_ROUTE_CACHE_BIAS"); m->route_bias = rb ? (float)atof(rb) : 0.0f; if (!(m->route_bias > 0.0f)) m->route_bias = 0.0f; }
         { const char *cc = getenv("RL_ENGINE_CONCURRENT"); m->concurrent = !m->profile && (!cc || atoi(cc) != 0); }
         { const char *ab = getenv("RL_ENGINE_ATTN_BLK"); m->attn_blk = ab && atoi(ab) >= 32 && atoi(ab) <= 256 ? (uint32_t)atoi(ab) : 0u; }
@@ -1454,7 +1464,7 @@ void rl_metal_engine_destroy(rl_metal_engine *m) {
     m->p_moe_tail = nil;
     m->steer = nil; m->p_steer = nil;
     m->p_rms = m->p_resid_rms = m->p_scale_add = m->p_rows_f32 = m->p_rows_q8 = m->p_rows_q4k = m->p_rows_q5k = m->p_rows_q6k = m->p_rows_iq2xxs = m->p_rows_iq3 = nil;
-    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = nil;
+    m->p_dn_ba = m->p_dn_conv = m->p_dn_l2 = m->p_dn_shift = m->p_dn_state = m->p_dn_tail = m->p_dn_shift_ip = nil;
     m->p_attn_prep = m->p_attn_gqa = m->p_sh_scalar = m->p_sh_silu = nil;
     m->p_attn_split = m->p_attn_merge = m->p_attn_split_g = nil; m->attn_ml = m->attn_acc = nil;
     m->keep = nil; m->dev = nil; m->queue = nil; m->lib = nil;
@@ -1571,10 +1581,12 @@ static void emit_recurrent_mid(rl_engine *e, emitter *em, const rl_layer_tensors
     [enc setBytes:&S length:4 atIndex:3]; [enc setBytes:&groups length:4 atIndex:4]; [enc setBytes:&eps length:4 atIndex:5];
     [enc dispatchThreadgroups:MTLSizeMake(2u * groups, 1, 1) threadsPerThreadgroup:MTLSizeMake(S, 1, 1)]; rl_after_dispatch(enc);
 
-    [enc setComputePipelineState:m->p_dn_shift];
-    [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1]; [enc setBuffer:m->next_conv offset:0 atIndex:2];
+    const int inplace = m->shift_inplace && dconv <= 9u;   /* dev74: shift conv_state itself, no copy at the layer's end */
+    [enc setComputePipelineState:inplace ? m->p_dn_shift_ip : m->p_dn_shift];
+    [enc setBuffer:m->conv_state[r] offset:0 atIndex:0]; [enc setBuffer:m->qkv offset:0 atIndex:1];
+    if (!inplace) [enc setBuffer:m->next_conv offset:0 atIndex:2];
     [enc setBytes:&channels length:4 atIndex:3]; [enc setBytes:&dconv length:4 atIndex:4];
-    enc_1d(enc, m->p_dn_shift, channels, 64u);
+    enc_1d(enc, inplace ? m->p_dn_shift_ip : m->p_dn_shift, channels, 64u);
     em_group(em, 0);
     em_stage(em, 2);
 
@@ -1608,7 +1620,7 @@ static void emit_recurrent(rl_engine *e, emitter *em, const rl_layer_tensors *t,
     em_group(em, 0);
     emit_recurrent_mid(e, em, t, w);
     emit_rows(m, em_enc(em), &w->ssm_out, m->ng, m->branch);
-    em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
+    if (!(m->shift_inplace && e->info.d_conv <= 9u)) em_copy(em, m->next_conv, 0, m->conv_state[r], 0, (uint32_t)rl_engine_conv_count(e));
     em_stage(em, 4);
 }
 
