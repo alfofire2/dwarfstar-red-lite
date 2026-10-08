@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.2 — 2026-10-08
+
+**Faster decode: +15 % on the M4 Max and +12–18 % on the 24 GiB M4 Pro with Qwen3-Coder-Next CF2.**
+- **Four decode kernels rewritten after profiling a real token** in Xcode (`RL_GPU_CAPTURE_STEP`):
+  - the Q4_K projections read their quants as 32-bit words, one item per pair of sub-blocks (−16 to −20 % per
+    projection). Q4_K is 864 MiB of the weights CF2 and F2 read per token;
+  - the IQ1_M expert decoder reads each shared `qh` byte and scale once for two groups;
+  - the DeltaNet state update runs one SIMD group per state row, with no threadgroup barrier;
+  - the Q5_K output head uses the Q4_K layout (−14 %);
+  - the shared expert's last two steps run beside the routed experts, and the DeltaNet convolution window is shifted
+    in place (same kernels, identical output).
+- **Decode, Qwen3-Coder-Next CF2:**
+  - M4 Max, every expert resident: 85.3 → 97.8 tok/s at short context, 66.7 → 74.1 at 32K. That is slightly faster
+    than MLX's 3-bit file (94–96 tok/s), which is 14.5 GiB larger;
+  - M4 Pro 24 GiB: 33.7 → 37.9 tok/s with the 4 GiB expert cache, 48.2 → 57.1 with every expert resident;
+  - Bartowski's IQ2_XXS (fewer Q4_K weights), M4 Max: 83.5 → 90.9 tok/s, and 53.0 → 56.0 with the 4 GiB cache.
+- **Prompt ingestion is unchanged.**
+- **Half-precision KV cache, opt-in** (`RL_KV_F16=1`): +9 % decode at 32K, +13 % at 64K, and half the cache memory.
+  With it, MTP plus a 32K context fits a 24 GiB Mac with every expert resident. It is not the default because on CF2
+  it moved the 1200-token comparison with llama.cpp past its bounds (KL 5.8e-2).
+- New dev tools: `decode-expert-bench`, `prefill-gemm-bench`, `agent_eval.py --repo-ref`, more `kernel-bench` shapes.
+- Thirteen kernel attempts that did not pay are in WHAT_DID_NOT_WORK, with their measurements.
+- Validation:
+  - `regress_m4.sh` on the reference IQ2_XXS file and on CF2;
+  - `quick_parity.sh --long`;
+  - local CI.
+
+
+- dev74: **decode kernels, half KV opt-in** (`docs/REDLITE_DEV74_DECODE_KERNELS.md`).
+
 ## 0.9.1 — 2026-10-08
 
 **Prompt lookup on 24 GiB Macs too.**

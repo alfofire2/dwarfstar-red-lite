@@ -94,12 +94,13 @@ done. Estimates are estimates; only measured numbers go into the results pages.
 - **2c — done (dev51c):** on by default in `redlite chat` / `serve` with a bounded cache. **Cache-aware routing as the bounded-cache default.** It gains +5 % on the M4 Pro but changes outputs. Decide
   with the Qwen API comparison (dev48) and perplexity, both run on the M4 Pro.
 
-## Phase 3 — long context (float16 KV built and not kept, dev53: see WHAT_DID_NOT_WORK)
+## Phase 3 — long context (float16 KV: opt-in since dev74)
 
-- **Float16 KV cache.** It halves the attention cache's memory and traffic: at 33.5K tokens decode is 25.7 tok/s,
-  mostly attention, and 64K positions would take 1.5 GiB instead of 3.
-- It needs the prefill attention kernel (`attn_fa_b`) rewritten for half storage, and the parity checks against
-  llama.cpp re-run.
+- **Float16 KV cache.** Built in dev53 and dropped; rebuilt in dev74 as an opt-in (`RL_KV_F16=1`): +9 % decode at
+  32K, +13 % at 64K, half the cache memory. Not the default, because on CF2 it moves the 1200-token comparison with
+  llama.cpp past its bounds ([DEV74](REDLITE_DEV74_DECODE_KERNELS.md)).
+- Making it the default needs a comparison rule that tells half-precision rounding from a bug near router ties, or a
+  reference that rounds K/V exactly as the GPU computes them.
 
 ## Phase 4 — product
 
