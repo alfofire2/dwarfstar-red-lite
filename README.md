@@ -273,8 +273,8 @@ weights is dense. The other ~17 GiB are routed experts, of which a token touches
 </p>
 
 In short:
-- **48 GiB, every expert resident:** decode is 25 % faster than the pinned llama.cpp (90.9 vs 72.5 tok/s, 0.9.2;
-  86.2 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
+- **48 GiB, every expert resident:** decode is 31 % faster than the pinned llama.cpp measured the same day (90.9 vs
+  69.3 tok/s, 0.9.2; 86.2 vs 72.5 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
   slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2 decodes at 97.8 tok/s (0.9.2, dev74).
 - **24 GiB, 0.9.2 (dev74), Qwen3-Coder-Next CF2:** 37.9 tok/s with the 4 GiB cache, 57.1 with every expert resident
   (33.7 and 48.2 in 0.9.1).

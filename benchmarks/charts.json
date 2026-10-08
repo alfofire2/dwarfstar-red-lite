@@ -5,7 +5,7 @@
    "id": "decode_m4max",
    "title": "Decode speed, M4 Max 48 GiB, IQ2_XXS, every expert resident",
    "unit": "tok/s",
-   "note": "bench_m4.sh: 256 greedy tokens, median of 3 cooled runs. MTP: median of six prompts, 256 tokens each, output identical. 0.9.1 and 0.9.2 were measured the same day (2026-10-08); the other bars on their release days.",
+   "note": "bench_m4.sh: 256 greedy tokens, median of 3 cooled runs. MTP: median of six prompts, 256 tokens each, output identical. 0.9.1 and 0.9.2 were measured the same day (2026-10-08), when llama.cpp gave 69.25; the other bars on their release days.",
    "series": [
     "Red Lite"
    ],

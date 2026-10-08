@@ -346,6 +346,11 @@
    "decode22": 90.93,
    "decode4": 55.96,
    "prefill1100": 584.1
+  },
+  "llama.cpp_pinned": {
+   "decode": 69.25,
+   "prefill8192": 903.99,
+   "note": "bench_m4.sh --only llama, same day"
   }
  }
 }
