@@ -91,7 +91,9 @@ The limit is a ceiling, not a reservation: when Red Lite is not running, macOS u
   - the daemon ran (exit 0) and set 21,741 MiB, and Metal then reported 21.23 GiB;
   - `redlite doctor` reports the limit as "set at every boot";
   - `redlite chat` picks every expert resident + MTP on its own.
-- **Not yet verified:** that the limit comes back after a restart (the M4 Pro has not been restarted since).
+- **Verified after a restart** (2026-10-09, macOS 26.7): the daemon ran at boot (exit 0) and set 21,741 MiB again
+  with nobody logged in yet; `redlite doctor` reported "set at every boot". Since 0.9.5, `redlite gpu-limit --boot`
+  installs this daemon.
 
 `/etc/sysctl.conf` was not used: whether recent macOS releases still read it is not established.
 
