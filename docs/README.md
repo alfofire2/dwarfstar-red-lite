@@ -23,6 +23,7 @@ search (`scripts/dev/build_site.py`).
 | Milestone | Document |
 |---|---|
 | dev77 agent sessions: prefill dominates; the server rewinds to the previous prompt instead of recomputing; 0.9.3 on the M4 Pro | [REDLITE_DEV77_AGENT_PREFILL.md](REDLITE_DEV77_AGENT_PREFILL.md) |
+| dev80 long contexts on 24 GiB: agents with every expert resident (`--kv f16`), decode vs position, prefill attention | [REDLITE_DEV80_24GB_LONG_CONTEXT.md](REDLITE_DEV80_24GB_LONG_CONTEXT.md) |
 | dev76 Red Lite and MLX measured the same day (decode 99 vs 87–90 tok/s), two DeltaNet rows per simdgroup in prefill | [REDLITE_DEV76_MLX_SAMEDAY.md](REDLITE_DEV76_MLX_SAMEDAY.md) |
 | dev75 `--kv f16` in the launcher, prompt ingestion +9 % (MPS GEMM, paired IQ1_M decode), down + MoE tail fused | [REDLITE_DEV75_KV_PREFILL_MPS.md](REDLITE_DEV75_KV_PREFILL_MPS.md) |
 | dev74 decode kernels from the profile of a real token (+15 % M4 Max, +11–21 % M4 Pro on CF2), half KV cache as an opt-in | [REDLITE_DEV74_DECODE_KERNELS.md](REDLITE_DEV74_DECODE_KERNELS.md) |

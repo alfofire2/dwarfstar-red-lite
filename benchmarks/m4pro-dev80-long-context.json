@@ -1,0 +1,64 @@
+{
+ "machine": "Apple M4 Pro 24 GiB (AC, iogpu.wired_limit_mb 21741)",
+ "date": "2026-10-09",
+ "release": "0.9.5",
+ "model": "CF2",
+ "agent_hard_suite_64k": {
+  "note": "pi on the M4 Max, 900 s per task, temperature 0.3, --repo-ref v0.9.1",
+  "full_residency_kv_f16": {
+   "full_r1": {
+    "decode_tok_s": 50.7,
+    "prefill_tok_s": 307,
+    "tasks": "5/6"
+   },
+   "full_r2": {
+    "decode_tok_s": 35.4,
+    "prefill_tok_s": 218,
+    "tasks": "5/6"
+   }
+  },
+  "cache_4gib_float_kv_dev77": {
+   "decode_tok_s": [
+    24.8,
+    19.2,
+    17.6,
+    16.9
+   ],
+   "prefill_tok_s": [
+    233,
+    161,
+    146,
+    139
+   ]
+  }
+ },
+ "decode_bench_ms_per_token": {
+  "note": "decode-bench, 32 tokens, start position without prefill",
+  "cache_4096_float": {
+   "64": 45.07,
+   "16384": 44.45,
+   "32768": 50.21,
+   "49152": 53.2
+  },
+  "full_half": {
+   "64": 16.5,
+   "16384": 18.87,
+   "32768": 21.7,
+   "49152": 23.78
+  },
+  "full_float": {
+   "16384": 19.57,
+   "32768": 23.54
+  }
+ },
+ "prefill_attention_m4max_ms_per_layer_512_tokens": {
+  "0": 1.97,
+  "8192": 19.37,
+  "32768": 48.65,
+  "experts_same_runs": [
+   16.93,
+   20.01,
+   15.42
+  ]
+ }
+}
