@@ -497,13 +497,13 @@ class GpuLimitCliTests(unittest.TestCase):
 class KvF16TipTests(unittest.TestCase):
     """dev80: serve suggests --kv f16 when only the float KV cache keeps full residency out"""
 
-    def _serve(self, *extra: str) -> str:
+    def _serve(self, *extra: str, wired: int = 21741) -> str:
         with tempfile.TemporaryDirectory() as tmp:
             model = Path(tmp) / "m.gguf"
             model.write_bytes(b"GGUF")
             out = io.StringIO()
             with patch("redlite.cli.detect", return_value=_hw(24)), \
-                 patch("redlite.cli.gpu_wired_limit_mib", return_value=21741), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=wired), \
                  patch("redlite.planner.native_residency", return_value=NativeResidency(17316, 1083 * 1024 * 1024)), \
                  patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
                  patch.dict(os.environ, {}, clear=False), \
@@ -520,6 +520,7 @@ class KvF16TipTests(unittest.TestCase):
 
     def test_no_tip_when_full_residency_already_fits_or_half_kv_is_on(self):
         self.assertNotIn("--kv f16", self._serve("-c", "4096"))
+        self.assertNotIn("tip: with --kv f16", self._serve("-c", "65536", wired=0))   # default limit: gpu-limit first
         text = self._serve("-c", "65536", "--kv", "f16")
         self.assertIn("full expert residency", text)
         self.assertNotIn("tip: with --kv f16", text)

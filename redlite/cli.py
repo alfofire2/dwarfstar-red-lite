@@ -305,15 +305,15 @@ def _kv_f16_tip(hw, model, cache_mib, context: int) -> None:
     """dev80: when the float KV cache is what keeps full residency out at this context but the half one would fit (a
     24 GiB Mac at the raised GPU limit with a 64K agent window), say so: agent decode about doubles on the M4 Pro"""
     import os
-    from .planner import native_full_residency_fits, native_residency
+    from .planner import native_residency
     if os.environ.get("RL_KV_F16") == "1":
         return
     res = native_residency(model)
     if res is None or _full_residency(res, cache_mib):
         return
-    os.environ["RL_KV_F16"] = "1"
+    os.environ["RL_KV_F16"] = "1"   # the same choice `redlite serve --kv f16` would make
     try:
-        fits = native_full_residency_fits(hw.ram_bytes, res, gpu_wired_limit_mib(), context)
+        fits = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), context).full_residency
     finally:
         del os.environ["RL_KV_F16"]
     if fits:
