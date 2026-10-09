@@ -62,6 +62,21 @@ re-rendered token near the end of a 40K-token conversation meant prefilling all 
 Compaction restarts cannot be reused: the new conversation holds a summary and the recent turns at new positions.
 Section 5 tests a larger window, with which pi compacts later.
 
+**On the 24 GiB M4 Pro** (0.9.3 against 0.9.4 servers, 4 GiB expert cache, 64K window, pi on the M4 Max, four
+alternated runs, 2026-10-08/09):
+
+| Run | Rewinds (tokens kept) | Full recomputes over 4K | Prefill rate | Decode | Tasks |
+|---|---|---:|---:|---:|---:|
+| 0.9.3, run 1 | — | 1 (21K tokens, 63 s) | 233 tok/s | 24.8 tok/s | 6 / 6 |
+| 0.9.4, run 1 | 1 (33.0K) | 0 | 161 tok/s | 19.2 tok/s | 5 / 6 |
+| 0.9.3, run 2 | — | 0 | 146 tok/s | 17.6 tok/s | 5 / 6 |
+| 0.9.4, run 2 | 2 (5.4K, 21.6K) | 0 | 139 tok/s | 16.9 tok/s | 5 / 6 |
+
+- The rewinds kept 60K tokens that would have been prefilled again: 4–7 minutes at this machine's 140–230 tok/s.
+- The session totals cannot be compared. Over the three hours, prefill and decode slowed by a third whatever the
+  release; the first run was the fastest. The laptop throttled, with no thermal warning, as the M4 Max did in dev76.
+- The three failures are the same task (`two_bugs`, at the 900 s limit).
+
 ## 4. Red Lite 0.9.3 on the 24 GiB M4 Pro
 
 `decode-bench` and `redlite-generate`, CF2, alternated with 0.9.1, AC power, GPU limit 21,741 MiB:

@@ -91,6 +91,40 @@ them.
 - **dev77, a 128K agent window:** no compactions, but longer sessions, slower decode and 9 / 12 tasks against 11 / 12
   at 64K in two runs each. The default stays 64K ([DEV77](REDLITE_DEV77_AGENT_PREFILL.md)).
 
+- **dev78, the next layer's dense part encoded while the CPU waits for the GPU** (synchronous decode with a bounded
+  expert cache; committed after the layer's experts, so the GPU order and the output are unchanged): 57.3 against
+  57.0 tok/s (CF2, 4 GiB cache, M4 Max, three pairs). CPU encoding is not on the critical path. On the 48 GiB M4 Max
+  the "SSD" expert reads of repeated runs come from the macOS file cache (37 tok/s on the first run, 57 after), so
+  the bounded path has to be studied on the 24 GiB M4 Pro.
+- **dev78, the bounded-cache decode in one command buffer with an event hand-off per layer** (commit 0c1ddf0,
+  reverted; `RL_ENGINE_EVENTS=1`). Measured on the 24 GiB M4 Pro, CF2, 2026-10-09.
+  - **Where the bounded path's time goes.** With every expert resident:
+    - GPU-routed decode: 16.7 ms per token;
+    - the synchronous path (forced): 24.1 ms. Its 48 commit-and-wait round trips cost 7.4 ms per token.
+    - With the 4 GiB cache, 27.4 ms.
+  - **The idea.** After each layer's `rl_route` the GPU signals an `MTLSharedEvent` and waits. The CPU, spinning on
+    the event:
+    - loads the layer's missing experts and writes their slot addresses into the plan;
+    - prefetches the next layer's predicted experts;
+    - releases the GPU, which waits for the prefetch to end before its next selection, so the residency table never
+      changes under `rl_route`.
+  - **Correctness.** Greedy output was identical to the synchronous path and to full residency.
+  - **What it saved.** A model-free test measured one hand-off at 75 µs against 100–120 µs for a commit and a wait.
+    With every expert resident the event path took 20.4–20.7 ms per token, 3.5 ms less than the synchronous path.
+  - **What it cost.** On the six prompts of `small_mac_ab.sh` (median decode, alternated twice):
+
+    | Cache | Synchronous | Events |
+    |---|---:|---:|
+    | 4 GiB | 37.8 / 37.4 tok/s | 36.6 / 33.3 tok/s |
+    | 12 GiB | 35.8 / 35.4 tok/s | 32.0 / 31.7 tok/s |
+
+    Only one prompt gained (+11 %). Expert misses were identical.
+  - **Why.** The expert reads cost the event path more than the synchronous one. A hand-off that follows a long CPU
+    load costs ~150 µs (the GPU idles inside the command buffer), more than a commit and a wait. Without the
+    prefetch the reads were fully exposed (28.6 against 32.3 tok/s).
+  - **What would be needed.** A pool that loads experts without touching the residency table until the next
+    hand-off, so that the prefetch need not stop the GPU.
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
