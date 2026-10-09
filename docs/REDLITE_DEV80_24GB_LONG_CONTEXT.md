@@ -52,9 +52,58 @@ At 32K, attention is about 44 % of the prefill (12 attention layers at 48.7 ms a
 per 512 tokens). Three kernel rewrites gave nothing; they are in `WHAT_DID_NOT_WORK.md`. The next step there is the
 per-kernel GPU counters, not another rewrite.
 
+## 4. How much the half KV cache changes the answers (dev81)
+
+`redlite-engine logits` on the M4 Pro, CF2, every expert resident. The run reads 32,100 tokens with the batched prefill
+(32,000 tokens of Red Lite's Python and C sources, then prose from the dev docs that does not appear earlier), then
+decodes 500 more one at a time. The dumped logits of those 500 positions are compared:
+
+| Positions 32,100–32,599 | Mean KL | Median KL | Same top token | Perplexity |
+|---|---:|---:|---:|---:|
+| Half vs float KV cache | 0.0041 | 0.0013 | 487 / 500 (97.4 %) | 6.177 → 6.193 (+0.26 %) |
+| CF2 vs Bartowski's Coder IQ2_XXS, both float (the yardstick) | 0.205 | 0.088 | 407 / 500 (81 %) | 6.177 → 6.238 |
+
+The half cache moves the logits about 50 times less than choosing between two 2-bit files of the same model. At 1,100
+positions of code it gave a mean KL of 0.0029, 494 / 500 top tokens, and perplexity 3.475 → 3.443. dev74's "KL up to
+5.8e-2" was a maximum: here the maxima are 0.12 (32K) and 0.21 (1.1K), on single positions. Recommending
+`--kv f16` for 24 GiB agents (section 1) is therefore safe on this evidence. It stays opt-in.
+
+- **Two yardsticks that gave zero.** Prefill chunks of 512 against 2048 and `RL_PREFILL_MPS=0` both produced exactly
+  the same logits here, so neither measures numerical noise.
+- **A trap on the way.** `redlite-engine tokenize --text` prints at most 16,384 ids on its first line, then one line
+  per token with its id and its text. Collecting every number from that output built a text whose second half
+  repeated the first: perplexity 1.06, where both caches agree trivially. The corpus is now tokenized in pieces
+  of under 16K tokens.
+
+## 5. Eight value loads in flight in the decode attention (dev81)
+
+In the grouped split-K decode attention (`attn_gqa_split_g`), each thread reads one value per position and keeps four
+positions in flight (dev66). A half value is 2 bytes, so the half cache had half the bytes in flight of the float
+one. With eight positions in flight, the summation order is the same, and the logits are **bit-identical** to before
+with either cache: the 50 dumped positions after 32,550 tokens matched byte for byte on the M4 Pro. The kernel
+self-test passes.
+
+| `kernel-bench`, decode attention over 12 layers | Before | After |
+|---|---:|---:|
+| M4 Pro, half cache, 32K / 64K | 5.51 / 10.0 ms | 4.75 / 8.8 ms (−14 % / −12 %) |
+| M4 Pro, float cache, 32K / 64K | 7.03 / 13.0 ms | 6.72 / 12.8 ms (−4 % / −1.5 %) |
+| M4 Max, half cache, 32K / 128K | 2.85 / 9.1 ms | 2.48 / 8.1 ms (−13 % / −11 %) |
+| M4 Max, float cache, 32K / 128K | 3.75 / 13.6 ms | 3.53 / 13.4 ms (−6 % / −1.5 %) |
+
+`decode-bench` on the M4 Pro, every expert resident, two alternated pairs:
+
+| Decode | Before | After |
+|---|---:|---:|
+| Half cache, 32K / 48K | 45.6–46.1 / 42.0–42.1 tok/s | 47.6–47.8 / 43.5 tok/s (+4 % / +3.5 %) |
+| Float cache, 32K / 48K | 42.9–43.0 / 38.7–38.8 tok/s | 43.0–43.6 / 38.8 tok/s (≈ 0–1 %) |
+
+Not kept: 16-byte key loads for the half cache (eight halves per load, 5.95 against 5.52 ms at 32K), and sixteen value
+loads in flight (4.94 against 4.74 ms with half, the best being eight for both caches).
+
 ## Scope boundary
 
 - **Agent runs:** two runs per setup on one suite, one Mac; sessions at temperature 0.3 differ from run to run.
 - **Positions:** `decode-bench` jumps to the position without a prefill (random state), so it times the kernels, not
   the quality.
 - **The `--kv f16` tip:** it changes no default.
+- **The KV comparison:** one 500-position window of prose at 32K and one of code at 1.1K, on CF2 only.

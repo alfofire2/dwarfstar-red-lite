@@ -189,7 +189,18 @@ them.
   - **Next step.** It is not known whether loads, barriers or occupancy limit this kernel. The next step is the
     per-kernel GPU counters of a model-free capture in Xcode (`prefill-attn-bench`), not another rewrite.
 
+- **dev81, the half-cache decode attention:**
+  - 16-byte key loads (eight halves per load, as float4 for the float cache) took 5.95 against 5.52 ms at 32K (M4 Pro,
+    `kernel-bench`).
+  - Sixteen value loads in flight took 4.94 against 4.74 ms with eight.
+  - Eight value loads in flight were kept (`REDLITE_DEV80_24GB_LONG_CONTEXT.md`, section 5).
+
 ## Correctness traps (found, fixed or guarded)
+
+- **`redlite-engine tokenize --text` output is not just ids** (dev81). It prints at most 16,384 ids on its first
+  line, then one line per token with its id and its text. Taking every number in that output built a 34K-token text
+  whose second half repeated the first. A KV-cache comparison on it gave perplexity 1.06 and meaningless agreement.
+  Read only the first line, and tokenize texts longer than 16K tokens in pieces.
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
   reduction flipped an argmax at position 1135 of the long-context check (two logits 0.012

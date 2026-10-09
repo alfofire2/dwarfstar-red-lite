@@ -60,5 +60,111 @@
    20.01,
    15.42
   ]
+ },
+ "kv_f16_quality_dev81": {
+  "note": "redlite-engine logits, CF2 full residency, 32,100 tokens batched prefill then 500 decoded; KL(float||other) over the 500 dumped positions",
+  "half_vs_float_32k": {
+   "kl_mean": 0.004053,
+   "kl_median": 0.001306,
+   "kl_p99": 0.03106,
+   "kl_max": 0.1185,
+   "top1_agree": "487/500",
+   "ppl_float": 6.177,
+   "ppl_half": 6.1929
+  },
+  "cf2_vs_bartowski_iq2xxs_32k": {
+   "kl_mean": 0.205,
+   "kl_median": 0.08828,
+   "top1_agree": "407/500",
+   "ppl_cf2": 6.177,
+   "ppl_bartowski": 6.2379
+  },
+  "half_vs_float_1k": {
+   "kl_mean": 0.002916,
+   "kl_median": 1.796e-05,
+   "kl_max": 0.2147,
+   "top1_agree": "494/500",
+   "ppl_float": 3.4753,
+   "ppl_half": 3.4429
+  }
+ },
+ "dev81_value_loads_in_flight": {
+  "note": "attn_gqa_split_g, 4 -> 8 value loads in flight; bit-identical logits",
+  "kernel_bench_ms_12_layers": {
+   "m4pro_half_32k": [
+    5.51,
+    4.75
+   ],
+   "m4pro_half_64k": [
+    10.0,
+    8.8
+   ],
+   "m4pro_float_32k": [
+    7.03,
+    6.72
+   ],
+   "m4pro_float_64k": [
+    13.0,
+    12.82
+   ],
+   "m4max_half_32k": [
+    2.85,
+    2.48
+   ],
+   "m4max_half_128k": [
+    9.1,
+    8.08
+   ],
+   "m4max_float_32k": [
+    3.75,
+    3.53
+   ],
+   "m4max_float_128k": [
+    13.6,
+    13.39
+   ]
+  },
+  "decode_bench_m4pro_tok_s": {
+   "half_32k": [
+    [
+     45.6,
+     46.1
+    ],
+    [
+     47.6,
+     47.8
+    ]
+   ],
+   "half_48k": [
+    [
+     42.1,
+     42.0
+    ],
+    [
+     43.5,
+     43.5
+    ]
+   ],
+   "float_32k": [
+    [
+     42.9,
+     43.0
+    ],
+    [
+     43.6,
+     43.0
+    ]
+   ],
+   "float_48k": [
+    [
+     38.8,
+     38.7
+    ],
+    [
+     38.8,
+     38.8
+    ]
+   ]
+  }
  }
 }
