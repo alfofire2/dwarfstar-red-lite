@@ -89,15 +89,18 @@ multi-token-prediction head. When it sits in `models/` and every expert is resid
 answer is **exactly** the one plain decoding gives, with any sampler. Typical gain: +8 % (creative prose) to
 +30 % (code, arithmetic). `--no-mtp` turns it off.
 
-**24 GiB Macs: raise the GPU limit for +42 % (+60 % with MTP).** macOS lets the GPU use 17.76 GiB on a 24 GiB
-Mac, just under what every IQ2_XXS expert needs. `./bin/redlite doctor` prints the limit to set. After
-`sudo sysctl iogpu.wired_limit_mb=21741` (until the next reboot), `redlite chat` and `redlite serve --native` keep
-every expert resident and use MTP when its head is in `models/`:
-- 32.5 → 46 tok/s, 52.7 with MTP, on an M4 Pro 24 GiB;
+**24 GiB Macs: raise the GPU limit for +42–66 %.** macOS lets the GPU use 17.76 GiB on a 24 GiB Mac, just under
+what every expert needs. `./bin/redlite gpu-limit` (dev79) raises it to the value the model in `models/` needs, with
+`sudo`; `--boot` keeps it at every restart (a LaunchDaemon) and `--off` restores the macOS default. The limit is a
+ceiling, not a reservation. `redlite chat` and `redlite serve --native` then keep every expert resident and use MTP
+when its head is in `models/`; with the bounded cache they suggest the command:
+- on an M4 Pro 24 GiB with Red Lite 0.9.3: CF2 35.7 → 59.1 tok/s, Bartowski's IQ2_XXS 37.6 → 53.3 tok/s; MTP adds
+  about 15 % on the Instruct files (dev55);
 - footprint about 18–20 GiB, so close other heavy apps;
 - **long contexts** (dev55): the prefill chunk and MTP are sized to the limit, so a 32K context runs (without MTP).
   Below 40 GiB, MTP is skipped for answers starting past 8,192 positions, where it stops paying;
-- **for good:** a LaunchDaemon sets the limit at every boot, and `redlite doctor` recognizes it.
+- by hand: `sudo sysctl iogpu.wired_limit_mb=21741` (until the next reboot); `redlite doctor` shows the limit in
+  use and the one each model needs.
 
 **Long contexts in less memory: `--kv f16`** (dev75). `redlite chat` and `redlite serve --native` take `--kv f16`
 to keep the attention cache in half precision: 24 KiB per position instead of 48 (1.5 GiB instead of 3 at 64K),
