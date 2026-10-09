@@ -301,6 +301,26 @@ def _gpu_limit_tip(hw, model, cache_mib) -> None:
               "(on a 24 GiB M4 Pro, 36 -> 59 tok/s)")
 
 
+def _kv_f16_tip(hw, model, cache_mib, context: int) -> None:
+    """dev80: when the float KV cache is what keeps full residency out at this context but the half one would fit (a
+    24 GiB Mac at the raised GPU limit with a 64K agent window), say so: agent decode about doubles on the M4 Pro"""
+    import os
+    from .planner import native_residency
+    if os.environ.get("RL_KV_F16") == "1":
+        return
+    res = native_residency(model)
+    if res is None or _full_residency(res, cache_mib):
+        return
+    os.environ["RL_KV_F16"] = "1"   # the same choice `redlite serve --kv f16` would make
+    try:
+        fits = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), context).full_residency
+    finally:
+        del os.environ["RL_KV_F16"]
+    if fits:
+        print(f"[redlite] tip: with --kv f16 every expert stays resident at context {context} (on a 24 GiB M4 Pro, "
+              "coding-agent decode about doubles); its outputs can differ slightly from the float cache")
+
+
 GPU_LIMIT_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -475,6 +495,7 @@ def cmd_chat(args) -> int:
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _gpu_limit_tip(hw, model, cache_mib)
+    _kv_f16_tip(hw, model, cache_mib, args.context or 4096)
     batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
     _route_bias_env(model, cache_mib, args, lookup)
@@ -527,6 +548,7 @@ def _serve_native(args) -> int:
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
     _gpu_limit_tip(hw, model, cache_mib)
+    _kv_f16_tip(hw, model, cache_mib, plan_context)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
     _route_bias_env(model, cache_mib, args, lookup)

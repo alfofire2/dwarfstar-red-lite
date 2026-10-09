@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **24 GiB Macs, a 64K agent window with every expert resident** (dev80): after `redlite gpu-limit`, add `--kv f16`
+  to `redlite serve --native`. On the M4 Pro the hard agent suite decoded at 35–51 tok/s and prefilled at 218–307
+  tok/s, against 17–25 and 139–233 with the 4 GiB cache; 5 of 6 tasks per run, against 5–6 of 6.
+  - The server and `redlite chat` now print a tip when the float KV cache is what keeps full residency out.
+  - Measurements are in `docs/REDLITE_DEV80_24GB_LONG_CONTEXT.md`.
+- **Measured and not kept:** three rewrites of the prefill attention for long contexts (`WHAT_DID_NOT_WORK.md`).
+
+
 ## 0.9.5 — 2026-10-09
 
 **24 GiB Macs: one command for full speed.**

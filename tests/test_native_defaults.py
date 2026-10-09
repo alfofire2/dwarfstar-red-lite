@@ -1,4 +1,5 @@
 import contextlib
+import os
 import io
 from pathlib import Path
 import tempfile
@@ -491,3 +492,35 @@ class GpuLimitCliTests(unittest.TestCase):
                 return out.getvalue()
         self.assertIn("redlite gpu-limit", chat(24))
         self.assertNotIn("redlite gpu-limit", chat(48))
+
+
+class KvF16TipTests(unittest.TestCase):
+    """dev80: serve suggests --kv f16 when only the float KV cache keeps full residency out"""
+
+    def _serve(self, *extra: str, wired: int = 21741) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "m.gguf"
+            model.write_bytes(b"GGUF")
+            out = io.StringIO()
+            with patch("redlite.cli.detect", return_value=_hw(24)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=wired), \
+                 patch("redlite.planner.native_residency", return_value=NativeResidency(17316, 1083 * 1024 * 1024)), \
+                 patch("redlite.runner.native_server", return_value=Path("/x/redlite-server")), \
+                 patch.dict(os.environ, {}, clear=False), \
+                 contextlib.redirect_stdout(out):
+                os.environ.pop("RL_KV_F16", None)
+                self.assertEqual(main(["serve", str(model), "--native", "--dry-run", *extra]), 0)
+            return out.getvalue()
+
+    def test_64k_at_the_raised_limit_suggests_half_kv(self):
+        text = self._serve("-c", "65536")
+        self.assertIn("--cache-mib 4096", text)
+        self.assertIn("--kv f16", text)
+        self.assertNotIn("RL_KV_F16", os.environ)   # the check leaves the environment as it was
+
+    def test_no_tip_when_full_residency_already_fits_or_half_kv_is_on(self):
+        self.assertNotIn("--kv f16", self._serve("-c", "4096"))
+        self.assertNotIn("tip: with --kv f16", self._serve("-c", "65536", wired=0))   # default limit: gpu-limit first
+        text = self._serve("-c", "65536", "--kv", "f16")
+        self.assertIn("full expert residency", text)
+        self.assertNotIn("tip: with --kv f16", text)

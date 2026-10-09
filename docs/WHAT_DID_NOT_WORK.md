@@ -169,6 +169,26 @@ them.
   - **With every expert resident** the event path is not used: `decode-bench` gave 59.9 tok/s with and without the
     variable (two pairs).
 
+- **dev80, three rewrites of the prefill attention for long contexts** (`attn_fa_b2`; M4 Max, CF2,
+  `prefill-kernel-bench`, 512 tokens, one attention layer).
+  - **Why attention matters here.** At position 0 attention takes 2.0 ms against 16.9 ms of routed experts per layer.
+    At 8K it is 19.4 against 20.0, and at 32K 48.7 against 15.4. With 12 attention layers and 48 expert layers,
+    attention is about 44 % of the prefill at 32K, the contexts coding agents work at.
+  - **Not memory-bound.** The kernel runs at ~6 TFLOPS. The half-precision KV cache (`RL_KV_F16=1`) changed 32K only
+    from 42.5 to 41.1 ms.
+  - **The variants:**
+
+    | Variant | 32K | 8K |
+    |---|---:|---:|
+    | `attn_fa_b2` (kept) | 42.2–44.3 ms | 17.0–22.0 ms |
+    | Query rows read from device memory instead of a 16 KiB threadgroup copy (more threadgroups per core) | 46.6–50.9 ms | 18.0 ms |
+    | No rescale product when no row's maximum moves (bit-identical) | 42.2 ms | 18.4 ms |
+    | 64-position key blocks, 16 × 16 score blocks per simdgroup (half the barriers and softmax passes per key) | 44.8–48.8 ms | 17.5–21.7 ms |
+
+    The variants were alternated in pairs with 15 s of cooling, and back-to-back runs vary by up to 25 % at 8K.
+  - **Next step.** It is not known whether loads, barriers or occupancy limit this kernel. The next step is the
+    per-kernel GPU counters of a model-free capture in Xcode (`prefill-attn-bench`), not another rewrite.
+
 ## Correctness traps (found, fixed or guarded)
 
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
