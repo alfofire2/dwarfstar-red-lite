@@ -191,6 +191,11 @@ them.
 
 ## Correctness traps (found, fixed or guarded)
 
+- **`redlite-engine tokenize --text` output is not just ids** (dev81). It prints at most 16,384 ids on its first
+  line, then one line per token with its id and its text. Taking every number in that output built a 34K-token text
+  whose second half repeated the first. A KV-cache comparison on it gave perplexity 1.06 and meaningless agreement.
+  Read only the first line, and tokenize texts longer than 16K tokens in pieces.
+
 - **Single accumulator in the matrix expert kernel (dev30).** Rounding along the 2048-column
   reduction flipped an argmax at position 1135 of the long-context check (two logits 0.012
   apart, after the documented router near-tie at 1035). Fixed with four partial accumulators;

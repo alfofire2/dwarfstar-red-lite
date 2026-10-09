@@ -60,5 +60,32 @@
    20.01,
    15.42
   ]
+ },
+ "kv_f16_quality_dev81": {
+  "note": "redlite-engine logits, CF2 full residency, 32,100 tokens batched prefill then 500 decoded; KL(float||other) over the 500 dumped positions",
+  "half_vs_float_32k": {
+   "kl_mean": 0.004053,
+   "kl_median": 0.001306,
+   "kl_p99": 0.03106,
+   "kl_max": 0.1185,
+   "top1_agree": "487/500",
+   "ppl_float": 6.177,
+   "ppl_half": 6.1929
+  },
+  "cf2_vs_bartowski_iq2xxs_32k": {
+   "kl_mean": 0.205,
+   "kl_median": 0.08828,
+   "top1_agree": "407/500",
+   "ppl_cf2": 6.177,
+   "ppl_bartowski": 6.2379
+  },
+  "half_vs_float_1k": {
+   "kl_mean": 0.002916,
+   "kl_median": 1.796e-05,
+   "kl_max": 0.2147,
+   "top1_agree": "494/500",
+   "ppl_float": 3.4753,
+   "ppl_half": 3.4429
+  }
  }
 }
