@@ -8,7 +8,6 @@
 #   bias05             RL_ROUTE_CACHE_BIAS=0.5 (cache-aware routing, changes outputs; engine PPL +0.0 % on the M4 Max)
 #   nocache            RL_POOL_NOCACHE=1 (expert reads bypass the page cache)
 #   noprefetch         RL_ENGINE_PREFETCH=0
-#   events             RL_ENGINE_EVENTS=1 (dev78 per-layer event hand-off in one command buffer)
 # usage: scripts/dev/small_mac_ab.sh MODEL [config ...]
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -18,7 +17,7 @@ CONFIGS=("$@"); [ ${#CONFIGS[@]} -eq 0 ] && CONFIGS=(default uniform bias05 noca
 env_for() {
   case "$1" in
     default) echo "" ;; uniform) echo "RL_POOL_CLASSES=0" ;; bias05) echo "RL_ROUTE_CACHE_BIAS=0.5" ;;
-    nocache) echo "RL_POOL_NOCACHE=1" ;; noprefetch) echo "RL_ENGINE_PREFETCH=0" ;; events) echo "RL_ENGINE_EVENTS=1" ;; *) echo "BAD" ;;
+    nocache) echo "RL_POOL_NOCACHE=1" ;; noprefetch) echo "RL_ENGINE_PREFETCH=0" ;; *) echo "BAD" ;;
   esac
 }
 echo "machine: $(sysctl -n machdep.cpu.brand_string) $(($(sysctl -n hw.memsize) / 1073741824)) GiB  commit $(git -C "$ROOT" rev-parse --short HEAD)"
