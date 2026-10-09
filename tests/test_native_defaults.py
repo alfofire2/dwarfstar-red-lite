@@ -425,3 +425,69 @@ class HalfKvPlanTests(unittest.TestCase):
         p = build_parser()
         self.assertEqual(p.parse_args(["chat"]).kv, "f32")
         self.assertEqual(p.parse_args(["serve", "--native", "--kv", "f16"]).kv, "f16")
+
+
+class GpuLimitCliTests(unittest.TestCase):
+    """dev79: redlite gpu-limit and the chat tip"""
+
+    def _gpu_limit(self, *extra: str, daemon_exists: bool = False, wired: int = 0) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            daemon = Path(tmp) / "com.redlite.gpulimit.plist"
+            if daemon_exists:
+                daemon.write_text("x")
+            out = io.StringIO()
+            with patch("redlite.cli.detect", return_value=_hw(24)), \
+                 patch("redlite.cli._gpu_limit_need", return_value=(19000, 21741)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=wired), \
+                 patch("redlite.cli.GPU_LIMIT_DAEMON", daemon), \
+                 contextlib.redirect_stdout(out):
+                self.assertEqual(main(["gpu-limit", "--dry-run", *extra]), 0)
+            return out.getvalue()
+
+    def test_sets_the_mtp_need_until_reboot(self):
+        text = self._gpu_limit()
+        self.assertIn("$ sudo /usr/sbin/sysctl iogpu.wired_limit_mb=21741", text)
+        self.assertNotIn("launchctl", text)
+
+    def test_boot_installs_the_launch_daemon(self):
+        text = self._gpu_limit("--boot", "--mib", "20000")
+        self.assertIn("iogpu.wired_limit_mb=20000", text)
+        self.assertIn("sudo install -m 644 -o root -g wheel", text)
+        self.assertIn("$ sudo launchctl bootstrap system", text)
+        self.assertNotIn("bootout", text)
+        self.assertIn("bootout", self._gpu_limit("--boot", daemon_exists=True))   # replaced, not doubled
+
+    def test_off_restores_the_default_and_removes_the_daemon(self):
+        self.assertIn("iogpu.wired_limit_mb=0", self._gpu_limit("--off"))
+        text = self._gpu_limit("--off", daemon_exists=True)
+        self.assertIn("bootout system/com.redlite.gpulimit", text)
+        self.assertIn("sudo rm -f", text)
+
+    def test_nothing_to_do_when_the_limit_is_already_enough(self):
+        text = self._gpu_limit(wired=21741)
+        self.assertIn("nothing to do", text)
+        self.assertNotIn("sysctl", text)
+
+    def test_refuses_a_limit_that_leaves_macos_less_than_2_gib(self):
+        with patch("redlite.cli.detect", return_value=_hw(24)), contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["gpu-limit", "--dry-run", "--mib", "23000"])
+        with patch("redlite.cli.detect", return_value=_hw(24)), contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["gpu-limit", "--dry-run", "--mib", "0"])
+
+    def test_chat_tip_only_with_a_bounded_cache(self):
+        def chat(ram_gib: float) -> str:
+            with tempfile.TemporaryDirectory() as tmp:
+                model = Path(tmp) / "m.gguf"
+                model.write_bytes(b"GGUF")
+                out = io.StringIO()
+                with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                     patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
+                     patch("redlite.planner.native_residency", return_value=NativeResidency(17316, int(1.06 * GIB))), \
+                     patch("redlite.runner.native_generate", return_value=Path("/x/redlite-generate")), \
+                     contextlib.redirect_stdout(out):
+                    self.assertEqual(main(["chat", str(model), "--dry-run"]), 0)
+                return out.getvalue()
+        self.assertIn("redlite gpu-limit", chat(24))
+        self.assertNotIn("redlite gpu-limit", chat(48))

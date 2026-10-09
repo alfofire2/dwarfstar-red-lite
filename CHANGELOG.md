@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`redlite gpu-limit`** (dev79): raises macOS's GPU memory limit to what full residency needs on a Mac below
+  40 GiB (with `sudo`). `--boot` installs the LaunchDaemon that sets it at every restart, and `--off` restores the
+  default. It does nothing when the limit is already enough, and refuses limits that leave macOS less than 2 GiB.
+  - With the bounded expert cache, `redlite chat` and `redlite serve --native` now print a one-line tip pointing to it.
+    On the 24 GiB M4 Pro, the raised limit gives 59 tok/s against 36 with the 4 GiB cache.
+  - Verified on the M4 Pro: the dry runs, the "nothing to do" case and the real `sysctl` path.
+- **Measured and not kept** (`docs/WHAT_DID_NOT_WORK.md`): decoding a bounded-cache token in one command buffer with
+  an event hand-off per layer (dev78, dev79). It is 7–10 % slower than the synchronous path on the 24 GiB M4 Pro.
+  With identical work, the GPU runs the same kernels more slowly after waiting for the CPU.
+
+
 ## 0.9.4 — 2026-10-08
 
 **Coding agents: no more recomputing whole conversations.**

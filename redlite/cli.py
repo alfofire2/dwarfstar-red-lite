@@ -258,26 +258,108 @@ def _mtp_for(model, cache_mib, args, quiet: bool = False) -> str | None:
 GPU_LIMIT_DAEMON = Path("/Library/LaunchDaemons/com.redlite.gpulimit.plist")   # dev55b: sets the limit at boot
 
 
-def _print_gpu_advice(hw, wired: int) -> None:
-    """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
+def _gpu_limit_need(hw, model=None) -> tuple[int, int | None] | None:
+    """dev51: (GPU limit full residency needs, the same with MTP when its head is in models/) on a Mac below 40 GiB
+    where it fits under RAM - 2 GiB; None otherwise. `model` defaults to the first small native model in models/."""
     from .planner import NATIVE_MTP_FILE, NATIVE_SMALL_MODELS, native_full_residency_mib, native_residency
-    model = next((NATIVE_MODELS_DIR / n for n in NATIVE_SMALL_MODELS if (NATIVE_MODELS_DIR / n).is_file()), None)
+    if model is None:
+        model = next((NATIVE_MODELS_DIR / n for n in NATIVE_SMALL_MODELS if (NATIVE_MODELS_DIR / n).is_file()), None)
     if hw.ram_gib >= 40 or model is None:
-        return
+        return None
     res = native_residency(model)
     if res is None:
-        return
+        return None
     need = native_full_residency_mib(res)
     head = NATIVE_MODELS_DIR / NATIVE_MTP_FILE
     need_mtp = native_full_residency_mib(res, mtp=True) if head.is_file() else None
     if need > hw.ram_bytes / (1024 * 1024) - 2048:
+        return None
+    return need, need_mtp
+
+
+def _print_gpu_advice(hw, wired: int) -> None:
+    """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
+    target = _gpu_limit_need(hw)
+    if target is None:
         return
+    need, need_mtp = target
     print(f"Full residency: needs a GPU limit of {need} MiB"
           + (f" ({need_mtp} MiB with MTP)" if need_mtp else "")
           + f"; now {'OK' if wired >= need else 'not enabled'}")
     if wired < need:
-        print(f"  enable until reboot: sudo sysctl iogpu.wired_limit_mb={need_mtp or need}")
-        print("  enable at every boot: the LaunchDaemon in docs/REDLITE_DEV51_24GB_DECODE.md")
+        print("  enable until reboot: redlite gpu-limit   (at every boot: redlite gpu-limit --boot)")
+
+
+def _gpu_limit_tip(hw, model, cache_mib) -> None:
+    """dev79: with a bounded cache on a Mac where a raised GPU limit would hold every expert, say how to raise it"""
+    from .planner import native_residency
+    if _full_residency(native_residency(model), cache_mib):
+        return
+    target = _gpu_limit_need(hw, model)
+    if target is not None and gpu_wired_limit_mib() < target[0]:
+        print("[redlite] tip: `redlite gpu-limit` raises the GPU memory limit so every expert stays resident "
+              "(on a 24 GiB M4 Pro, 36 -> 59 tok/s)")
+
+
+GPU_LIMIT_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.redlite.gpulimit</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/sbin/sysctl</string><string>iogpu.wired_limit_mb={mib}</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+"""
+
+
+def cmd_gpu_limit(args) -> int:
+    """dev79: raise macOS's GPU memory limit (iogpu.wired_limit_mb) to what full residency needs, with sudo; --boot also
+    installs the LaunchDaemon of dev55b, --off restores the macOS default and removes it. A ceiling, not a reservation."""
+    import tempfile
+    hw = detect(NATIVE_MODELS_DIR)
+    _require_apple(hw)
+    daemon_cmds = [["sudo", "launchctl", "bootout", "system/com.redlite.gpulimit"], ["sudo", "rm", "-f", str(GPU_LIMIT_DAEMON)]]
+    if args.off:
+        cmds = [["sudo", "/usr/sbin/sysctl", "iogpu.wired_limit_mb=0"]] + (daemon_cmds if GPU_LIMIT_DAEMON.is_file() else [])
+        plist = None
+    else:
+        target = args.mib
+        if target is None:
+            need = _gpu_limit_need(hw)
+            if need is None:
+                _die("No GPU limit to set: this Mac has 40 GiB or more, no small native model is in models/, "
+                     "or every expert does not fit. Pass --mib N to set one anyway.")
+            target = need[1] or need[0]
+            now = gpu_wired_limit_mib()
+            if now >= target and (not args.boot or GPU_LIMIT_DAEMON.is_file()):
+                print(f"[redlite] GPU limit already {now} MiB, enough for every expert (needs {target}); nothing to do")
+                return 0
+        if target < 1024:
+            _die(f"--mib {target}: give the limit in MiB (redlite gpu-limit --off restores the macOS default)")
+        if target >= hw.ram_bytes / (1024 * 1024) - 2048:
+            _die(f"{target} MiB leaves less than 2 GiB of RAM to macOS; refusing.")
+        cmds = [["sudo", "/usr/sbin/sysctl", f"iogpu.wired_limit_mb={target}"]]
+        plist = GPU_LIMIT_PLIST.format(mib=target) if args.boot else None
+        print(f"[redlite] GPU memory limit {target} MiB: a ceiling, the memory stays free for other apps when Red Lite "
+              "is not running", flush=True)
+    if plist is not None:
+        tmp = Path(tempfile.mkdtemp()) / "com.redlite.gpulimit.plist"
+        tmp.write_text(plist)
+        cmds += ([daemon_cmds[0]] if GPU_LIMIT_DAEMON.is_file() else []) + [
+            ["sudo", "install", "-m", "644", "-o", "root", "-g", "wheel", str(tmp), str(GPU_LIMIT_DAEMON)],
+            ["sudo", "launchctl", "bootstrap", "system", str(GPU_LIMIT_DAEMON)]]
+    for c in cmds:
+        print("$ " + " ".join(c), flush=True)
+        if args.dry_run:
+            continue
+        r = subprocess.run(c)
+        if r.returncode != 0 and c[2] != "bootout":   # bootout of a daemon that is not loaded is not an error
+            _die(f"command failed ({r.returncode}): {' '.join(c)}")
+    if not args.dry_run:
+        now = gpu_wired_limit_mib()
+        print(f"[redlite] GPU limit now {f'{now} MiB' if now else 'the macOS default'}"
+              + ("" if args.off else ", set again at every boot" if GPU_LIMIT_DAEMON.is_file() else ", until the next reboot"))
+    return 0
 
 
 ROUTE_CACHE_BIAS_DEFAULT = "0.5"
@@ -392,6 +474,7 @@ def cmd_chat(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _gpu_limit_tip(hw, model, cache_mib)
     batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
     _route_bias_env(model, cache_mib, args, lookup)
@@ -443,6 +526,7 @@ def _serve_native(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), plan_context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _gpu_limit_tip(hw, model, cache_mib)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)
     lookup = _lookup_for(model, cache_mib, mtp, args)
     _route_bias_env(model, cache_mib, args, lookup)
@@ -500,6 +584,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_doctor)
 
+    s = sub.add_parser("gpu-limit", help="Raise the GPU memory limit so every expert stays resident (Macs below 40 GiB, sudo)")
+    s.add_argument("--boot", action="store_true", help="also set it at every boot (installs a LaunchDaemon)")
+    s.add_argument("--off", action="store_true", help="restore the macOS default and remove the LaunchDaemon")
+    s.add_argument("--mib", type=int, default=None, help="the limit in MiB (default: what full residency needs)")
+    s.add_argument("--dry-run", action="store_true", help="print the commands without running them")
+    s.set_defaults(func=cmd_gpu_limit)
     s = sub.add_parser("pressure", help="Show current macOS memory pressure and swap")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_pressure)

@@ -75,7 +75,11 @@ alternated runs, 2026-10-08/09):
 - The rewinds kept 60K tokens that would have been prefilled again: 4–7 minutes at this machine's 140–230 tok/s.
 - The session totals cannot be compared. Over the three hours, prefill and decode slowed by a third whatever the
   release; the first run was the fastest. The laptop throttled, with no thermal warning, as the M4 Max did in dev76.
-- The three failures are the same task (`two_bugs`, at the 900 s limit).
+- The three failures are the same task (`two_bugs`, at the 900 s limit). It does not loop; it is long:
+  - the run 2 of 0.9.4 prefilled 42K new tokens (320 s) and generated 8.8K tokens at 15.6 tok/s (566 s), at
+    contexts of 20–45K;
+  - on the M4 Max the same task takes 230–600 s, and fails its check in half of the CF2 runs there too (6 of 12);
+  - agent runs on a 24 GiB Mac with the 4 GiB cache need `agent_eval.py --timeout 1800`.
 
 ## 4. Red Lite 0.9.3 on the 24 GiB M4 Pro
 
