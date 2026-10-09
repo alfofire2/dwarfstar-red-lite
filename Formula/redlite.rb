@@ -1,9 +1,9 @@
 class Redlite < Formula
   desc "Native Metal runtime for Qwen3-Next-80B-A3B on Apple Silicon Macs"
   homepage "https://github.com/alfofire2/dwarfstar-red-lite"
-  url "https://github.com/alfofire2/dwarfstar-red-lite/releases/download/v0.9.5/redlite-0.9.5-macos-arm64.tar.gz"
-  version "0.9.5"
-  sha256 "661ba22c9270164e4cfc18ac952beb5ca21d81c153e69a882bfa0898b6865b56"
+  url "https://github.com/alfofire2/dwarfstar-red-lite/releases/download/v0.9.6/redlite-0.9.6-macos-arm64.tar.gz"
+  version "0.9.6"
+  sha256 "8711dae7fe92f532b91a7aa6c8245e6343d2401d1b3e82124dea28b9d8fcfda6"
   license "MIT"
 
   depends_on arch: :arm64
