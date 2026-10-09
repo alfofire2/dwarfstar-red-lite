@@ -93,6 +93,11 @@ struct rl_metal_engine {
     id<MTLComputePipelineState> p_rows2_q4k, p_rows2_q6k, p_rows2_iq2xxs, p_rows2_f32, p_rows2_q5k, p_r2_q5k2;   /* dev22 sub-block decode GEMV */
     int rows2;
     id<MTLBuffer> abort, abort_zero;
+    id<MTLSharedEvent> step_event;   /* dev78: per-layer CPU hand-off inside one command buffer (RL_ENGINE_EVENTS=1) */
+    uint64_t step_event_value, step_event_base;
+    int step_event_on;   /* emit_layer_experts encodes the hand-off */
+    id<MTLBuffer> step_pred[2];   /* next-layer router logits, by layer parity (prefetch prediction) */
+    int events, ev_yield;
     int prefetch;                      /* dev23: RL_ENGINE_PREFETCH != 0 (default): pre-gated expert prefetch in the synchronous decode */
     id<MTLBuffer> pred_logits;         /* next layer's router logits from this layer's FFN input */
     id<MTLBuffer> pred_logits_alt;     /* dev72: the same for the second row of a bounded-cache verify */

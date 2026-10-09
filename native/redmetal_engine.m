@@ -1388,6 +1388,8 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         const char *spec_env = getenv("RL_ENGINE_SPECULATIVE");
         m->spec_enabled = (!spec_env || atoi(spec_env) != 0) && !m->profile && in->n_expert <= 512u && in->top_k <= 64u;
         m->last_token_missed = 1;
+        m->events = getenv("RL_ENGINE_EVENTS") ? atoi(getenv("RL_ENGINE_EVENTS")) : 0;
+        m->ev_yield = getenv("RL_EV_YIELD") != NULL;   /* 3: dev78 (route waits for the prefetch) */
         if (m->spec_enabled) {
             char serr[256];
             if (!rl_native_metal_residency_enable(m->experts, in->n_layer, in->n_expert, serr, sizeof(serr))) m->spec_enabled = 0;
@@ -1800,6 +1802,16 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
     const int fused = m->fuse_tail && m->p_moe_tail;
     const NSUInteger slots_off = (NSUInteger)l * 512u * sizeof(uint64_t), weights_off = (NSUInteger)l * 512u * sizeof(float);
     const NSUInteger ids_off = (NSUInteger)l * 64u * sizeof(uint32_t), miss_off = (NSUInteger)l * sizeof(uint32_t);
+    if (m->step_event_on) {
+        /* dev78: the next layer's router on this FFN input (the CPU prefetches its experts while this layer runs).
+         * dev79: rl_route does not wait for that prefetch: it never evicts this layer's experts (protect_layer) and
+         * publishes a residency entry only once its expert is loaded */
+        if (m->step_pred[0] && l + 1u < in->n_layer)
+            emit_rows(m, em_enc(em), &m->layers[l + 1u].router, m->ffn_in, m->step_pred[l & 1u]);
+        if (l > 0u && m->events == 3) { em_close(em); [em->cb encodeWaitForEvent:m->step_event value:m->step_event_base + 3u * (l - 1u) + 3u]; }
+        if (l > 0u && m->events == 4) em_close(em);   /* dev79 debug: the encoder boundary of the dev78 wait, without the wait */
+        if (l > 0u && m->events == 5) { em_close(em); [em->cb encodeWaitForEvent:m->step_event value:m->step_event_base + 3u * (l - 1u) + 2u]; }   /* debug: a wait already satisfied */
+    }
     if (shared_tail) em_group(em, 1);   /* dev74: the selection and the shared SiLU read different buffers */
     {
         id<MTLComputeCommandEncoder> enc = em_enc(em);
@@ -1812,6 +1824,11 @@ static int emit_layer_experts(rl_engine *e, emitter *em, uint32_t l, id<MTLBuffe
         [enc setBuffer:m->plan_miss offset:miss_off atIndex:5];
         [enc setBytes:&experts length:4 atIndex:6]; [enc setBytes:&topk length:4 atIndex:7]; [enc setBytes:&m->route_bias length:4 atIndex:8];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)]; rl_after_dispatch(enc);
+    }
+    if (m->step_event_on) {   /* dev78: after the selection signal base + 3l + 1 and wait for base + 3l + 2 */
+        em_close(em);
+        [em->cb encodeSignalEvent:m->step_event value:m->step_event_base + 3u * l + 1u];
+        [em->cb encodeWaitForEvent:m->step_event value:m->step_event_base + 3u * l + 2u];
     }
     rl_native_layer_info li;
     rl_expert_layout lay;
@@ -2522,6 +2539,157 @@ done:
     return result;
 }
 
+/* dev78 (RL_ENGINE_EVENTS=1, bounded cache): the whole token in one command buffer as on the GPU-routed path, but a
+ * layer that selects a non-resident expert no longer ends it. After each layer's rl_route the GPU signals an event and
+ * waits; the CPU, spinning on the event, loads that layer's missing experts (GPU-selected ids and weights), writes
+ * their slot addresses into the plan, clears the early-out flag and lets the GPU go on. Every layer pays one event
+ * hand-off instead of a commit and a wait. */
+static int step_events(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
+                       rl_engine_step_stats *stats, char *error, size_t cap) {
+    rl_backend_state *s = &e->gpu;
+    const rl_engine_info *in = &e->info;
+    const uint32_t hidden = in->hidden, topk = in->top_k, experts = in->n_expert, L = in->n_layer;
+    const size_t hb = (size_t)hidden * sizeof(float);
+    const double start = rl_engine_now_ms();
+    id<MTLBuffer> resident = (__bridge id<MTLBuffer>)rl_native_metal_residency_table(m->experts);
+    if (!resident) { set_error(error, cap, "residency table unavailable"); return 0; }
+    if (!m->step_event) { m->step_event = [m->dev newSharedEvent]; m->step_event_value = 0; }
+    if (!m->step_event) { set_error(error, cap, "shared event unavailable"); return 0; }
+    rl_native_topk_plan plan;
+    memset(&plan, 0, sizeof(plan));
+    int result = 0, ok = 1;
+    uint32_t missed_layers = 0;
+    if (m->prefetch && !m->step_pred[0]) {
+        m->step_pred[0] = new_buf(m, (size_t)experts * sizeof(float));
+        m->step_pred[1] = new_buf(m, (size_t)experts * sizeof(float));
+        if (!m->step_pred[0] || !m->step_pred[1]) m->step_pred[0] = m->step_pred[1] = nil;
+    }
+    float *probs = (float *)malloc((size_t)experts * sizeof(float));
+    if (!probs) { set_error(error, cap, "router scratch allocation failed"); return 0; }
+    uint32_t pred_ids[RL_ENGINE_MAX_TOPK];
+    float pred_w[RL_ENGINE_MAX_TOPK], pred_zero[RL_ENGINE_MAX_TOPK];
+    memset(pred_zero, 0, sizeof(pred_zero));
+    /* per layer l: the GPU signals base + 3l + 1 after its selection, waits for + 3l + 2 (misses loaded) and, before
+     * the next selection, for + 3l + 3 (prefetch of layer l + 1 over) */
+    const uint64_t base = m->step_event_value;
+    m->step_event_value = base + 3u * L + 3u;
+    m->step_event_base = base;
+    @autoreleasepool {
+        if (!rl_engine_embed_token(e, token, (float *)m->x.contents, error, cap)) { free(probs); return 0; }
+        memcpy(s->embed, m->x.contents, hb);
+        stats->embed_ms = rl_engine_now_ms() - start;
+        const uint32_t *miss = (const uint32_t *)m->plan_miss.contents;
+        const uint32_t *ids = (const uint32_t *)m->plan_ids.contents;
+        const float *weights = (const float *)m->plan_weights.contents;
+        uint64_t *slots = (uint64_t *)m->plan_slots.contents;
+        const uint64_t *table = (const uint64_t *)resident.contents;
+        volatile uint32_t *abort_flag = (volatile uint32_t *)m->abort.contents;
+        abort_flag[0] = 0u;
+        emitter em = { m, [m->queue commandBuffer], nil, m->abort };
+        const double e0 = rl_engine_now_ms();
+        m->step_event_on = 1;
+        const int encoded = emit_routed_layers(e, &em, 0u, resident, s->position, logits != NULL, error, cap);
+        m->step_event_on = 0;
+        em_close(&em);
+        if (!encoded) { free(probs); return 0; }
+        id<MTLCommandBuffer> cb = em.cb;
+        [cb commit];
+        id<MTLSharedEvent> ev = m->step_event;
+        static double dbg_spin, dbg_handle, dbg_pf, dbg_enc, dbg_tail, dbg_total; static uint64_t dbg_tok, dbg_false, dbg_missl, dbg_loads0;
+        dbg_enc += rl_engine_now_ms() - e0;
+        const uint64_t loads_before = rl_native_metal_expert_loads(m->experts);
+        for (uint32_t l = 0; l < L && ok; ++l) {
+            const double d0 = rl_engine_now_ms();
+            while (ev.signaledValue < base + 3u * l + 1u) {
+                if (cb.status >= MTLCommandBufferStatusCompleted) { ok = 0; set_error(error, cap, "GPU stopped before a layer hand-off"); break; }
+                if (m->ev_yield) __builtin_arm_yield();
+            }
+            if (!ok) break;
+            const double d1 = rl_engine_now_ms();
+            dbg_spin += d1 - d0;
+            const uint64_t lb = rl_native_metal_expert_loads(m->experts);
+            /* the GPU has finished every earlier layer: their experts may be evicted now */
+            if (plan.active && !rl_native_metal_release_topk(m->experts, &plan, NULL, error, cap)) { ok = 0; break; }
+            const uint32_t *lid = ids + (size_t)l * 64u;
+            /* the plan pins this layer's experts (loading the missing ones) until the GPU is past them */
+            if (!rl_native_metal_prepare_topk(m->experts, &e->expert_map, l, lid, weights + (size_t)l * 512u, topk, &plan, error, cap)) { ok = 0; break; }
+            if (miss[l]) {
+                missed_layers++;
+                for (uint32_t k = 0; k < topk && ok; ++k) {
+                    slots[(size_t)l * 512u + k] = table[(size_t)l * experts + lid[k]];
+                    if (!slots[(size_t)l * 512u + k]) { set_error(error, cap, "loaded expert has no slot address"); ok = 0; }
+                }
+                if (!ok) break;
+                abort_flag[0] = 0u;
+            }
+            if (miss[l]) { dbg_missl++; if (rl_native_metal_expert_loads(m->experts) == lb) dbg_false++; }
+            if (m->events != 6) ev.signaledValue = base + 3u * l + 2u;
+            const double d2 = rl_engine_now_ms();
+            dbg_handle += d2 - d1;
+            /* while the GPU runs this layer's experts and the next layer's dense part: load the experts the next
+             * layer's router predicts from this FFN input (this layer's experts stay pinned by the plan) */
+            if (m->step_pred[0] && l + 1u < L) {
+                const double p0 = rl_engine_now_ms();
+                rl_native_topk_plan pplan;
+                memset(&pplan, 0, sizeof(pplan));
+                rl_native_metal_protect_layer(m->experts, l + 1u);
+                const int pok = rl_native_router_select_softmax_topk((const float *)m->step_pred[l & 1u].contents, experts, topk, pred_ids, pred_w, probs, error, cap) &&
+                    rl_native_metal_prepare_topk(m->experts, &e->expert_map, l + 1u, pred_ids, pred_zero, topk, &pplan, error, cap) &&
+                    rl_native_metal_release_topk(m->experts, &pplan, NULL, error, cap);
+                rl_native_metal_protect_layer(m->experts, UINT32_MAX);
+                if (!pok) { ok = 0; break; }
+                m->prefetch_ms += rl_engine_now_ms() - p0;
+            }
+            if (m->events == 6) ev.signaledValue = base + 3u * l + 2u;   /* dev79: one hand-off: misses and prefetch while the GPU waits */
+            ev.signaledValue = base + 3u * l + 3u;
+            dbg_pf += rl_engine_now_ms() - d2;
+        }
+        dbg_loads0 += rl_native_metal_expert_loads(m->experts) - loads_before;
+        const double t0 = rl_engine_now_ms();
+        if (getenv("RL_DEBUG_EV") && ++dbg_tok % 100u == 0u)
+            fprintf(stderr, "[ev] %llu tokens: per token spin %.2f ms, hand-off %.2f ms, prefetch %.2f ms; missed layers %.1f (no load %.1f), loads %.1f\n",
+                (unsigned long long)dbg_tok, dbg_spin / dbg_tok, dbg_handle / dbg_tok, dbg_pf / dbg_tok, (double)dbg_missl / dbg_tok,
+                (double)dbg_false / dbg_tok, (double)dbg_loads0 / dbg_tok);
+        if (!ok) { abort_flag[0] = 1u; ev.signaledValue = base + 3u * L + 3u; }   /* let the GPU run out, every dispatch skipped */
+        [cb waitUntilCompleted];
+        if (plan.active) rl_native_metal_release_topk(m->experts, &plan, NULL, NULL, 0);
+        if (!ok) goto done;
+        if (cb.status != MTLCommandBufferStatusCompleted || cb.error) {
+            snprintf(error, cap, "event-routed token failed: %s", cb.error.localizedDescription.UTF8String ?: "unknown");
+            goto done;
+        }
+        stats->gpu_ms += (cb.GPUEndTime - cb.GPUStartTime) * 1000.0;
+        dbg_tail += rl_engine_now_ms() - t0;
+        dbg_total += rl_engine_now_ms() - start;
+        if (getenv("RL_DEBUG_EV") && dbg_tok % 100u == 0u)
+            fprintf(stderr, "[ev2] encode %.2f ms, after the loop %.2f ms, step total %.2f ms per token\n", dbg_enc / dbg_tok, dbg_tail / dbg_tok, dbg_total / dbg_tok);
+        stats->layers_ms = rl_engine_now_ms() - start - stats->embed_ms;
+        for (uint32_t l = 0; l < L; ++l)
+            memcpy(s->router_ids + (size_t)l * RL_ENGINE_MAX_TOPK, ids + (size_t)l * 64u, (size_t)topk * sizeof(uint32_t));
+        memcpy(s->layer_out, m->layer_out_gpu.contents, (size_t)L * hb);
+        memcpy(s->final_norm, m->final_norm.contents, hb);
+        if (logits) memcpy(logits, m->logits.contents, (size_t)in->vocab * sizeof(float));
+        {
+            rl_native_topk_plan none; memset(&none, 0, sizeof(none));
+            rl_native_metal_telemetry tel;
+            if (!rl_native_metal_release_topk(m->experts, &none, &tel, error, cap)) goto done;
+            stats->expert_loads = tel.expert_loads; stats->cache_hits = tel.cache_hits; stats->cache_misses = tel.cache_misses;
+            stats->ssd_bytes = tel.bytes_read_total; stats->ssd_reads = tel.read_calls_total;
+            stats->resident_slots = tel.resident_slots; stats->slot_capacity = tel.slot_capacity;
+            m->last_token_missed = tel.cache_misses != m->misses_seen;
+            m->misses_seen = tel.cache_misses;
+        }
+        s->position++;
+        stats->speculative = 1;
+        stats->speculative_fallback = missed_layers;
+        result = 1;
+    }
+done:
+    free(probs);
+    stats->total_ms = rl_engine_now_ms() - start;
+    return result;
+}
+
 int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float *logits,
                          rl_engine_step_stats *stats, char *error, size_t cap) {
     /* dev23 policy: the early-out path pays one resume (and the skipped dispatches of the rest of the token)
@@ -2543,7 +2711,8 @@ int rl_metal_engine_step(rl_engine *e, rl_metal_engine *m, uint32_t token, float
         if (!capturing) fprintf(stderr, "GPU capture failed: %s\n", ce.localizedDescription.UTF8String ?: "unknown");
     }
     int r;
-    if (m->spec_enabled && !m->last_token_missed) {
+    if (m->spec_enabled && m->events && !m->preloaded) r = step_events(e, m, token, logits, stats, error, cap);
+    else if (m->spec_enabled && !m->last_token_missed) {
         r = step_routed(e, m, token, logits, stats, error, cap);
         if (r) m->last_token_missed = stats->speculative_fallback > RL_ROUTED_MAX_RESTARTS;
     } else r = rl_metal_engine_step_sync(e, m, token, logits, stats, error, cap);
