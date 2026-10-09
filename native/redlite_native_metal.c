@@ -197,12 +197,6 @@ void *rl_native_metal_residency_table(rl_native_metal_runtime *runtime) {
     return runtime && runtime->residency ? redmetal_topk_pool_residency_table(runtime->pool) : NULL;
 }
 
-uint64_t rl_native_metal_expert_loads(const rl_native_metal_runtime *runtime) { return runtime ? runtime->expert_loads : 0u; }
-
-void rl_native_metal_protect_layer(rl_native_metal_runtime *runtime, uint32_t layer) {
-    if (runtime) runtime->lru.protect_layer = layer;
-}
-
 int rl_native_metal_touch_resident(rl_native_metal_runtime *runtime, uint32_t layer, const uint32_t *expert_ids, uint32_t count, char *error, size_t error_cap) {
     if (!runtime || !expert_ids || !count || count > RL_NATIVE_TOPK_MAX) { set_error(error, error_cap, "invalid touch request"); return 0; }
     rl_cache_key keys[RL_NATIVE_TOPK_MAX];

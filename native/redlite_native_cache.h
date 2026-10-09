@@ -39,9 +39,6 @@ typedef struct {
     uint32_t n_class;
     uint32_t class_first[RL_LRU_MAX_CLASSES + 1];
     uint8_t layer_class[RL_LRU_MAX_LAYERS];
-    /* dev79: entries of this layer are never chosen as victims (UINT32_MAX: none); the event decode prefetches the
-     * next layer's experts while the GPU may be reading that layer's residency entries */
-    uint32_t protect_layer;
 } rl_native_lru;
 
 typedef struct {

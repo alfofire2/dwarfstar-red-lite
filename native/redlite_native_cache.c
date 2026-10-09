@@ -25,7 +25,6 @@ int rl_native_lru_init(rl_native_lru *cache, uint32_t capacity) {
     cache->index_mask = size - 1u;
     cache->capacity = capacity;
     cache->n_class = 1u;
-    cache->protect_layer = UINT32_MAX;
     cache->class_first[1] = capacity;
     return 1;
 }
@@ -139,7 +138,7 @@ static int planned_victim_entry(
     uint64_t oldest = UINT64_MAX;
     for (uint32_t i = lo; i < hi; ++i) {
         const rl_cache_entry *entry = &cache->entries[i];
-        if (!entry->valid || reserved[i] || entry->key.layer == cache->protect_layer) continue;
+        if (!entry->valid || reserved[i]) continue;
         if (entry->inflight) {
             if (blocked) (*blocked)++;
             continue;
