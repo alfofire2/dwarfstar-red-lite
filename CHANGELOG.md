@@ -7,6 +7,13 @@
   tok/s, against 17–25 and 139–233 with the 4 GiB cache; 5 of 6 tasks per run, against 5–6 of 6.
   - The server and `redlite chat` now print a tip when the float KV cache is what keeps full residency out.
   - Measurements are in `docs/REDLITE_DEV80_24GB_LONG_CONTEXT.md`.
+- **The half KV cache is safe to recommend** (dev81). At 32K on new prose its logits differ from the float cache's by
+  a mean KL of 0.004, about 50 times less than CF2 differs from Bartowski's IQ2_XXS; the same top token in 487 of
+  500 positions; perplexity +0.26 %.
+- **Faster decode attention at long contexts** (dev81, exact). The decode attention keeps eight values in flight per
+  thread instead of four, with the same summation order and bit-identical logits.
+  - With the half cache: +4 % decode at 32K on the M4 Pro (−14 % for attention), −13 % attention on the M4 Max.
+  - With the float cache: up to −6 % attention.
 - **Measured and not kept:** three rewrites of the prefill attention for long contexts (`WHAT_DID_NOT_WORK.md`).
 
 

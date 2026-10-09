@@ -87,5 +87,84 @@
    "ppl_float": 3.4753,
    "ppl_half": 3.4429
   }
+ },
+ "dev81_value_loads_in_flight": {
+  "note": "attn_gqa_split_g, 4 -> 8 value loads in flight; bit-identical logits",
+  "kernel_bench_ms_12_layers": {
+   "m4pro_half_32k": [
+    5.51,
+    4.75
+   ],
+   "m4pro_half_64k": [
+    10.0,
+    8.8
+   ],
+   "m4pro_float_32k": [
+    7.03,
+    6.72
+   ],
+   "m4pro_float_64k": [
+    13.0,
+    12.82
+   ],
+   "m4max_half_32k": [
+    2.85,
+    2.48
+   ],
+   "m4max_half_128k": [
+    9.1,
+    8.08
+   ],
+   "m4max_float_32k": [
+    3.75,
+    3.53
+   ],
+   "m4max_float_128k": [
+    13.6,
+    13.39
+   ]
+  },
+  "decode_bench_m4pro_tok_s": {
+   "half_32k": [
+    [
+     45.6,
+     46.1
+    ],
+    [
+     47.6,
+     47.8
+    ]
+   ],
+   "half_48k": [
+    [
+     42.1,
+     42.0
+    ],
+    [
+     43.5,
+     43.5
+    ]
+   ],
+   "float_32k": [
+    [
+     42.9,
+     43.0
+    ],
+    [
+     43.6,
+     43.0
+    ]
+   ],
+   "float_48k": [
+    [
+     38.8,
+     38.7
+    ],
+    [
+     38.8,
+     38.8
+    ]
+   ]
+  }
  }
 }
