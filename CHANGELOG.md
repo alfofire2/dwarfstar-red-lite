@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.5 — 2026-10-09
 
+**24 GiB Macs: one command for full speed.**
 - **`redlite gpu-limit`** (dev79): raises macOS's GPU memory limit to what full residency needs on a Mac below
   40 GiB (with `sudo`). `--boot` installs the LaunchDaemon that sets it at every restart, and `--off` restores the
   default. It does nothing when the limit is already enough, and refuses limits that leave macOS less than 2 GiB.
