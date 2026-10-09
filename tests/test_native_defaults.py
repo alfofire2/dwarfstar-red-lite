@@ -472,6 +472,9 @@ class GpuLimitCliTests(unittest.TestCase):
         with patch("redlite.cli.detect", return_value=_hw(24)), contextlib.redirect_stdout(io.StringIO()), \
              contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             main(["gpu-limit", "--dry-run", "--mib", "23000"])
+        with patch("redlite.cli.detect", return_value=_hw(24)), contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            main(["gpu-limit", "--dry-run", "--mib", "0"])
 
     def test_chat_tip_only_with_a_bounded_cache(self):
         def chat(ram_gib: float) -> str:

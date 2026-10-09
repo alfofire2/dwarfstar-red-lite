@@ -334,6 +334,8 @@ def cmd_gpu_limit(args) -> int:
             if now >= target and (not args.boot or GPU_LIMIT_DAEMON.is_file()):
                 print(f"[redlite] GPU limit already {now} MiB, enough for every expert (needs {target}); nothing to do")
                 return 0
+        if target < 1024:
+            _die(f"--mib {target}: give the limit in MiB (redlite gpu-limit --off restores the macOS default)")
         if target >= hw.ram_bytes / (1024 * 1024) - 2048:
             _die(f"{target} MiB leaves less than 2 GiB of RAM to macOS; refusing.")
         cmds = [["sudo", "/usr/sbin/sysctl", f"iogpu.wired_limit_mb={target}"]]
