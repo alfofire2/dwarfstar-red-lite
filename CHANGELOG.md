@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.6 — 2026-10-09
 
+**Coding agents on a 24 GiB Mac: every expert resident at 64K.**
 - **24 GiB Macs, a 64K agent window with every expert resident** (dev80): after `redlite gpu-limit`, add `--kv f16`
   to `redlite serve --native`. On the M4 Pro the hard agent suite decoded at 35–51 tok/s and prefilled at 218–307
   tok/s, against 17–25 and 139–233 with the 4 GiB cache; 5 of 6 tasks per run, against 5–6 of 6.
