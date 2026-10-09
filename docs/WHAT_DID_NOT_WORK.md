@@ -123,7 +123,40 @@ them.
     load costs ~150 µs (the GPU idles inside the command buffer), more than a commit and a wait. Without the
     prefetch the reads were fully exposed (28.6 against 32.3 tok/s).
   - **What would be needed.** A pool that loads experts without touching the residency table until the next
-    hand-off, so that the prefetch need not stop the GPU.
+    hand-off, so that the prefetch need not stop the GPU. dev79 tried it (next entry): the wait was not the
+    problem.
+- **dev79, variants of the dev78 event decode** (commit b7d8571, reverted). Measured on the 24 GiB M4 Pro, CF2,
+  4 GiB cache, 2026-10-09, prompt 2 of `cache_trace_prompts.txt`, 256 tokens, alternated with 25 s of cooling. The
+  synchronous path did 38.0–38.1 tok/s.
+  - **The variants:**
+
+    | Variant | tok/s |
+    |---|---:|
+    | dev78: the GPU waits for the prefetch before its next selection | 35.6–36.7 |
+    | No wait; the LRU never evicts the predicted layer's experts during the prefetch (`protect_layer`) | 29.3–30.0 |
+    | Only the encoder boundary of that wait | 29.3–29.9 |
+    | A wait on an event value already reached | 34.2–34.4 |
+    | One hand-off per layer: misses and prefetch both while the GPU waits | 23.0–23.3 |
+    | dev78 with a `yield` in the CPU spin | 35.9–36.6 |
+    | dev78 with `RL_POOL_NOCACHE=1` | 35.5 |
+
+    Every variant gave greedy output identical to the synchronous path, with the same misses.
+  - **The per-token split** (timers in the CPU loop, dev78 variant):
+    - waiting for the GPU: 19.5 ms;
+    - hand-off (misses loaded, slots patched): 1.3 ms;
+    - prefetch: 3.2 ms;
+    - encoding the token before the commit: 0.6 ms;
+    - after the last hand-off: 1.6 ms.
+
+    In the other variants the CPU work was the same, but the GPU took longer between two hand-offs: 25.4 ms without
+    the wait, 34 ms with a single hand-off. That is about 0.7 ms per layer against 0.4, for the same kernels.
+  - **Reading.** The GPU runs the same kernels more slowly when it has waited longer, or when it ran during the
+    CPU's expert reads. A clock that drops while the GPU idles would explain it; Metal exposes no control over it.
+  - **A GPU-side conditional wait** (a kernel that spins on a shared-memory flag only after a miss) does not work:
+    - in a model-free test, the CPU never saw the GPU's flag before the end of the command buffer (6 of 6 layers);
+    - CPU writes to expert slots are guaranteed visible to the GPU only after an event wait, not after a flag.
+  - **A separate read thread** was not tried. The pool is single-threaded, so the next hand-off would wait for the
+    prefetch anyway.
 
 ## Correctness traps (found, fixed or guarded)
 
