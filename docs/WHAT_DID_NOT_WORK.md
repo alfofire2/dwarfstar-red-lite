@@ -157,6 +157,17 @@ them.
     - CPU writes to expert slots are guaranteed visible to the GPU only after an event wait, not after a flag.
   - **A separate read thread** was not tried. The pool is single-threaded, so the next hand-off would wait for the
     prefetch anyway.
+  - **The best variant (dev78 kind, `RL_ENGINE_EVENTS=3`) on the six prompts** (median decode, sync / events /
+    events / sync, 25 s of cooling):
+
+    | Cache | Synchronous | Events |
+    |---|---:|---:|
+    | 4 GiB | 37.4 / 37.4 tok/s | 34.7 / 34.6 tok/s (−7 %) |
+    | 12 GiB | 36.0 / 35.5 tok/s | 32.3 / 32.0 tok/s (−10 %) |
+
+    One prompt of six gains (41.7–41.9 against 38.7–38.8 tok/s); the others lose up to 17 %.
+  - **With every expert resident** the event path is not used: `decode-bench` gave 59.9 tok/s with and without the
+    variable (two pairs).
 
 ## Correctness traps (found, fixed or guarded)
 
