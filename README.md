@@ -291,12 +291,13 @@ In short:
   69.3 tok/s, 0.9.2; 86.2 vs 72.5 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
   slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2: 99 tok/s decode and about 1,070 tok/s prompt
   ingestion (0.9.3), against 87–90 and 1,435 for MLX's 3-bit file (32.5 GB), measured the same day (dev76).
-- **24 GiB, 0.9.2 (dev74), Qwen3-Coder-Next CF2:** 35.4 tok/s with the 4 GiB cache, 58.1 with every expert resident
-  (31.8 and 48.0 in 0.9.1, measured the same day).
-- **24 GiB:** with the 4 GiB cache the native runtime uses about 5 GiB and decodes 32–33 tok/s. With the GPU
-  limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
-  52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about
-  360 tok/s.
+- **24 GiB, Qwen3-Coder-Next CF2 (M4 Pro, 0.9.3):** 35.7 tok/s with the 4 GiB cache, which uses about 5 GiB.
+  - **Every expert resident:** 59.1 tok/s after `redlite gpu-limit` (0.9.5) raises macOS's GPU limit. Prompts are
+    ingested at 377 / 447 tok/s.
+  - **Coding-agent sessions at 64K** (dev80, with `--kv f16`): 35–51 tok/s decode, against 17–25 with the 4 GiB cache.
+- **24 GiB, Bartowski's IQ2_XXS (Instruct, 0.9.3):** 37.6 tok/s with the 4 GiB cache, 53.3 with every expert
+  resident. MTP added about 15 % on top of that (dev55: 46 → 52.7, identical output). The llama.cpp launcher gives
+  36–38.
 - **Long prompts** (M4 Max, Red Lite CF2): ingestion / decode 513 / 48 tok/s at 62K tokens, 318 / 33 at 127K,
   174 / 22 at 256K (dev66). On the 24 GiB M4 Pro with the 4 GiB cache: 168 / 15 at 62K, 96 / 10.5 at 127K (0.8.0).
 - Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from
@@ -398,11 +399,15 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   resets the engine. With every expert resident, `--parallel 2` serves two at once (dev56).
 - **Tested only on Apple M4 chips** (M4 Pro 24 GiB and M4 Max 48 GiB). The release binaries are built for M1 and
   later, and the Metal kernels compile on any Apple GPU, but M1, M2 and M3 have never run them.
-- **macOS 27.0.1 GPU driver.** On an M4 Max with macOS 27.0.1, the Mac kernel-panicked twice in Apple's GPU driver
-  (`IOGPUFamily`) while Red Lite ran Metal work; never on macOS 26. The cause is in the driver, not in Red Lite;
-  avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
-- **Full residency** (`--cache-mib 22528`, GPU-routed decode) needs a Mac with at least
-  40 GiB of RAM.
+- **macOS 27.0.1 GPU driver.** On macOS 27.0.1 (26A434) the Mac kernel-panicked in Apple's GPU driver
+  (`IOGPUFamily`, same offset each time) while Red Lite ran Metal work: twice on an M4 Max, once on a user's M5 16 GB
+  during a 26K-token prompt at a 32K context (issue #80). It never happened on macOS 26. Reported to Apple as
+  FB25130929. Avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
+- **Full residency** (every expert on the GPU, GPU-routed decode) is automatic from 40 GiB of RAM. A 24 GiB Mac
+  needs `redlite gpu-limit` first, and `--kv f16` for a 64K window.
+- **Below 24 GiB** (for example a 16 GB M5): it runs with the experts streamed from the SSD. A user measured 22 tok/s
+  in short answers and 15–17 in agent sessions with a 2 GiB cache (`--cache-mib 2048`) on 0.9.4. Nothing is validated
+  there; `redlite chat` and `serve` say so and suggest a 2 GiB cache and contexts of 8K or less.
 - **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
   GGUF, expert misses become SSD reads. The expert prefetch (`RL_ENGINE_PREFETCH=0` turns
   it off) may help less there, or hurt.

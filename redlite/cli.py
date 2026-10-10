@@ -277,6 +277,27 @@ def _gpu_limit_need(hw, model=None) -> tuple[int, int | None] | None:
     return need, need_mtp
 
 
+def _no_gpu_limit_reason(hw) -> str:
+    """dev82: why `redlite gpu-limit` has nothing to set on this Mac"""
+    from .planner import NATIVE_SMALL_MODELS, native_full_residency_mib, native_residency
+    if hw.ram_gib >= 40:
+        return "No GPU limit to set: on a Mac with 40 GiB or more every expert stays resident at the default limit."
+    model = next((NATIVE_MODELS_DIR / n for n in NATIVE_SMALL_MODELS if (NATIVE_MODELS_DIR / n).is_file()), None)
+    res = native_residency(model) if model else None
+    if res is None:
+        return f"No GPU limit to set: no 24 GiB native model in {NATIVE_MODELS_DIR} (redlite download 24gb)."
+    return (f"No GPU limit to set: every expert of {model.name} needs {native_full_residency_mib(res)} MiB, more than this "
+            f"Mac's {hw.ram_gib:.0f} GiB leave after 2 GiB for macOS. Red Lite streams the experts from the SSD here "
+            "(bounded expert cache).")
+
+
+def _small_mac_note(hw) -> None:
+    """dev82: below the 24 GiB target (e.g. 16 GB Macs, issue #80) the runtime works but nothing is validated"""
+    if hw.ram_gib < 23:
+        print(f"[redlite] note: {hw.ram_gib:.0f} GiB is below Red Lite's 24 GiB target. If macOS swaps, try --cache-mib 2048 "
+              "and a context of 8K or less.")
+
+
 def _print_gpu_advice(hw, wired: int) -> None:
     """dev51: on Macs where full residency does not fit by default, the GPU limit that would allow it."""
     target = _gpu_limit_need(hw)
@@ -347,8 +368,7 @@ def cmd_gpu_limit(args) -> int:
         if target is None:
             need = _gpu_limit_need(hw)
             if need is None:
-                _die("No GPU limit to set: this Mac has 40 GiB or more, no small native model is in models/, "
-                     "or every expert does not fit. Pass --mib N to set one anyway.")
+                _die(_no_gpu_limit_reason(hw) + " Pass --mib N to set one anyway.")
             target = need[1] or need[0]
             now = gpu_wired_limit_mib()
             if now >= target and (not args.boot or GPU_LIMIT_DAEMON.is_file()):
@@ -494,6 +514,7 @@ def cmd_chat(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), args.context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _small_mac_note(hw)
     _gpu_limit_tip(hw, model, cache_mib)
     _kv_f16_tip(hw, model, cache_mib, args.context or 4096)
     batch, mtp = _gpu_tuning(model, cache_mib, args, args.context)
@@ -547,6 +568,7 @@ def _serve_native(args) -> int:
         defaults = native_defaults(hw.ram_bytes, model, gpu_wired_limit_mib(), plan_context)
         cache_mib = defaults.cache_mib
         print(f"[redlite] expert cache {cache_mib} MiB ({defaults.reason}); override with --cache-mib")
+    _small_mac_note(hw)
     _gpu_limit_tip(hw, model, cache_mib)
     _kv_f16_tip(hw, model, cache_mib, plan_context)
     batch, mtp = _gpu_tuning(model, cache_mib, args, plan_context)

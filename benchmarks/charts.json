@@ -841,6 +841,43 @@
    "sources": [
     "benchmarks/m4-dev70-prompt-lookup.json"
    ]
+  },
+  {
+   "id": "agent_24gb",
+   "title": "Coding-agent decode on a 24 GiB Mac (M4 Pro, Red Lite CF2, 64K window)",
+   "unit": "tokens per second",
+   "note": "The dev65 hard suite with pi, temperature 0.3, decode speed from the server logs of whole runs. 4 GiB cache: four runs (dev77, 0.9.3 and 0.9.4). Every expert resident: redlite gpu-limit and --kv f16, two runs (dev80, 0.9.5). Tasks passed per run: 5-6 of 6 and 5 of 6.",
+   "series": [
+    "4 GiB cache",
+    "all resident"
+   ],
+   "bars": [
+    {
+     "label": "mean of the runs",
+     "values": [
+      19.6,
+      43.1
+     ]
+    },
+    {
+     "label": "slowest run",
+     "values": [
+      16.9,
+      35.4
+     ]
+    },
+    {
+     "label": "fastest run",
+     "values": [
+      24.8,
+      50.7
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4pro-dev77-093.json",
+    "benchmarks/m4pro-dev80-long-context.json"
+   ]
   }
  ]
 }
