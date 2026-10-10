@@ -226,6 +226,19 @@ the M4 Max, and at 62K and 127K on the 24 GiB M4 Pro with experts streamed from 
   every expert resident. The CPU oracle rounds K/V the same way, and the reference file passed all 59 regression
   checks. On CF2 the 1200-token comparison with llama.cpp went past its bounds (KL 5.8e-2, one argmax), so float
   stays the default.
+- **How much the half cache changes the answers** (dev81, M4 Pro, CF2). The test logged the logits of 500 positions
+  of new prose after 32,100 tokens.
+  - Half against float: mean KL 0.004, the same top token in 487 of 500 positions, perplexity +0.26 %.
+  - For scale, CF2 against Bartowski's IQ2_XXS of the same model, both float: mean KL 0.205, 407 of 500.
+  - The maximum single-position KL was 0.12, of the same order as the 5.8e-2 above.
+
+  `--kv f16` stays opt-in, but it is safe to use, and it is what puts every expert in a 24 GiB Mac at 64K (section 9).
+- **Eight value loads in flight** (dev81): the decode attention with the half cache read only ~150 GB/s on the M4
+  Pro against ~230 for the float one, because half values are 2 bytes. Keeping eight values in flight per thread
+  instead of four gave the same sums in the same order, so the logits are bit-identical.
+  - Half cache: attention −14 % at 32K, and decode +4 % at 32K and +3.5 % at 48K on the M4 Pro (−13 % attention on
+    the M4 Max).
+  - Float cache: up to −6 %.
 
 ## 7. How we know it is correct
 
@@ -338,8 +351,8 @@ temperature 0.3 for the agent.
 **The context window matters more than the file** (dev65). Six harder tasks, three runs each. On the same M4 Max,
 CF2 passed 16 of 18 with a 64K window and 10 of 18 with 32K: these sessions reach 10–30K tokens per request, so a
 32K window fills mid-task and the agent loses its earlier turns. With 64K, CF2 matches Bartowski's 3-bit Coder
-(16 / 18) at 12 GB less. `redlite setup-pi` now writes a 64K window. On a 24 GiB Mac 64K streams the experts from the
-SSD; the pass rate stays at 12 / 18, with more tasks at the time limit.
+(16 / 18) at 12 GB less. `redlite setup-pi` now writes a 64K window. On a 24 GiB Mac 64K streamed the experts from the
+SSD; the pass rate stayed at 12 / 18, with more tasks at the time limit (dev80 below changes that).
 
 <p align="center"><img src="img/agent_context.svg" alt="Hard agent tasks passed by context window, file and Mac"></p>
 
@@ -366,6 +379,19 @@ because pi sent the model's last answer back re-rendered and the server reused i
 extension. The server now marks the state after every prompt and returns to that mark. Full recomputes over 4K
 tokens fell from 5 to 2 in two runs each; the ones left are pi's context compactions, which start a new
 conversation.
+
+**A 24 GiB Mac with every expert resident at 64K** (dev80). With the float KV cache, a 64K window and every expert do
+not fit a 24 GiB Mac even at the raised GPU limit: 22,077 MiB needed against 21,741. With the half KV cache they do.
+The setup is `redlite gpu-limit --boot` once, then `redlite serve --native … --context 65536 --kv f16`; the server
+suggests `--kv f16` when it applies. Results:
+- **Decode:** in the same hard suite on the M4 Pro, agent decode roughly doubled: 35–51 tok/s against 17–25 with the
+  4 GiB cache.
+- **Prefill:** 218–307 tok/s against 139–233.
+- **Tasks:** 5 of 6 per run, against 5–6 of 6.
+- **Quality of the half cache** (dev81): at 32K, its logits differ from the float cache's 50 times less than the
+  two 2-bit Coder files differ from each other (section 6).
+
+<p align="center"><img src="img/agent_24gb.svg" alt="Coding-agent decode on the M4 Pro: 4 GiB cache against every expert resident"></p>
 
 ## 10. 48 GiB Macs: a better file in the remaining room
 

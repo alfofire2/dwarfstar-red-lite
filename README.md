@@ -291,12 +291,13 @@ In short:
   69.3 tok/s, 0.9.2; 86.2 vs 72.5 in 0.5.0), 97 tok/s with MTP (median of six prompts, +20 % over plain decoding). Prompt ingestion went from 4×
   slower than llama.cpp (0.3.0) to on par. Qwen3-Coder-Next CF2: 99 tok/s decode and about 1,070 tok/s prompt
   ingestion (0.9.3), against 87–90 and 1,435 for MLX's 3-bit file (32.5 GB), measured the same day (dev76).
-- **24 GiB, 0.9.2 (dev74), Qwen3-Coder-Next CF2:** 35.4 tok/s with the 4 GiB cache, 58.1 with every expert resident
-  (31.8 and 48.0 in 0.9.1, measured the same day).
-- **24 GiB:** with the 4 GiB cache the native runtime uses about 5 GiB and decodes 32–33 tok/s. With the GPU
-  limit raised (`sudo sysctl iogpu.wired_limit_mb=21741`, until reboot), every expert is resident: **46 tok/s,
-  52.7 with MTP** (identical output), above the llama.cpp launcher's 36–38. Prompts are ingested at about
-  360 tok/s.
+- **24 GiB, Qwen3-Coder-Next CF2 (M4 Pro, 0.9.3):** 35.7 tok/s with the 4 GiB cache, which uses about 5 GiB.
+  - **Every expert resident:** 59.1 tok/s after `redlite gpu-limit` (0.9.5) raises macOS's GPU limit. Prompts are
+    ingested at 377 / 447 tok/s.
+  - **Coding-agent sessions at 64K** (dev80, with `--kv f16`): 35–51 tok/s decode, against 17–25 with the 4 GiB cache.
+- **24 GiB, Bartowski's IQ2_XXS (Instruct, 0.9.3):** 37.6 tok/s with the 4 GiB cache, 53.3 with every expert
+  resident. MTP added about 15 % on top of that (dev55: 46 → 52.7, identical output). The llama.cpp launcher gives
+  36–38.
 - **Long prompts** (M4 Max, Red Lite CF2): ingestion / decode 513 / 48 tok/s at 62K tokens, 318 / 33 at 127K,
   174 / 22 at 256K (dev66). On the 24 GiB M4 Pro with the 4 GiB cache: 168 / 15 at 62K, 96 / 10.5 at 127K (0.8.0).
 - Why, and what did not work: [docs/FINDINGS.md](docs/FINDINGS.md). The charts are drawn from

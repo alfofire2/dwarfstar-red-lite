@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="293" viewBox="0 0 810 293">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="293"/>
+<text class="t" x="10" y="24">Coding-agent decode on a 24 GiB Mac (M4 Pro, Red Lite CF2, 64K window)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">4 GiB cache</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">all resident</text>
+<text class="l" x="222" y="98" text-anchor="end">mean of the runs</text>
+<rect x="230" y="76" width="181.7" height="15" rx="2" fill="#d64545"/><text class="v" x="416.7" y="88">19.6</text>
+<rect x="230" y="94" width="399.5" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="634.5" y="106">43.1</text>
+<text class="l" x="222" y="144" text-anchor="end">slowest run</text>
+<rect x="230" y="122" width="156.7" height="15" rx="2" fill="#d64545"/><text class="v" x="391.7" y="134">16.9</text>
+<rect x="230" y="140" width="328.2" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="563.2" y="152">35.4</text>
+<text class="l" x="222" y="190" text-anchor="end">fastest run</text>
+<rect x="230" y="168" width="229.9" height="15" rx="2" fill="#d64545"/><text class="v" x="464.9" y="180">24.8</text>
+<rect x="230" y="186" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="198">50.7</text>
+<text class="n" x="10" y="253">tokens per second. The dev65 hard suite with pi, temperature 0.3, decode speed from the server logs of whole runs. 4 GiB</text>
+<text class="n" x="10" y="268">cache: four runs (dev77, 0.9.3 and 0.9.4). Every expert resident: redlite gpu-limit and --kv f16, two runs (dev80, 0.9.5).</text>
+<text class="n" x="10" y="283">Tasks passed per run: 5-6 of 6 and 5 of 6.</text>
+</svg>
