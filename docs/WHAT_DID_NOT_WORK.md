@@ -311,8 +311,11 @@ them.
   - **Practice.**
     - Never overlap GPU-heavy jobs.
     - On macOS 27.0.1, run long Metal gates one at a time, and prefer a Mac on macOS 26 when available.
-    - Reports for Apple Feedback Assistant: `/Library/Logs/DiagnosticReports/panic-full-2026-10-04-113143.0002.panic`
-      and `panic-full-2026-10-04-123737.0002.panic`.
+    - Filed with Apple as FB25130929 (2026-10-10), with
+      `/Library/Logs/DiagnosticReports/panic-full-2026-10-04-113143.0002.panic`,
+      `panic-full-2026-10-04-123737.0002.panic` and a sysdiagnose.
+    - Issue #80: a MacBook Pro M5 16 GB on 27.0.1 (26A434) panicked with the same IOGPUFamily offset during a
+      ~26.5K-token prefill at a 32K context (Red Lite 0.9.3); its 4K-context runs on 0.9.4 did not panic.
 - **zsh word splitting** broke two benchmark loops (`set -- $var` does not split in zsh); the
   measurement scripts run under `bash`.
 
