@@ -399,11 +399,15 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   resets the engine. With every expert resident, `--parallel 2` serves two at once (dev56).
 - **Tested only on Apple M4 chips** (M4 Pro 24 GiB and M4 Max 48 GiB). The release binaries are built for M1 and
   later, and the Metal kernels compile on any Apple GPU, but M1, M2 and M3 have never run them.
-- **macOS 27.0.1 GPU driver.** On an M4 Max with macOS 27.0.1, the Mac kernel-panicked twice in Apple's GPU driver
-  (`IOGPUFamily`) while Red Lite ran Metal work; never on macOS 26. The cause is in the driver, not in Red Lite;
-  avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
-- **Full residency** (`--cache-mib 22528`, GPU-routed decode) needs a Mac with at least
-  40 GiB of RAM.
+- **macOS 27.0.1 GPU driver.** On macOS 27.0.1 (26A434) the Mac kernel-panicked in Apple's GPU driver
+  (`IOGPUFamily`, same offset each time) while Red Lite ran Metal work: twice on an M4 Max, once on a user's M5 16 GB
+  during a 26K-token prompt at a 32K context (issue #80). It never happened on macOS 26. Reported to Apple as
+  FB25130929. Avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
+- **Full residency** (every expert on the GPU, GPU-routed decode) is automatic from 40 GiB of RAM. A 24 GiB Mac
+  needs `redlite gpu-limit` first, and `--kv f16` for a 64K window.
+- **Below 24 GiB** (for example a 16 GB M5): it runs with the experts streamed from the SSD. A user measured 22 tok/s
+  in short answers and 15–17 in agent sessions with a 2 GiB cache (`--cache-mib 2048`) on 0.9.4. Nothing is validated
+  there; `redlite chat` and `serve` say so and suggest a 2 GiB cache and contexts of 8K or less.
 - **Throughput depends on the page cache.** On a machine whose page cache cannot hold the
   GGUF, expert misses become SSD reads. The expert prefetch (`RL_ENGINE_PREFETCH=0` turns
   it off) may help less there, or hurt.

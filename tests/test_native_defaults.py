@@ -524,3 +524,38 @@ class KvF16TipTests(unittest.TestCase):
         text = self._serve("-c", "65536", "--kv", "f16")
         self.assertIn("full expert residency", text)
         self.assertNotIn("tip: with --kv f16", text)
+
+
+class SmallMacTests(unittest.TestCase):
+    """dev82: below the 24 GiB target"""
+
+    def _chat(self, ram_gib: float) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "m.gguf"
+            model.write_bytes(b"GGUF")
+            out = io.StringIO()
+            with patch("redlite.cli.detect", return_value=_hw(ram_gib)), \
+                 patch("redlite.cli.gpu_wired_limit_mib", return_value=0), \
+                 patch("redlite.planner.native_residency", return_value=NativeResidency(16992, 1083 * 1024 * 1024)), \
+                 patch("redlite.runner.native_generate", return_value=Path("/x/redlite-generate")), \
+                 contextlib.redirect_stdout(out):
+                self.assertEqual(main(["chat", str(model), "--dry-run"]), 0)
+            return out.getvalue()
+
+    def test_16gb_gets_the_note_and_no_full_residency_tips(self):
+        text = self._chat(16)
+        self.assertIn("below Red Lite's 24 GiB target", text)
+        self.assertNotIn("redlite gpu-limit", text)
+        self.assertNotIn("--kv f16", text)
+        self.assertNotIn("below Red Lite's 24 GiB target", self._chat(24))
+
+    def test_gpu_limit_on_16gb_says_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ2_XXS.gguf").write_bytes(b"GGUF")
+            err = io.StringIO()
+            with patch("redlite.cli.detect", return_value=_hw(16)), patch("redlite.cli.NATIVE_MODELS_DIR", Path(tmp)), \
+                 patch("redlite.planner.native_residency", return_value=NativeResidency(17316, 1083 * 1024 * 1024)), \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                main(["gpu-limit", "--dry-run"])
+        self.assertIn("streams the experts from the SSD", err.getvalue())
+        self.assertNotIn("40 GiB or more", err.getvalue())
