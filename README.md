@@ -122,8 +122,9 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
 - **A 64K context window** (dev65): on the M4 Max, CF2 passed 16 of 18 harder tasks with a 64K window and 10 of 18
   with 32K; the agent loses earlier turns when the window fills. `setup-pi` writes 64K. On a 24 GiB Mac 64K no longer
   fits next to every expert with the float KV cache, so the server streams experts from the SSD (slower).
-- **24 GiB Macs, every expert resident at 64K** (dev80): after `redlite gpu-limit`, add `--kv f16` to
-  `redlite serve --native` (the server suggests it). On the M4 Pro, two runs of the hard suite in this setup decoded
+- **24 GiB Macs, every expert resident at 64K** (dev80, dev83): after `redlite gpu-limit`, `redlite serve --native`
+  picks the half KV cache by itself at 64K, the case where it is what lets every expert stay resident (`--kv f32`
+  keeps the float cache). On the M4 Pro, two runs of the hard suite in this setup decoded
   at 35–51 tok/s and prefilled at 218–307 tok/s. With the 4 GiB cache the same suite gave 17–25 and 139–233 tok/s.
   These two runs passed 5 of 6 tasks each, the 4 GiB runs 5–6 of 6. The half cache's outputs can differ slightly
   from the float one.
@@ -138,7 +139,7 @@ npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew 
 redlite download coder                                # Red Lite CF2, Qwen3-Coder-Next (19.3 GB)
 redlite setup-pi --port 8080                          # adds a "redlite" provider (temperature 0.3) to ~/.pi/agent/models.json
 redlite serve --native ~/.redlite/models/Qwen3-Coder-Next-RedLite-CF2.gguf --context 65536 --port 8080
-#   on a 24 GiB Mac: redlite gpu-limit --boot once, then add --kv f16 to the serve line
+#   on a 24 GiB Mac: redlite gpu-limit --boot once (the server then keeps every expert resident)
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```
 
@@ -404,7 +405,7 @@ Records of the earlier rows: `benchmarks/m4max-48gb-native-dev19.json` (dev19–
   during a 26K-token prompt at a 32K context (issue #80). It never happened on macOS 26. Reported to Apple as
   FB25130929. Avoid running other GPU-heavy programs at the same time. Details: `docs/WHAT_DID_NOT_WORK.md`.
 - **Full residency** (every expert on the GPU, GPU-routed decode) is automatic from 40 GiB of RAM. A 24 GiB Mac
-  needs `redlite gpu-limit` first, and `--kv f16` for a 64K window.
+  needs `redlite gpu-limit` first; at a 64K window the server then picks the half KV cache by itself.
 - **Below 24 GiB** (for example a 16 GB M5): it runs with the experts streamed from the SSD. A user measured 22 tok/s
   in short answers and 15–17 in agent sessions with a 2 GiB cache (`--cache-mib 2048`) on 0.9.4. Nothing is validated
   there; `redlite chat` and `serve` say so and suggest a 2 GiB cache and contexts of 8K or less.

@@ -424,7 +424,7 @@ class HalfKvPlanTests(unittest.TestCase):
     def test_kv_option(self):
         from redlite.cli import build_parser
         p = build_parser()
-        self.assertEqual(p.parse_args(["chat"]).kv, "f32")
+        self.assertIsNone(p.parse_args(["chat"]).kv)   # dev83: automatic (f32, or f16 where it enables full residency)
         self.assertEqual(p.parse_args(["serve", "--native", "--kv", "f16"]).kv, "f16")
 
 
@@ -494,8 +494,8 @@ class GpuLimitCliTests(unittest.TestCase):
         self.assertNotIn("redlite gpu-limit", chat(48))
 
 
-class KvF16TipTests(unittest.TestCase):
-    """dev80: serve suggests --kv f16 when only the float KV cache keeps full residency out"""
+class AutoHalfKvTests(unittest.TestCase):
+    """dev83: with no --kv, serve picks the half KV cache only where it is what lets every expert stay resident"""
 
     def _serve(self, *extra: str, wired: int = 21741) -> str:
         with tempfile.TemporaryDirectory() as tmp:
@@ -512,18 +512,20 @@ class KvF16TipTests(unittest.TestCase):
                 self.assertEqual(main(["serve", str(model), "--native", "--dry-run", *extra]), 0)
             return out.getvalue()
 
-    def test_64k_at_the_raised_limit_suggests_half_kv(self):
+    def test_64k_at_the_raised_limit_picks_half_kv_and_full_residency(self):
         text = self._serve("-c", "65536")
-        self.assertIn("--cache-mib 4096", text)
-        self.assertIn("--kv f16", text)
+        self.assertIn("half-precision KV cache: with it every expert stays resident", text)
+        self.assertIn("--cache-mib 17316", text)
         self.assertNotIn("RL_KV_F16", os.environ)   # the check leaves the environment as it was
 
-    def test_no_tip_when_full_residency_already_fits_or_half_kv_is_on(self):
-        self.assertNotIn("--kv f16", self._serve("-c", "4096"))
-        self.assertNotIn("tip: with --kv f16", self._serve("-c", "65536", wired=0))   # default limit: gpu-limit first
-        text = self._serve("-c", "65536", "--kv", "f16")
-        self.assertIn("full expert residency", text)
-        self.assertNotIn("tip: with --kv f16", text)
+    def test_float_stays_where_half_does_not_change_residency_or_is_refused(self):
+        self.assertNotIn("half-precision", self._serve("-c", "4096"))            # full residency already fits
+        self.assertNotIn("half-precision", self._serve("-c", "65536", wired=0))  # bounded either way
+        text = self._serve("-c", "65536", "--kv", "f32")
+        self.assertNotIn("half-precision", text)
+        self.assertIn("--cache-mib 4096", text)
+        text = self._serve("-c", "65536", "--cache-mib", "4096")                 # a chosen cache size is kept
+        self.assertNotIn("half-precision", text)
 
 
 class SmallMacTests(unittest.TestCase):

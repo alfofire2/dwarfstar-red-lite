@@ -186,8 +186,23 @@ them.
     | 64-position key blocks, 16 × 16 score blocks per simdgroup (half the barriers and softmax passes per key) | 44.8–48.8 ms | 17.5–21.7 ms |
 
     The variants were alternated in pairs with 15 s of cooling, and back-to-back runs vary by up to 25 % at 8K.
-  - **Next step.** It is not known whether loads, barriers or occupancy limit this kernel. The next step is the
-    per-kernel GPU counters of a model-free capture in Xcode (`prefill-attn-bench`), not another rewrite.
+  - **The GPU counters** (dev83). A model-free capture (`prefill-attn-bench 512 32768`, M4 Max, Xcode profiler,
+    full mode) gave:
+    - F32 limiter 76 % (utilization 62 %) and instruction throughput limiter 70 %;
+    - kernel occupancy 18 %, with the L1 94 % full (42 % threadgroup memory, 49 % buffer data);
+    - last-level cache limiter 16 % and MMU limiter 29 %.
+
+    The kernel is bound by the float32 ALUs, which is why the half KV cache did not speed it up.
+  - **Half operands in the matrix products** (dev83, `attn_fa_b5`, half KV cache only). Half query, key,
+    probability and value tiles with float accumulation (`simdgroup_half8x8` operands, `simdgroup_float8x8`
+    accumulators) made the kernel **three times slower**: 97–102 ms against 31–32 ms at 32K, and 22–24 against 7.7 ms
+    at 8K. On the M4 Max, mixed products are evidently not native. The float kernel, which already converts the half
+    cache on load, stays.
+  - **What is left.** Only the work besides the products, at most about 10 %:
+    - the diagonal rescale product (16 of 144 products per key block);
+    - the softmax exponentials.
+
+    A faster prefill attention than MLX's would need fewer float32 operations, not a different layout.
 
 - **dev81, the half-cache decode attention:**
   - 16-byte key loads (eight halves per load, as float4 for the float cache) took 5.95 against 5.52 ms at 32K (M4 Pro,
