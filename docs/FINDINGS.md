@@ -382,8 +382,9 @@ conversation.
 
 **A 24 GiB Mac with every expert resident at 64K** (dev80). With the float KV cache, a 64K window and every expert do
 not fit a 24 GiB Mac even at the raised GPU limit: 22,077 MiB needed against 21,741. With the half KV cache they do.
-The setup is `redlite gpu-limit --boot` once, then `redlite serve --native … --context 65536 --kv f16`; the server
-suggests `--kv f16` when it applies. Results:
+The setup is `redlite gpu-limit --boot` once, then `redlite serve --native … --context 65536`. Since dev83 the server
+picks the half cache by itself exactly in this case (before, it only suggested `--kv f16`); `--kv f32` keeps the float
+one. Results:
 - **Decode:** in the same hard suite on the M4 Pro, agent decode roughly doubled: 35–51 tok/s against 17–25 with the
   4 GiB cache.
 - **Prefill:** 218–307 tok/s against 139–233.
