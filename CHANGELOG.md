@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.7 — 2026-10-12
 
+**24 GiB coding agents at full speed with no extra flag.**
 - **24 GiB agents at full speed by default** (dev83). With no `--kv`, `redlite serve --native` and `redlite chat` pick
   the half KV cache exactly where it is what lets every expert stay resident: a 24 GiB Mac after `redlite gpu-limit`,
   with a 64K window. It is not picked when every expert already fits with the float cache, when the cache stays
@@ -9,6 +10,8 @@
   - `--kv f32` keeps the float cache.
   - On the M4 Pro this setup decoded agent sessions at 35–51 tok/s against 17–25 (dev80).
   - Its logits differ from the float cache's by a mean KL of 0.004 at 32K (dev81).
+  - Verified by tests; the automatic choice itself has not yet run on the M4 Pro, which was offline. The
+    configuration it selects is the one dev80 measured there.
 - **Below 24 GiB** (dev82): `redlite chat` and `serve` note that the Mac is below the target and suggest
   `--cache-mib 2048` and contexts of 8K or less, and `redlite gpu-limit` says why there is nothing to set.
 - **Measured and not kept:** the GPU counters of the prefill attention (float32-bound, occupancy 18 %), and
