@@ -1314,6 +1314,10 @@ rl_metal_engine *rl_metal_engine_create(rl_engine *e, char *error, size_t cap) {
         /* routed experts: one bounded LRU shared by every layer */
         m->experts = rl_native_metal_create(e->gguf.path, &e->expert_map, e->cfg.cache_mib * 1024ull * 1024ull, 64u, error, cap);
         if (!m->experts) { rl_metal_engine_destroy(m); return NULL; }
+        /* dev85: every expert slab now, on this thread (RL_POOL_EAGER=0: created on first use by the loader threads) */
+        { const char *eg = getenv("RL_POOL_EAGER");
+          if ((!eg || atoi(eg) != 0) && !redmetal_topk_pool_allocate_all(rl_native_metal_pool_handle(m->experts))) {
+              snprintf(error, cap, "expert cache allocation failed: %s", redmetal_topk_last_error()); rl_metal_engine_destroy(m); return NULL; } }
 
         /* expert slabs stay resident for this queue without per-encoder useResource (macOS 15+) */
         if (@available(macOS 15.0, *)) {

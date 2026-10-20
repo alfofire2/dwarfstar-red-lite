@@ -699,6 +699,7 @@ static NSString * const kTopKSource = @
     uint64_t _slotBytes;
     uint32_t _capacity;
     uint32_t _slotsPerSlab;
+    int _deferCommit;   /* dev85: allocateAllSlabs commits the residency set once */
     /* dev37: slot size classes (one by default). Class c owns slots [_clsFirst[c], _clsFirst[c + 1]) of _clsBytes[c]
      * bytes; its slabs are global slab indices from _clsSlab[c]; _slabMap maps a global slab index to _slabs + 1. */
     uint32_t _nCls;
@@ -724,6 +725,7 @@ static NSString * const kTopKSource = @
 - (id<MTLBuffer>)bufferForSlot:(uint32_t)slot offset:(NSUInteger *)offset;
 - (uint64_t)bytesForSlot:(uint32_t)slot;
 - (int)setClasses:(uint32_t)n slotBytes:(const uint64_t *)bytes capacity:(const uint32_t *)cap;
+- (int)allocateAllSlabs;
 - (void)markSlot:(uint32_t)slot delta:(int)delta;
 - (int)ensureScratchHidden:(uint32_t)hidden ffn:(uint32_t)ffn;
 @end
@@ -921,6 +923,25 @@ static NSString * const kTopKSource = @
     _slabMap = NULL;
 }
 
+/* dev85: create every slab now, on the calling thread, and commit the residency set once. Lazy slabs were created
+ * (and the queue-attached residency set committed) by expert-loading GCD workers and the prefill prefetch thread while
+ * the engine thread had command buffers in flight: two threads of the process in IOGPU at once, the pattern of the
+ * macOS IOGPUFamily panics (docs/WHAT_DID_NOT_WORK.md). After this, loads only write into existing shared buffers. */
+- (int)allocateAllSlabs {
+    @synchronized (self) {
+        _deferCommit = 1;
+        int ok = 1;
+        for (uint32_t c = 0; ok && c < _nCls; ++c)
+            for (uint32_t s = _clsFirst[c]; ok && s < _clsFirst[c + 1u]; s += _slotsPerSlab) {
+                NSUInteger off = 0;
+                ok = [self bufferForSlot:s offset:&off] != nil;
+            }
+        _deferCommit = 0;
+        if (@available(macOS 15.0, *)) { if (_residencySet) [_residencySet commit]; }
+        return ok;
+    }
+}
+
 /* dev37: replace the uniform layout by size classes; only before any slab exists, within the budget */
 - (int)setClasses:(uint32_t)n slotBytes:(const uint64_t *)bytes capacity:(const uint32_t *)cap {
     if (!n || n > RL_TOPK_MAX_CLASSES || !bytes || !cap) { topk_set_error("invalid top-k slot classes"); return 0; }
@@ -1029,7 +1050,7 @@ static uint32_t pool_class_of(const RMTopKPool *p, uint32_t slot) {
             _slabMap[slabIndex] = (uint32_t)_slabs.count;
             _allocatedBytes += bytes64;
             if (@available(macOS 15.0, *)) {
-                if (_residencySet) { [_residencySet addAllocation:slab]; [_residencySet commit]; }
+                if (_residencySet) { [_residencySet addAllocation:slab]; if (!_deferCommit) [_residencySet commit]; }
             }
         }
         id<MTLBuffer> slab = _slabs[_slabMap[slabIndex] - 1u];
@@ -1727,6 +1748,13 @@ void redmetal_topk_pool_residency_clear(redmetal_topk_pool_t handle, uint32_t la
     RMTopKPool *p = topk_obj(handle);
     if (!p || !p->_residency || layer >= p->_residencyLayers || expert >= p->_residencyExperts) return;
     ((uint64_t *)p->_residency.contents)[(size_t)layer * p->_residencyExperts + expert] = 0;
+}
+
+int redmetal_topk_pool_allocate_all(redmetal_topk_pool_t handle) {
+    @autoreleasepool {
+        RMTopKPool *p = topk_obj(handle);
+        return p ? [p allocateAllSlabs] : 0;
+    }
 }
 
 void *redmetal_topk_pool_slab_residency_set(redmetal_topk_pool_t handle) {
