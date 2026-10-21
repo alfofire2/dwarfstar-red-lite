@@ -22,6 +22,7 @@ search (`scripts/dev/build_site.py`).
 
 | Milestone | Document |
 |---|---|
+| dev85 programming on a 48 GiB Mac: CG2 (59.8 % on Aider's polyglot against 25.2 % for CF2), `--coder`, no GPU allocations off the engine thread | [REDLITE_DEV85_CODING_M4MAX.md](REDLITE_DEV85_CODING_M4MAX.md) |
 | dev77 agent sessions: prefill dominates; the server rewinds to the previous prompt instead of recomputing; 0.9.3 on the M4 Pro | [REDLITE_DEV77_AGENT_PREFILL.md](REDLITE_DEV77_AGENT_PREFILL.md) |
 | dev80 long contexts on 24 GiB: agents with every expert resident (`--kv f16`), decode vs position, prefill attention | [REDLITE_DEV80_24GB_LONG_CONTEXT.md](REDLITE_DEV80_24GB_LONG_CONTEXT.md) |
 | dev76 Red Lite and MLX measured the same day (decode 99 vs 87–90 tok/s), two DeltaNet rows per simdgroup in prefill | [REDLITE_DEV76_MLX_SAMEDAY.md](REDLITE_DEV76_MLX_SAMEDAY.md) |

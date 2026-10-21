@@ -878,6 +878,42 @@
     "benchmarks/m4pro-dev77-093.json",
     "benchmarks/m4pro-dev80-long-context.json"
    ]
+  },
+  {
+   "id": "polyglot_coder",
+   "title": "Aider polyglot benchmark, Qwen3-Coder-Next files (M4 Max 48 GiB, Red Lite)",
+   "unit": "% of 127 exercises solved",
+   "note": "Exercism exercises in Python, JavaScript, Rust and C++ from Aider's polyglot benchmark, greedy, a second try after the test output; 12 exercises whose official solution fails here are left out. CF2 18 GiB, IQ3_XXS 29.5 GiB, CG2 31.2 GiB (dev85).",
+   "series": [
+    "first try",
+    "two tries"
+   ],
+   "bars": [
+    {
+     "label": "CF2 (2-bit, 24 GiB Macs)",
+     "values": [
+      9.4,
+      25.2
+     ]
+    },
+    {
+     "label": "Bartowski IQ3_XXS",
+     "values": [
+      33.9,
+      49.6
+     ]
+    },
+    {
+     "label": "CG2 (3-bit, 48 GiB Macs)",
+     "values": [
+      37.0,
+      59.8
+     ]
+    }
+   ],
+   "sources": [
+    "benchmarks/m4max-dev85-coding.json"
+   ]
   }
  ]
 }

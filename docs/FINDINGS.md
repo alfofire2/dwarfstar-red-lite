@@ -411,6 +411,21 @@ request with the Mac swapping, while IQ3_XXS stayed at 596–638. Decode was una
 (`redlite download 48gb-g2`), and `48gb` stays IQ3_XXS. The 70 % rule now also counts the context's KV cache, and
 `chat` / `serve` turn MTP off when it does not fit at the chosen context.
 
+**For programming, the same recipe on Qwen3-Coder-Next** (dev85). The agent suite could no longer tell the Coder
+files apart (CF2 and Bartowski's IQ3_XXS both passed 16 of 18), so dev85 measured them on Aider's polyglot benchmark.
+- **The benchmark:** 127 Exercism exercises in Python, JavaScript, Rust and C++, greedy. The model writes the
+  solution files whole, and gets a second try with the end of the failing test output.
+- **The results:** **CG2** (G2's recipe, 31.24 GiB) passed 59.8 %, against 49.6 % for Bartowski's IQ3_XXS and 25.2 %
+  for CF2.
+  - Its code perplexity is 1.870, against 1.917 and 2.537.
+  - It hit the 6,144-token answer limit 6 times, as IQ3_XXS did; CF2 hit it 21 times.
+- **The gap is wider than perplexity suggests.** The agent tasks were mostly short edits, while each exercise asks
+  for a whole working solution in one answer.
+- **Using it:** `redlite serve --native --coder` takes CG2 on a 48 GiB Mac (`redlite download coder-48gb`) and CF2
+  below.
+
+<p align="center"><img src="img/polyglot_coder.svg" alt="Aider polyglot pass rate of the Qwen3-Coder-Next files on the M4 Max"></p>
+
 ## 11. What did not work
 
 [WHAT_DID_NOT_WORK.md](WHAT_DID_NOT_WORK.md) lists every reverted attempt with its measurement. Highlights:

@@ -1,0 +1,114 @@
+{
+ "machine": "Apple M4 Max 48 GiB",
+ "date": "2026-10-21",
+ "harness": "scripts/dev/polyglot_eval.py (Aider polyglot-benchmark, 127 exercises, greedy, 2 tries, max 6144 tokens per answer)",
+ "server": "redlite-server --cache-mib full --context 32768 --lookup",
+ "files": {
+  "cf2": "Qwen3-Coder-Next-RedLite-CF2.gguf",
+  "iq3xxs": "Qwen_Qwen3-Coder-Next-IQ3_XXS.gguf",
+  "cg2": "Qwen3-Coder-Next-RedLite-CG2.gguf"
+ },
+ "polyglot": {
+  "cf2": {
+   "python": {
+    "n": 34,
+    "pass1": 17.6,
+    "pass2": 35.3
+   },
+   "all": {
+    "n": 127,
+    "pass1": 9.4,
+    "pass2": 25.2
+   },
+   "javascript": {
+    "n": 49,
+    "pass1": 8.2,
+    "pass2": 22.4
+   },
+   "rust": {
+    "n": 22,
+    "pass1": 9.1,
+    "pass2": 22.7
+   },
+   "cpp": {
+    "n": 22,
+    "pass1": 0.0,
+    "pass2": 18.2
+   },
+   "median_seconds": 21.9,
+   "max_tokens_hits": 21
+  },
+  "iq3xxs": {
+   "python": {
+    "n": 34,
+    "pass1": 32.4,
+    "pass2": 52.9
+   },
+   "all": {
+    "n": 127,
+    "pass1": 33.9,
+    "pass2": 49.6
+   },
+   "javascript": {
+    "n": 49,
+    "pass1": 44.9,
+    "pass2": 55.1
+   },
+   "rust": {
+    "n": 22,
+    "pass1": 27.3,
+    "pass2": 40.9
+   },
+   "cpp": {
+    "n": 22,
+    "pass1": 18.2,
+    "pass2": 40.9
+   },
+   "median_seconds": 14.9,
+   "max_tokens_hits": 6
+  },
+  "cg2": {
+   "python": {
+    "n": 34,
+    "pass1": 41.2,
+    "pass2": 55.9
+   },
+   "all": {
+    "n": 127,
+    "pass1": 37.0,
+    "pass2": 59.8
+   },
+   "javascript": {
+    "n": 49,
+    "pass1": 44.9,
+    "pass2": 69.4
+   },
+   "rust": {
+    "n": 22,
+    "pass1": 36.4,
+    "pass2": 50.0
+   },
+   "cpp": {
+    "n": 22,
+    "pass1": 13.6,
+    "pass2": 54.5
+   },
+   "median_seconds": 15.7,
+   "max_tokens_hits": 6
+  }
+ },
+ "code_perplexity_ctx512": {
+  "cg2": [
+   1.8703,
+   0.02308
+  ],
+  "iq3xxs": [
+   1.9165,
+   0.02443
+  ],
+  "cf2": [
+   2.537,
+   0.0389
+  ]
+ }
+}
