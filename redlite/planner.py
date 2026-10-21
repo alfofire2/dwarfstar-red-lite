@@ -208,6 +208,12 @@ NATIVE_SMALL_MODELS = ("Qwen3-Next-80B-A3B-Instruct-RedLite-F2.gguf", "Qwen3-Nex
 # dev64: Red Lite G2 (redlite download 48gb-g2) first when present: it is only there when the user chose it
 NATIVE_MODEL_PREFERENCE = ("Qwen3-Next-80B-A3B-Instruct-RedLite-G2.gguf", "Qwen_Qwen3-Next-80B-A3B-Instruct-IQ3_XXS.gguf",
                            ) + NATIVE_SMALL_MODELS
+# dev85: Qwen3-Coder-Next files, best first. Aider's polyglot benchmark (127 exercises, pass@2, M4 Max): Red Lite CG2
+# 59.8 %, Bartowski's IQ3_XXS 49.6 %, Red Lite CF2 25.2 %. `redlite serve --native --coder` takes the first one present
+# whose full residency fits this Mac, else the first 24 GiB file present.
+NATIVE_CODER_MODELS = ("Qwen3-Coder-Next-RedLite-CG2.gguf", "Qwen_Qwen3-Coder-Next-IQ3_XXS.gguf",
+                       "Qwen3-Coder-Next-RedLite-CF2.gguf", "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf")
+NATIVE_CODER_SMALL = NATIVE_CODER_MODELS[2:]
 
 
 @dataclass(frozen=True)
@@ -330,6 +336,19 @@ def select_native_model(models_dir: str | Path, ram_bytes: int, wired_mib: int =
         if (d / name).is_file():
             return d / name
     return present[-1]
+
+
+def select_coder_model(models_dir: str | Path, ram_bytes: int, wired_mib: int = 0) -> Path | None:
+    """dev85: the best Qwen3-Coder-Next file present (NATIVE_CODER_MODELS) whose full residency fits, else the first
+    24 GiB coder file present, else the first one present"""
+    d = Path(models_dir)
+    present = [d / name for name in NATIVE_CODER_MODELS if (d / name).is_file()]
+    for p in present:
+        res = native_residency(p)
+        if res is not None and native_full_residency_fits(ram_bytes, res, wired_mib):
+            return p
+    small = [p for p in present if p.name in NATIVE_CODER_SMALL]
+    return (small or present or [None])[0]
 
 
 NATIVE_MTP_FILE = "Qwen3-Next-80B-A3B-Instruct-MTP-ONLY-Q8_0.gguf"

@@ -27,6 +27,11 @@ ROOT = Path(__file__).resolve().parents[2]
 BENCH = ROOT / ".deps" / "polyglot"
 JSENV = ROOT / ".deps" / "polyglot-jsenv"
 LANGS = ("python", "javascript", "rust", "cpp")
+# exercises whose official solution fails here (--reference): the Rust ones use crates their Cargo.toml does not
+# declare (num_bigint, rand, time, ...), the C++ ones need Catch2 or Boost installed. A model cannot pass them either.
+EXCLUDE = {("rust", n) for n in ("alphametics", "decimal", "gigasecond", "grep", "pig-latin", "poker", "robot-name",
+                                 "simple-cipher")} | {("cpp", n) for n in ("binary-search-tree", "circular-buffer",
+                                                                           "gigasecond", "meetup")}
 FENCE = {"python": "python", "javascript": "javascript", "rust": "rust", "cpp": "cpp"}
 
 SYSTEM = ("You are an expert software engineer. Solve the programming exercise by editing the given files. "
@@ -37,7 +42,7 @@ SYSTEM = ("You are an expert software engineer. Solve the programming exercise b
 def exercises(langs, names):
     for lang in langs:
         for d in sorted((BENCH / lang / "exercises" / "practice").iterdir()):
-            if d.is_dir() and (not names or d.name in names):
+            if d.is_dir() and (not names or d.name in names) and (lang, d.name) not in EXCLUDE:
                 yield lang, d
 
 
@@ -102,8 +107,8 @@ def apply_answer(text, work, files):
     """write each fenced block to the solution file named on the line before it; a single unnamed block goes to the
     only (or the first matching-extension) solution file. Returns the files written."""
     written = []
-    for m in re.finditer(r"(?:^|\n)([^\n`]*)\n```[^\n]*\n(.*?)```", text, flags=re.S):
-        label, body = m.group(1).strip().strip("*`#: "), m.group(2)
+    for m in re.finditer(r"(?:^|\n)(?:((?!```)[^\n]*)\n)?```[^\n]*\n(.*?)```", text, flags=re.S):
+        label, body = (m.group(1) or "").strip().strip("*`#: "), m.group(2)
         target = next((f for f in files if label and (label == f or label.endswith("/" + f) or label.endswith(Path(f).name))), None)
         if target is None:
             code = [f for f in files if not f.endswith(".toml")]
