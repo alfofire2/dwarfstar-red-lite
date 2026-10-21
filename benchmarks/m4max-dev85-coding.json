@@ -110,5 +110,64 @@
    2.537,
    0.0389
   ]
+ },
+ "agent_hard_suite": {
+  "setup": "scripts/dev/agent_eval.py --suite hard --timeout 900 --temperature 0.3 --context 65536 --repo-ref v0.9.1; redlite-server --context 65536 --cache-mib full --lookup; CG2 with RL_KV_F16=1 (what serve --coder picks), CF2 with the float KV cache; runs alternated cg2, cf2, cg2, cf2",
+  "runs": {
+   "cg2_r1": {
+    "passed": 6,
+    "of": 6,
+    "wall_s": 710,
+    "prefill_tok_s": 535,
+    "decode_tok_s": 86.0,
+    "full_recomputes": 1
+   },
+   "cf2_r1": {
+    "passed": 5,
+    "of": 6,
+    "wall_s": 412,
+    "prefill_tok_s": 693,
+    "decode_tok_s": 88.6,
+    "full_recomputes": 0,
+    "failed": {
+     "two_bugs": "answer truncated at the output limit, tests failed"
+    }
+   },
+   "cg2_r2": {
+    "passed": 6,
+    "of": 6,
+    "wall_s": 984,
+    "prefill_tok_s": 551,
+    "decode_tok_s": 84.4,
+    "full_recomputes": 1
+   },
+   "cf2_r2": {
+    "passed": 4,
+    "of": 6,
+    "wall_s": 2449,
+    "prefill_tok_s": 497,
+    "decode_tok_s": 83.5,
+    "full_recomputes": 12,
+    "failed": {
+     "c_limit": "900 s limit, 377 requests (loop)",
+     "debug_session": "900 s limit, 541 requests (loop)"
+    }
+   }
+  },
+  "decode_by_context_tok_s": {
+   "cg2": {
+    "0-8K": 98.4,
+    "8-16K": 91.9,
+    "16-32K": 85.8,
+    "32K+": 78.9
+   },
+   "cf2": {
+    "0-8K": 111.3,
+    "8-16K": 110.0,
+    "16-32K": 86.3,
+    "32K+": 75.1
+   }
+  },
+  "server_errors": 0
  }
 }

@@ -130,8 +130,9 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
   from the float one.
 - **48 GiB Macs: Red Lite CG2** (dev85, `redlite download coder-48gb`, 31.24 GiB), G2's recipe on Qwen3-Coder-Next.
   On Aider's polyglot benchmark (127 Exercism exercises in Python, JavaScript, Rust and C++, two tries each) it
-  passed 59.8 %, against 49.6 % for Bartowski's IQ3_XXS and 25.2 % for CF2. `redlite serve --native --coder` takes
-  it on a 48 GiB Mac and CF2 below; every expert stays resident up to about 96K positions.
+  passed 59.8 %, against 49.6 % for Bartowski's IQ3_XXS and 25.2 % for CF2. On the hard agent suite at 64K it passed
+  12 of 12 tasks with no loop, against 9 of 12 for CF2. `redlite serve --native --coder` takes it on a 48 GiB Mac and
+  CF2 below; every expert stays resident up to about 96K positions.
 - **Temperature 0.3:** the 2-bit Coder looped (the same tool call until the time limit) 4 times in 36 sessions at
   0.7 and above, never at 0.3. `redlite setup-pi` sets 0.3 for the agent; chat keeps 0.7.
 - **`--parallel 2`** gains only 2–5 % with agents.

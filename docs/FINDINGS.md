@@ -419,6 +419,8 @@ files apart (CF2 and Bartowski's IQ3_XXS both passed 16 of 18), so dev85 measure
   for CF2.
   - Its code perplexity is 1.870, against 1.917 and 2.537.
   - It hit the 6,144-token answer limit 6 times, as IQ3_XXS did; CF2 hit it 21 times.
+  - With pi on the hard agent suite at 64K, CG2 passed 12 of 12 tasks and CF2 9 of 12, two of its failures loops to
+    the time limit. CG2 decoded at 79–98 tok/s depending on the context.
 - **The gap is wider than perplexity suggests.** The agent tasks were mostly short edits, while each exercise asks
   for a whole working solution in one answer.
 - **Using it:** `redlite serve --native --coder` takes CG2 on a 48 GiB Mac (`redlite download coder-48gb`) and CF2

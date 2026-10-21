@@ -26,8 +26,8 @@ buffers that already exist.
 - The other Metal allocations during serving (prefill scratch, verify buffers, MPS kernels) run on the engine thread
   while it waits for nothing on the GPU.
 
-No panic occurred during the about 20 hours of GPU work in this milestone (three benchmark runs, regressions, agent
-runs). That is evidence, not proof: the bug is in the driver and was never reproducible on demand.
+No panic occurred during the GPU work of this milestone: three benchmark runs, a regression run and four agent
+runs. That is evidence, not proof: the bug is in the driver and was never reproducible on demand.
 
 ## 2. A benchmark that tells coding models apart: Aider's polyglot
 
@@ -87,7 +87,31 @@ fell from 21.9 s (CF2) to 15.7 s: fewer second tries and fewer answers that loop
 
 ## 5. Coding-agent suite on CG2
 
-(to be filled with the dev65 hard suite results: CG2 and CF2, two runs each, 64K, every expert resident, lookup)
+dev65's hard suite (six tasks with pi on a copy of this repository, 900 s each, temperature 0.3), with:
+- the 64K window, every expert resident and prompt lookup;
+- CG2 with the half KV cache that `serve --coder` picks, CF2 with the float cache;
+- CG2 and CF2 alternated, two runs each.
+
+| Run | Passed | Total time | Prompt ingestion | Decode | Full recomputes |
+|---|---:|---:|---:|---:|---:|
+| CG2, run 1 | **6 / 6** | 710 s | 535 tok/s | 86.0 tok/s | 1 |
+| CF2, run 1 | 5 / 6 | 412 s | 693 tok/s | 88.6 tok/s | 0 |
+| CG2, run 2 | **6 / 6** | 984 s | 551 tok/s | 84.4 tok/s | 1 |
+| CF2, run 2 | 4 / 6 | 2,449 s | 497 tok/s | 83.5 tok/s | 12 |
+
+- **CG2 passed 12 of 12, CF2 9 of 12.**
+  - CF2's failures: one answer cut at the output limit (`two_bugs`), and two loops that ran to the 900 s limit (377
+    and 541 requests, `c_limit` and `debug_session`).
+  - The loops also cost CF2's second run its prompt reuse: 12 full recomputes.
+- **Decode by context** (CG2 / CF2, both runs): 98 / 111 tok/s below 8K, 86 / 86 at 16–32K, 79 / 75 above 32K.
+  - CG2 reads more expert bytes per token, which costs about 12 % at short contexts.
+  - At long contexts attention takes more of each token, and CG2's half KV cache probably makes up for its larger
+    experts.
+- **Prompt ingestion:** CG2 is about 20 % slower than CF2's first run (535–551 against 693 tok/s). With 95–98 % of
+  each prompt reused, this is mostly the few thousand new tokens of each turn.
+- **Stability:** the server logs show no error, and macOS did not panic.
+
+For an agent on the M4 Max, CG2 is the file: its tasks took 15 s to 7.4 minutes, and it did not loop.
 
 ## Scope boundary
 
