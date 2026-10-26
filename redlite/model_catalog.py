@@ -91,6 +91,16 @@ VARIANTS = {
         quality="very-low",
         recommended_mode="native-full-residency",
     ),
+    # dev85: G2's recipe on Qwen3-Coder-Next for 48 GiB Macs: Aider polyglot 59.8 % (pass@2, 127 exercises, M4 Max)
+    # against 49.6 % for Bartowski's IQ3_XXS and 25.2 % for CF2; code perplexity 1.870 / 1.917 / 2.537
+    "redlite_coder_cg2": ModelVariant(
+        key="redlite_coder_cg2",
+        repo="alfodaniello/Qwen3-Coder-Next-RedLite-GGUF",
+        filename="Qwen3-Coder-Next-RedLite-CG2.gguf",
+        nominal_gb=33.54,
+        quality="medium",
+        recommended_mode="native-full-residency",
+    ),
     "coder_iq3_xxs": ModelVariant(
         key="coder_iq3_xxs",
         repo="bartowski/Qwen_Qwen3-Coder-Next-GGUF",
@@ -135,7 +145,9 @@ ALIASES = {
     "coder-24gb": "redlite_coder_cf2",
     "cf2": "redlite_coder_cf2",
     "bartowski-coder": "coder_iq2_xxs",
-    "coder-48gb": "coder_iq3_xxs",
+    "coder-48gb": "redlite_coder_cg2",
+    "cg2": "redlite_coder_cg2",
+    "bartowski-coder-48gb": "coder_iq3_xxs",
     "mtp": "mtp_q8_0",
 }
 

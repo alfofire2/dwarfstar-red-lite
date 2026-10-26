@@ -417,6 +417,12 @@ them.
   (the verify uses its own 2-row kernel), `engine.pair` and `server.parallel_greedy` failed in the regression. The
   in-place shift is now a parameter that only plain decode sets.
 
+- **The polyglot harness dropped bare code blocks (dev85).** The model often answers an Exercism exercise with a
+  fenced block and no file name before it, or with the name in backticks or bold. The first parser of
+  `scripts/dev/polyglot_eval.py` wrote only blocks preceded by a plain file name, so CF2 passed almost nothing on the
+  first try. That run was discarded; a single unnamed block now goes to the only solution file, and
+  `tests/test_polyglot_eval.py` covers the formats.
+
 ## Not reached, blocked or not attempted
 
 - **GitHub CI green (dev28): not reached, then removed (2026-10-03).** GitHub refused to start hosted jobs on
@@ -471,3 +477,9 @@ them.
 - **llama-perplexity in the oracle build tree.** Rebuilding it there failed (OpenSSL target)
   after relinking one oracle library from the same pinned source; it is built in its own tree
   (`.deps/llama.cpp/build-ppl`) by `scripts/dev/perplexity.sh` (dev31).
+- **`redlite gpu-limit` on 48 GiB Macs (dev85): written, then reverted.** The idea was to raise the GPU limit so that
+  CG2 keeps every expert resident at 128K, beyond what the planner's 70 % rule admits (about 96K with the half KV
+  cache). On the M4 Max, macOS already lets the GPU use 38,339 MiB (Metal's `recommendedMaxWorkingSetSize`), more
+  than CG2 needs at 128K (36,209 MiB), so a computed limit would only have lowered it. What stops 128K is the 70 %
+  rule, and it stays: in dev36 IQ3_M with every expert resident (footprint 35.2 GiB) ran out of GPU memory on its
+  third run, below macOS's limit. At 128K the planner uses the 4 GiB cache.

@@ -116,6 +116,8 @@ void redmetal_topk_pool_residency_clear(redmetal_topk_pool_t pool, uint32_t laye
 /* The MTLResidencySet holding every slab (macOS 15+; NULL otherwise). Attach it to the command queue that
  * executes GPU-driven or batched expert work; per-encoder useResource is then skipped for slabs. */
 void *redmetal_topk_pool_slab_residency_set(redmetal_topk_pool_t pool);
+/* dev85: create every slab of the pool now (one residency-set commit), so no slab is created at run time */
+int redmetal_topk_pool_allocate_all(redmetal_topk_pool_t pool);
 /* Mark every slab resident for the given compute encoder (id<MTLComputeCommandEncoder>); no-op with a residency set. */
 void redmetal_topk_pool_use_all_slabs(redmetal_topk_pool_t pool, void *mtl_compute_encoder);
 /*

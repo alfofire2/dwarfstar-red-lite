@@ -12,7 +12,7 @@ import sys
 from . import __version__
 from .hardware import GIB, _sysctl, detect, gpu_wired_limit_mib
 from .model_catalog import VARIANTS, resolve_variant
-from .planner import native_defaults, native_mtp_max_context, native_plan_context, plan_for, select_native_model
+from .planner import native_defaults, native_mtp_max_context, native_plan_context, plan_for, select_coder_model, select_native_model
 from .runner import engine_status, run_completion, run_server, run_bench, run_native_chat, run_native_server, ROOT
 from .telemetry import snapshot
 from .benchmark import run_sweep
@@ -190,7 +190,7 @@ def cmd_setup_pi(args) -> int:
     tmp.replace(path)
     print(f"pi provider \"redlite\" written to {path} (server http://127.0.0.1:{args.port}, context {args.context}, "
           f"temperature {AGENT_TEMPERATURE})")
-    print(f"start the server:  redlite serve --native --context {args.context} --port {args.port}")
+    print(f"start the server:  redlite serve --native --coder --context {args.context} --port {args.port}")
     print(f"then:              pi --provider redlite --model {SERVER_MODEL_ID}")
     return 0
 
@@ -504,8 +504,9 @@ def cmd_chat(args) -> int:
     if args.model:
         model = Path(args.model).expanduser()
     else:
-        # dev31: the best model present in models/ that this machine can hold
-        picked = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
+        # dev31: the best model present in models/ that this machine can hold (dev85: --coder, a coding model)
+        pick = select_coder_model if getattr(args, "coder", False) else select_native_model
+        picked = pick(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
         if picked is None:
             _die(f"No native model found in {NATIVE_MODELS_DIR}. Download one: redlite download 24gb (and redlite download mtp)")
         model = picked
@@ -554,8 +555,9 @@ def _serve_native(args) -> int:
     _require_apple(hw)
     if args.model:
         model = Path(args.model).expanduser()
-    else:   # dev60: as redlite chat, the best model present that this Mac can hold
-        model = select_native_model(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
+    else:   # dev60: as redlite chat, the best model present that this Mac can hold (dev85: --coder, a coding model)
+        pick = select_coder_model if getattr(args, "coder", False) else select_native_model
+        model = pick(NATIVE_MODELS_DIR, hw.ram_bytes, gpu_wired_limit_mib())
         if model is None:
             _die(f"No native model found in {NATIVE_MODELS_DIR}. Download one: redlite download 24gb (and redlite download mtp)")
         print(f"[redlite] model {model.name} (best native model in {NATIVE_MODELS_DIR} for {hw.ram_bytes / GIB:.0f} GiB RAM)")
@@ -700,6 +702,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-lookup", action="store_true",
                    help="No prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="Bounded cache: pick experts exactly as the model does (no cache-aware routing)")
+    s.add_argument("--coder", action="store_true",
+                   help="with no model path: the best Qwen3-Coder-Next file in the models folder for this Mac (CG2, then CF2)")
     s.add_argument("--kv", choices=("f32", "f16"), default=None,
                    help="KV cache precision: f32 (float) or f16 (half the context memory, faster at long contexts, outputs "
                         "can differ slightly). Default: f32, or f16 where it is what lets every expert stay resident")
@@ -729,6 +733,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-lookup", action="store_true",
                    help="--native: no prompt lookup speculative decoding (on by default with every expert resident and no MTP)")
     s.add_argument("--exact-routing", action="store_true", help="--native, bounded cache: no cache-aware expert routing")
+    s.add_argument("--coder", action="store_true",
+                   help="with no model path: the best Qwen3-Coder-Next file in the models folder for this Mac (CG2, then CF2)")
     s.add_argument("--kv", choices=("f32", "f16"), default=None,
                    help="--native: KV cache precision: f32 (float) or f16 (half the context memory, outputs can differ "
                         "slightly). Default: f32, or f16 where it is what lets every expert stay resident")

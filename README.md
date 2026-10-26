@@ -128,17 +128,23 @@ Details: `docs/REDLITE_DEV51_24GB_DECODE.md`, `docs/REDLITE_DEV55_LONG_CONTEXT_2
   at 35–51 tok/s and prefilled at 218–307 tok/s. With the 4 GiB cache the same suite gave 17–25 and 139–233 tok/s.
   These two runs passed 5 of 6 tasks each, the 4 GiB runs 5–6 of 6. The half cache's outputs can differ slightly
   from the float one.
+- **48 GiB Macs: Red Lite CG2** (dev85, `redlite download coder-48gb`, 31.24 GiB), G2's recipe on Qwen3-Coder-Next.
+  On Aider's polyglot benchmark (127 Exercism exercises in Python, JavaScript, Rust and C++, two tries each) it
+  passed 59.8 %, against 49.6 % for Bartowski's IQ3_XXS and 25.2 % for CF2. On the hard agent suite at 64K it passed
+  12 of 12 tasks with no loop, against 9 of 12 for CF2. `redlite serve --native --coder` takes it on a 48 GiB Mac and
+  CF2 below; every expert stays resident up to about 96K positions.
 - **Temperature 0.3:** the 2-bit Coder looped (the same tool call until the time limit) 4 times in 36 sessions at
   0.7 and above, never at 0.3. `redlite setup-pi` sets 0.3 for the agent; chat keeps 0.7.
 - **`--parallel 2`** gains only 2–5 % with agents.
 - Details: `docs/REDLITE_DEV60_CODING_AGENT.md`, `docs/REDLITE_DEV62_AGENT_TESTS.md`,
-  `docs/REDLITE_DEV63_CODER_QUANT_SAMPLING.md`.
+  `docs/REDLITE_DEV63_CODER_QUANT_SAMPLING.md`, `docs/REDLITE_DEV85_CODING_M4MAX.md`.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent       # pi itself (Node.js: brew install node)
 redlite download coder                                # Red Lite CF2, Qwen3-Coder-Next (19.3 GB)
+#   on a 48 GiB Mac: redlite download coder-48gb      # Red Lite CG2 (33.5 GB)
 redlite setup-pi --port 8080                          # adds a "redlite" provider (temperature 0.3) to ~/.pi/agent/models.json
-redlite serve --native ~/.redlite/models/Qwen3-Coder-Next-RedLite-CF2.gguf --context 65536 --port 8080
+redlite serve --native --coder --context 65536 --port 8080   # the best Coder file in ~/.redlite/models for this Mac
 #   on a 24 GiB Mac: redlite gpu-limit --boot once (the server then keeps every expert resident)
 pi --provider redlite --model qwen3-next-80b-a3b-redlite
 ```

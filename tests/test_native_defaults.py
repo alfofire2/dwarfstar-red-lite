@@ -561,3 +561,36 @@ class SmallMacTests(unittest.TestCase):
                 main(["gpu-limit", "--dry-run"])
         self.assertIn("streams the experts from the SSD", err.getvalue())
         self.assertNotIn("40 GiB or more", err.getvalue())
+
+
+class CoderSelectionTests(unittest.TestCase):
+    """dev85: --coder picks the best Qwen3-Coder-Next file that fits (CG2 on 48 GiB, CF2 on 24 GiB)"""
+
+    def _pick(self, ram_gib, names, wired=0):
+        from redlite.planner import select_coder_model
+        sizes = {"Qwen3-Coder-Next-RedLite-CG2.gguf": NativeResidency(30528, 1457 * 1024 * 1024),
+                 "Qwen_Qwen3-Coder-Next-IQ3_XXS.gguf": NativeResidency(28800, 1457 * 1024 * 1024),
+                 "Qwen3-Coder-Next-RedLite-CF2.gguf": NativeResidency(16992, 1083 * 1024 * 1024),
+                 "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf": NativeResidency(17316, 1083 * 1024 * 1024)}
+        with tempfile.TemporaryDirectory() as tmp:
+            for n in names:
+                (Path(tmp) / n).write_bytes(b"GGUF")
+            with patch("redlite.planner.native_residency", side_effect=lambda p: sizes[Path(p).name]):
+                p = select_coder_model(tmp, int(ram_gib * GIB), wired)
+            return p.name if p else None
+
+    def test_order_and_fit(self):
+        allf = ["Qwen3-Coder-Next-RedLite-CG2.gguf", "Qwen_Qwen3-Coder-Next-IQ3_XXS.gguf",
+                "Qwen3-Coder-Next-RedLite-CF2.gguf", "Qwen_Qwen3-Coder-Next-IQ2_XXS.gguf"]
+        self.assertEqual(self._pick(48, allf), "Qwen3-Coder-Next-RedLite-CG2.gguf")
+        self.assertEqual(self._pick(24, allf), "Qwen3-Coder-Next-RedLite-CF2.gguf")             # bounded: the 24 GiB file
+        self.assertEqual(self._pick(24, allf, wired=21741), "Qwen3-Coder-Next-RedLite-CF2.gguf")  # CG2 does not fit 21.7 GiB
+        self.assertEqual(self._pick(48, allf[2:]), "Qwen3-Coder-Next-RedLite-CF2.gguf")
+        self.assertIsNone(self._pick(48, []))
+
+    def test_setup_pi_prints_coder(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PI_CODING_AGENT_DIR": tmp}):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(main(["setup-pi"]), 0)
+        self.assertIn("redlite serve --native --coder --context 65536", out.getvalue())

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="810" height="293" viewBox="0 0 810 293">
+<style>.bg{fill:#ffffff}text{font-family:-apple-system,Helvetica,Arial,sans-serif;fill:#24292f}.t{font-size:15px;font-weight:600}.n{font-size:11px;fill:#57606a}.l{font-size:12px}.v{font-size:12px;font-weight:600}.g{stroke:#d0d7de}@media (prefers-color-scheme:dark){.bg{fill:#0d1117}text{fill:#e6edf3}.n{fill:#8d96a0}.g{stroke:#30363d}}</style>
+<rect class="bg" width="810" height="293"/>
+<text class="t" x="10" y="24">Aider polyglot benchmark, Qwen3-Coder-Next files (M4 Max 48 GiB, Red Lite)</text>
+<rect x="230" y="38" width="12" height="12" fill="#d64545"/><text class="l" x="247" y="48">first try</text>
+<rect x="340" y="38" width="12" height="12" fill="#3b7dd8"/><text class="l" x="357" y="48">two tries</text>
+<text class="l" x="222" y="98" text-anchor="end">CF2 (2-bit, 24 GiB Macs)</text>
+<rect x="230" y="76" width="73.9" height="15" rx="2" fill="#d64545"/><text class="v" x="308.9" y="88">9.4</text>
+<rect x="230" y="94" width="198.1" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="433.1" y="106">25.2</text>
+<text class="l" x="222" y="144" text-anchor="end">Bartowski IQ3_XXS</text>
+<rect x="230" y="122" width="266.4" height="15" rx="2" fill="#d64545"/><text class="v" x="501.4" y="134">33.9</text>
+<rect x="230" y="140" width="389.8" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="624.8" y="152">49.6</text>
+<text class="l" x="222" y="190" text-anchor="end">CG2 (3-bit, 48 GiB Macs)</text>
+<rect x="230" y="168" width="290.8" height="15" rx="2" fill="#d64545"/><text class="v" x="525.8" y="180">37</text>
+<rect x="230" y="186" width="470.0" height="15" rx="2" fill="#3b7dd8"/><text class="v" x="705.0" y="198">59.8</text>
+<text class="n" x="10" y="253">% of 127 exercises solved. Exercism exercises in Python, JavaScript, Rust and C++ from Aider&#x27;s polyglot benchmark, greedy, a</text>
+<text class="n" x="10" y="268">second try after the test output; 12 exercises whose official solution fails here are left out. CF2 18 GiB, IQ3_XXS 29.5 GiB,</text>
+<text class="n" x="10" y="283">CG2 31.2 GiB (dev85).</text>
+</svg>

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.8 — 2026-10-21
+
+**Programming on a 48 GiB Mac: Red Lite CG2.**
+- **Red Lite CG2** (dev85, `redlite download coder-48gb`, 33.5 GB), Qwen3-Coder-Next with G2's recipe (IQ3_S experts
+  on more layers). On the M4 Max:
+  - Aider's polyglot benchmark (127 exercises in Python, JavaScript, Rust and C++, two tries): 59.8 %, against
+    49.6 % for Bartowski's IQ3_XXS and 25.2 % for CF2.
+  - The hard agent suite with pi at 64K: 12 of 12 tasks with no loop, against 9 of 12 for CF2.
+  - It decodes at 79–98 tok/s with prompt lookup, and every expert stays resident up to about 96K positions.
+  - `bartowski-coder-48gb` is now Bartowski's IQ3_XXS, which `coder-48gb` fetched before.
+- **`redlite serve --native --coder`** and `redlite chat --coder` take the best Qwen3-Coder-Next file in the models
+  folder that the Mac can hold: CG2 on 48 GiB, CF2 below. `redlite setup-pi` prints that command.
+- **No GPU memory work off the engine thread** (dev85). The expert cache creates all its Metal buffers when the
+  engine opens, instead of from the loader threads during decoding (`RL_POOL_EAGER=0` restores the old behaviour).
+  - That pattern matches the macOS `IOGPUFamily` kernel panics of issue #80.
+  - Output is identical, and opening takes about 11 ms longer.
+  - No panic occurred during this milestone's GPU work; the driver bug itself is Apple's (FB25130929).
+- **`scripts/dev/polyglot_eval.py`** runs Aider's polyglot benchmark against `redlite serve`.
+- **Measured and not kept:** raising the GPU limit on 48 GiB Macs (macOS's default already exceeds what CG2 needs at
+  128K; the planner's 70 % rule is what stops it). Details in `docs/REDLITE_DEV85_CODING_M4MAX.md`.
+
+
 ## 0.9.7 — 2026-10-12
 
 **24 GiB coding agents at full speed with no extra flag.**
